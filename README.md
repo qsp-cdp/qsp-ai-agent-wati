@@ -45,6 +45,8 @@ Variables principales (ver `.env.example` para el detalle):
 | `ANTHROPIC_API_KEY` | Clave de API de Claude |
 | `ANTHROPIC_MODEL` | Modelo (por defecto `claude-sonnet-4-6`; usa `claude-opus-4-8` para máxima calidad o `claude-haiku-4-5` para menor costo) |
 | `SHOPIFY_STORE_DOMAIN` / `SHOPIFY_ADMIN_ACCESS_TOKEN` | Opcional: habilitan el catálogo en tiempo real (precio + stock) vía Shopify |
+| `SUPABASE_URL` / `SUPABASE_SERVICE_ROLE_KEY` | Almacén de conversaciones (proyecto `qsp-wati-copilot`); sin esto corre sin persistencia |
+| `AGENT_MODE` | `shadow` (genera y registra, **no** envía — pruebas) o `live` (envía). Por defecto `shadow` |
 | `PORT` / `WEBHOOK_PATH` | Puerto y ruta del webhook (por defecto `3000` y `/webhook`) |
 
 > Alternativamente puedes guardar las credenciales de WATI con `npx wati configure init`
@@ -104,6 +106,35 @@ knowledge/
   qsp-knowledge-base.md  Conocimiento de QSP (plantilla a completar)
   README.md              Cómo migrar el contenido de qsp-cdp-docs
 ```
+
+## Persistencia y estado de la conversación (Supabase)
+
+El agente consolida el diseño del copilot previo y reusa el proyecto Supabase
+`qsp-wati-copilot` (tablas `conversations`, `messages`, `handoffs`, `job_log`).
+Lo implementa `src/db.js`:
+
+- **Historial desde la base de datos** (no desde WATI): cada mensaje entrante y
+  cada respuesta se guardan en `messages` (con `model`, `tokens_in/out`,
+  `latency_ms`, `wati_message_id`).
+- **Máquina de estados** por conversación (`conversations.status`):
+  - `bot` → el agente responde.
+  - `handoff` → una persona tomó la conversación; **el bot guarda silencio**.
+  - `cerrada` → conversación cerrada; el bot no responde.
+- **Modo `shadow` / `live`** (`AGENT_MODE`): en `shadow` el agente genera y
+  registra la respuesta pero **no la envía** — ideal para probar sin molestar a
+  clientes reales. En `live` la envía por WhatsApp. Por defecto `shadow`.
+- **Tope de turnos por día** (`AGENT_DAILY_TURN_CAP`, por defecto 40): al
+  superarlo, la conversación pasa a `handoff` automáticamente.
+- **Handoff a humano**: el modelo tiene la herramienta `escalar_a_humano`; al
+  usarla, se registra en `handoffs` y la conversación pasa a `handoff`.
+
+Si no defines las variables de Supabase, el agente sigue funcionando: usa el
+historial de WATI y no persiste (útil para una prueba rápida).
+
+> ⚠️ **Seguridad pendiente (proyecto `qsp-data-hub`):** se detectó que 13 tablas
+> tienen Row Level Security (RLS) desactivado y quedan expuestas a la anon key,
+> incluyendo tablas *staging* con PII. Revísalo y aplica RLS con políticas
+> adecuadas (no se aplicó automáticamente para no romper accesos).
 
 ## Catálogo en tiempo real (Shopify)
 

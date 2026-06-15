@@ -68,6 +68,8 @@ export async function collectToolResults(content, runTool) {
 // Cap on tool-use round trips per message, to bound latency/cost.
 const MAX_TOOL_TURNS = 4;
 
+const REFUSAL_REPLY = 'Lo siento, no puedo ayudarte con eso. ¿Hay algo más en lo que pueda asistirte?';
+
 /**
  * Generate a reply, running an agentic tool-use loop when tools are provided.
  * @param {object} args
@@ -76,14 +78,17 @@ const MAX_TOOL_TURNS = 4;
  * @param {Array<{role: 'user'|'assistant', content: any}>} args.messages
  * @param {Array<object>} [args.tools] Anthropic tool definitions
  * @param {(name: string, input: any) => Promise<string>} [args.runTool] tool executor
- * @returns {Promise<string>} the assistant's text reply
+ * @returns {Promise<{text: string, tokensIn: number, tokensOut: number, model: string}>}
  */
 export async function generateReply({ system, context, messages, tools = [], runTool }) {
   const convo = [...messages];
+  const model = config.anthropic.model;
+  let tokensIn = 0;
+  let tokensOut = 0;
 
   for (let turn = 0; turn <= MAX_TOOL_TURNS; turn++) {
     const request = {
-      model: config.anthropic.model,
+      model,
       max_tokens: config.anthropic.maxTokens,
       system: buildSystemBlocks(system, context),
       messages: convo,
@@ -97,10 +102,14 @@ export async function generateReply({ system, context, messages, tools = [], run
     }
 
     const response = await getClient().messages.create(request);
+    if (response.usage) {
+      tokensIn += response.usage.input_tokens || 0;
+      tokensOut += response.usage.output_tokens || 0;
+    }
 
     // Safety classifiers can decline a request (HTTP 200, stop_reason "refusal").
     if (response.stop_reason === 'refusal') {
-      return 'Lo siento, no puedo ayudarte con eso. ¿Hay algo más en lo que pueda asistirte?';
+      return { text: REFUSAL_REPLY, tokensIn, tokensOut, model };
     }
 
     // The model wants to call a tool: run it, feed results back, loop.
@@ -111,8 +120,8 @@ export async function generateReply({ system, context, messages, tools = [], run
       continue;
     }
 
-    return extractText(response);
+    return { text: extractText(response), tokensIn, tokensOut, model };
   }
 
-  return '';
+  return { text: '', tokensIn, tokensOut, model };
 }

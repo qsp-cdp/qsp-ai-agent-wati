@@ -28,6 +28,21 @@ export const config = {
     thinking: (process.env.ANTHROPIC_THINKING || 'adaptive').toLowerCase(),
   },
 
+  // Supabase (conversation store — the existing qsp-wati-copilot project)
+  supabase: {
+    url: process.env.SUPABASE_URL || '',
+    serviceKey: process.env.SUPABASE_SERVICE_ROLE_KEY || '',
+  },
+
+  // Agent behaviour
+  agent: {
+    // 'shadow' = generate + log replies but DON'T send to WhatsApp (safe testing,
+    //            matching the original copilot). 'live' = actually send.
+    mode: (process.env.AGENT_MODE || 'shadow').toLowerCase() === 'live' ? 'live' : 'shadow',
+    // Max bot replies per conversation per day before handing off to a human.
+    dailyTurnCap: int(process.env.AGENT_DAILY_TURN_CAP, 40),
+  },
+
   // Shopify (real-time product catalog — optional)
   shopify: {
     domain: process.env.SHOPIFY_STORE_DOMAIN || '',
@@ -76,6 +91,9 @@ export function configSummary() {
     'Model': config.anthropic.model,
     'Max tokens': config.anthropic.maxTokens,
     'Thinking': config.anthropic.thinking,
+    'Modo agente': config.agent.mode,
+    'Supabase': config.supabase.url && config.supabase.serviceKey ? 'conectado' : '(off → sin persistencia)',
+    'Tope turnos/día': config.agent.dailyTurnCap,
     'Catálogo': config.shopify.domain && config.shopify.token ? `Shopify (${config.shopify.domain})` : '(off)',
     'Port': config.server.port,
     'Webhook path': config.server.webhookPath,
