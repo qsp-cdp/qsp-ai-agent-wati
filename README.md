@@ -194,6 +194,11 @@ Razones para quedarnos con el CLI en el agente:
   va después del punto de caché para no invalidarla. El caching solo aplica cuando
   el prefijo supera el mínimo del modelo (~2.048 tokens en Sonnet, ~4.096 en Opus);
   con la base de conocimiento aún vacía puede no activarse todavía.
+- **Egress de red:** el agente hace llamadas salientes a la API de WATI, a
+  `api.anthropic.com` y a tu tienda Shopify (`quick-service-supplies.myshopify.com`).
+  Si lo corres detrás de un firewall o en un entorno con allowlist de egress
+  (como Claude Code en la web), agrega esos hosts a la lista permitida; de lo
+  contrario las llamadas fallan con un error de host no permitido.
 - El formato del historial de WATI puede variar según la cuenta; `normalizeHistory`
   en `src/agent.js` es tolerante y degrada con elegancia (si no puede leer el
   historial, igual responde al mensaje actual). Ajústalo si tu cuenta usa otros
