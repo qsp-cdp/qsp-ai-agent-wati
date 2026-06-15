@@ -43,7 +43,7 @@ Variables principales (ver `.env.example` para el detalle):
 | `WATI_BASE_URL` | URL base de tu instancia WATI (p. ej. `https://live-mt-server.wati.io/<tenant>`) |
 | `WATI_AUTH_TOKEN` | Token Bearer de la API de WATI |
 | `ANTHROPIC_API_KEY` | Clave de API de Claude |
-| `ANTHROPIC_MODEL` | Modelo (por defecto `claude-opus-4-8`) |
+| `ANTHROPIC_MODEL` | Modelo (por defecto `claude-sonnet-4-6`; usa `claude-opus-4-8` para máxima calidad o `claude-haiku-4-5` para menor costo) |
 | `PORT` / `WEBHOOK_PATH` | Puerto y ruta del webhook (por defecto `3000` y `/webhook`) |
 
 > Alternativamente puedes guardar las credenciales de WATI con `npx wati configure init`
@@ -163,6 +163,12 @@ Razones para quedarnos con el CLI en el agente:
   que funciona). Mensajes con solo multimedia se reconocen y se ignoran.
 - El webhook se confirma de inmediato (200) y el mensaje se procesa en segundo
   plano, para que WATI no reintente por timeout.
+- **Prompt caching activado:** el prefijo estable (instrucciones + base de
+  conocimiento) se marca con `cache_control`, así se reutiliza a ~0,1× del costo
+  en mensajes seguidos. El contexto variable por conversación (nombre, bienvenida)
+  va después del punto de caché para no invalidarla. El caching solo aplica cuando
+  el prefijo supera el mínimo del modelo (~2.048 tokens en Sonnet, ~4.096 en Opus);
+  con la base de conocimiento aún vacía puede no activarse todavía.
 - El formato del historial de WATI puede variar según la cuenta; `normalizeHistory`
   en `src/agent.js` es tolerante y degrada con elegancia (si no puede leer el
   historial, igual responde al mensaje actual). Ajústalo si tu cuenta usa otros

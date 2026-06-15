@@ -20,18 +20,11 @@ Cómo debes comportarte:
 - No prometas acciones que no puedes realizar (cobros, envíos, citas) a menos que la base de conocimiento indique cómo hacerlo.
 - Ante temas sensibles, quejas serias o solicitudes fuera de tu alcance, ofrece escalar a un agente humano.`;
 
-function buildSystemPrompt({ senderName, eventType }) {
+// Frozen prefix: identical across every message, so it can be prompt-cached.
+// Keep it free of per-conversation values (see buildConversationContext).
+function buildFrozenSystem() {
   const knowledge = loadKnowledgeBase();
-  const contextLines = [];
-  if (senderName) contextLines.push(`Nombre del cliente: ${senderName}`);
-  if (eventType === 'newContactMessageReceived') {
-    contextLines.push('Es la primera vez que este contacto escribe: dale una bienvenida breve.');
-  }
-
   const sections = [BASE_INSTRUCTIONS];
-  if (contextLines.length) {
-    sections.push(`Contexto de esta conversación:\n${contextLines.join('\n')}`);
-  }
   if (knowledge) {
     sections.push(`BASE DE CONOCIMIENTO DE QSP:\n\n${knowledge}`);
   } else {
@@ -40,6 +33,18 @@ function buildSystemPrompt({ senderName, eventType }) {
     );
   }
   return sections.join('\n\n');
+}
+
+// Per-conversation context: varies per customer, so it must NOT be part of the
+// cached prefix. Returned separately and placed after the cache breakpoint.
+function buildConversationContext({ senderName, eventType }) {
+  const lines = [];
+  if (senderName) lines.push(`Nombre del cliente: ${senderName}`);
+  if (eventType === 'newContactMessageReceived') {
+    lines.push('Es la primera vez que este contacto escribe: dale una bienvenida breve.');
+  }
+  if (!lines.length) return '';
+  return `Contexto de esta conversación:\n${lines.join('\n')}`;
 }
 
 // ── Conversation history normalisation ───────────────────────────────────────
@@ -131,10 +136,11 @@ export async function handleIncomingMessage({ from, text, senderName, eventType 
   if (!messages.length || messages[messages.length - 1].content !== text.trim()) {
     messages.push({ role: 'user', content: text });
   }
-  const system = buildSystemPrompt({ senderName, eventType });
+  const system = buildFrozenSystem();
+  const context = buildConversationContext({ senderName, eventType });
 
   // 3. Generate the reply.
-  const reply = await generateReply({ system, messages });
+  const reply = await generateReply({ system, context, messages });
   if (!reply) {
     console.warn(`[agent] empty reply generated for ${from}; nothing sent`);
     return '';
@@ -146,4 +152,4 @@ export async function handleIncomingMessage({ from, text, senderName, eventType 
   return reply;
 }
 
-export { buildSystemPrompt };
+export { buildFrozenSystem, buildConversationContext };
