@@ -1,0 +1,37 @@
+{
+  "name": "qsp-ai-agent-wati",
+  "version": "1.0.0",
+  "description": "AI agent for WhatsApp (WATI) — listens to webhooks, retrieves conversation history, generates replies with Claude, and answers via WhatsApp. Built on @wati-io/wati-cli.",
+  "type": "module",
+  "main": "src/index.js",
+  "scripts": {
+    "start": "node src/index.js",
+    "dev": "node --watch src/index.js",
+    "setup:webhook": "node scripts/setup-webhook.js",
+    "wati": "wati"
+  },
+  "repository": {
+    "type": "git",
+    "url": "http://local_proxy@127.0.0.1:45133/git/qsp-cdp/qsp-ai-agent-wati"
+  },
+  "keywords": [
+    "whatsapp",
+    "wati",
+    "ai-agent",
+    "claude",
+    "anthropic",
+    "chatbot",
+    "qsp"
+  ],
+  "author": "QSP",
+  "license": "ISC",
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.104.1",
+    "@wati-io/wati-cli": "^0.2.0",
+    "dotenv": "^17.4.2",
+    "express": "^5.2.1"
+  }
+}
