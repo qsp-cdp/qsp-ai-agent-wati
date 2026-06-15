@@ -13,9 +13,10 @@ básico y sumando capacidades. Tienda: **quickservicepanama.com** (suministros d
 impresión y tecnología en Panamá).
 
 ## Estado actual (2026-06-15)
-- **Edge function `copilot-webhook` v7, ACTIVE, en MODO SOMBRA.** "Sombra" =
-  registra lo que respondería pero **NO envía nada al cliente**. Cambiar a "live"
-  es una decisión deliberada (env `COPILOT_MODE=live`).
+- **EN VIVO: `copilot-webhook` v7, ACTIVE, MODO SOMBRA.** (En el repo: **v8** con
+  Fase 1.5 / tool `info_tienda`, pendiente de desplegar + aplicar la migración
+  `store_facts`.) "Sombra" = registra lo que respondería pero **NO envía nada al
+  cliente**. Cambiar a "live" es una decisión deliberada (env `COPILOT_MODE=live`).
 - Tráfico real loggeado: **102 conversaciones, 865 mensajes**. Verificado:
   modelo **Claude Haiku 4.5**, ~**$0.003/turno**, ~**4 s** de latencia.
 - Evento de contacto nuevo de WATI ya cableado (v7).
@@ -49,13 +50,16 @@ WATI (WhatsApp) ──webhook POST?key=──► Supabase Edge Function `copilot
 - **handoffs** — `conversation_id`, `motivo`, `resuelto`.
 - **job_log** — `function_name`, `action`, `ok`, `detail` jsonb (telemetría;
   "nunca romper").
+- **store_facts** (Fase 1.5) — `key` (envios/pagos/ubicacion/horarios), `label`,
+  `value` (vacío = no disponible). Fuente única que lee la tool `info_tienda`.
 - **RPC `upsert_conversation(p_wa_id, p_sender_name)`** — upsert atómico por
   `wa_id` + incremento del contador diario de turnos. `security definer`, solo
   `service_role`.
 
-Migraciones aplicadas (ver `supabase/migrations/`):
+Migraciones (ver `supabase/migrations/`):
 `copilot_schema_inicial`, `rpc_upsert_conversation`, `fix_grant_service_role`,
-`grants_service_role_tablas`, `conversations_confirmed_new`.
+`grants_service_role_tablas`, `conversations_confirmed_new`,
+`store_facts` (Fase 1.5 — pendiente de aplicar).
 
 ## Flujo del webhook (resumen de index.ts)
 1. **GET** = healthcheck (status/version/mode/model).
@@ -86,9 +90,13 @@ Reglas clave (texto completo en `index.ts`, const `SYSTEM_PROMPT`):
   honesto. (→ se reemplaza en Fase 1.5 con la tool `info_tienda`.)
 - **HANDOFF** y **LÍMITES** (no legal/médico, nada fuera de la tienda).
 
-## Tool: `buscar_producto(consulta)`
-Hace `GET ${STORE}/search/suggest.json?q=...` con `STORE=https://www.quickservicepanama.com`.
-Devuelve `{titulo, precio_usd, disponible, url}` (máx 5). Es la única tool hoy.
+## Tools
+- **`buscar_producto(consulta)`** — `GET ${STORE}/search/suggest.json?q=...`
+  (`STORE=https://www.quickservicepanama.com`). Devuelve `{titulo, precio_usd,
+  disponible, url}` (máx 5).
+- **`info_tienda(tema)`** (Fase 1.5) — lee la tabla `store_facts` y devuelve
+  `{tema, titulo, info}` para `envios|pagos|ubicacion|horarios|todos`. Omite los
+  vacíos; si no hay dato, el bot deriva a un asesor.
 
 ## Variables de entorno / secretos (en Supabase Edge Function secrets — NO en el repo)
 `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, `ANTHROPIC_API_KEY`, `WATI_API_TOKEN`,
@@ -112,10 +120,11 @@ El webhook de WATI apunta a:
 `https://jbigmlcalcwiphqeudxd.functions.supabase.co/copilot-webhook?key=<COPILOT_WEBHOOK_KEY>`.
 
 ## Roadmap (próximas fases)
-1. **Fase 1.5 — tool `info_tienda`:** que el bot responda envíos/pagos/ubicación/
-   horarios desde una fuente única (páginas de Shopify o un metaobjeto `store_facts`
-   — ver el proyecto SEO "single source of truth" en qsp-cdp-docs). Reemplaza el
-   puente honesto de LOGÍSTICA/PAGOS del prompt.
+1. **Fase 1.5 — tool `info_tienda`: ✅ implementada en el repo (v8).** Lee de la
+   tabla `store_facts` (fuente única dentro del proyecto copilot). Pendiente:
+   aplicar la migración, rellenar `store_facts` con datos reales y desplegar.
+   Opción futura: re-apuntar la fuente a un metaobjeto/páginas de Shopify para
+   unificar con el "single source of truth" del proyecto SEO (qsp-cdp-docs).
 2. **Atención diferenciada a contacto nuevo** (bienvenida proactiva requiere una
    plantilla de WhatsApp; el evento ya se captura en `confirmed_new`).
 3. **Piloto de activación** (sombra → live gradual, con métricas de `messages`).

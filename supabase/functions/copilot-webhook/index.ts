@@ -1,4 +1,7 @@
-// === copilot-webhook v7 — Copiloto AI de WATI (MODO SOMBRA) — prompt v2 + new-contact ===
+// === copilot-webhook v8 — Copiloto AI de WATI (MODO SOMBRA) — prompt v2 + new-contact + info_tienda ===
+// v8 (2026-06-15): Fase 1.5 — añade la tool `info_tienda` (envíos/pagos/ubicación/horarios)
+//   que lee de la tabla `store_facts` (fuente única). Reemplaza el "puente honesto" de
+//   LOGÍSTICA/PAGOS del prompt. Resto de v7 intacto. (Rellenar store_facts para activarla.)
 // v7 (2026-06-13): maneja el evento WATI `newContactMessageReceived` (sin texto):
 //   marca la conversación como confirmed_new + first_contact_at y lo registra
 //   (señal autoritativa de lead nuevo / conteo). El texto real llega aparte en el
@@ -46,8 +49,9 @@ REGLA ANTI-INTERRUPCIÓN — no te metas si hay un humano atendiendo
 - Ante la duda, NO interrumpas: es mejor que un humano siga la venta a que tú la cortes. Mensajes sueltos de cierre ("ok", "gracias", "listo", "recibido") no requieren respuesta tuya salvo que claramente te estén preguntando algo.
 
 LOGÍSTICA, PAGOS Y DATOS DE LA TIENDA (envíos, ubicación, horarios, métodos de pago)
-- Aún NO tienes una herramienta para estos datos, así que NO inventes montos de envío, direcciones exactas, horarios ni formas de pago.
-- Si preguntan por envío/entrega, ubicación, horario o cómo pagar (tarjeta, ACH, link de pago, pago en página): responde breve y honesto, indica que un asesor le confirma los detalles exactos al momento, y mantén el tono servicial. No prometas plazos ni costos específicos.
+- Para envíos/entregas, ubicación, horarios o métodos de pago usa SIEMPRE la herramienta info_tienda y responde SOLO con lo que devuelva.
+- NUNCA inventes montos de envío, direcciones, horarios ni formas de pago.
+- Si info_tienda no tiene el dato (devuelve "sin datos disponibles"): dilo con honestidad y deriva a un asesor para confirmarlo. No prometas plazos ni costos específicos.
 
 HANDOFF A HUMANO (deriva con calma y sin prometer de más)
 - Deriva a un asesor cuando: la tool no encuentra el producto; piden algo fuera de catálogo; quieren reclamar o están molestos; piden hablar con una persona; detectas un trámite/pago en curso (ver anti-interrupción); o la consulta excede lo que puedes resolver. Discúlpate breve e indica que un asesor le responderá pronto.
@@ -60,6 +64,11 @@ const TOOLS: Anthropic.Tool[] = [{
   description: "Busca productos en el catálogo de Quick Service Panamá. Llama esta herramienta SIEMPRE que el cliente pregunte precio, disponibilidad/stock, o mencione un producto (tinta, toner, impresora, etc.). Devuelve título, precio en USD, disponibilidad y link.",
   strict: true,
   input_schema: { type: "object", properties: { consulta: { type: "string", description: "Términos de búsqueda, ej: 'tinta hp 954 negra'" } }, required: ["consulta"], additionalProperties: false },
+} as Anthropic.Tool, {
+  name: "info_tienda",
+  description: "Devuelve datos oficiales de la tienda QSP: envíos/entregas, métodos de pago, ubicación y horarios. Llama esta herramienta SIEMPRE que pregunten por estos temas; responde SOLO con lo que devuelva y NUNCA inventes montos, direcciones, horarios ni formas de pago.",
+  strict: true,
+  input_schema: { type: "object", properties: { tema: { type: "string", enum: ["envios", "pagos", "ubicacion", "horarios", "todos"], description: "Tema consultado; usa 'todos' si piden varios o no está claro." } }, required: ["tema"], additionalProperties: false },
 } as Anthropic.Tool];
 
 const HANDOFF_RE = /\b(humano|persona|asesor|agente|reclamo|queja|devoluci[oó]n|garant[ií]a|hablar con alguien|supervisor)\b/i;
@@ -72,6 +81,18 @@ async function buscarProducto(consulta: string): Promise<string> {
     const j = await r.json();
     const prods = (j?.resources?.results?.products ?? []).map((p: any) => ({ titulo: p.title, precio_usd: p.price, disponible: p.available === true, url: p.url?.startsWith("http") ? p.url : `${STORE}${p.url ?? ""}` }));
     return JSON.stringify(prods.length ? prods : { resultado: "sin coincidencias en el catálogo" });
+  } catch (e) { return JSON.stringify({ error: String(e).slice(0, 200) }); }
+}
+
+// Fase 1.5 — datos de tienda (envíos/pagos/ubicación/horarios) desde una fuente única (tabla store_facts).
+async function infoTienda(tema: string): Promise<string> {
+  try {
+    let q = sb.from("store_facts").select("key,label,value").not("value", "is", null).neq("value", "");
+    if (tema && tema !== "todos") q = q.eq("key", tema);
+    const { data, error } = await q;
+    if (error) return JSON.stringify({ error: `store_facts: ${error.message}` });
+    const facts = (data ?? []).map((f: any) => ({ tema: f.key, titulo: f.label, info: f.value }));
+    return JSON.stringify(facts.length ? facts : { resultado: "sin datos disponibles; deriva a un asesor" });
   } catch (e) { return JSON.stringify({ error: String(e).slice(0, 200) }); }
 }
 
@@ -97,7 +118,11 @@ async function responderLLM(history: { role: string; content: string }[]): Promi
     for (const block of resp.content) {
       if (block.type === "tool_use") {
         toolCalls.push({ name: block.name, input: block.input });
-        const out = block.name === "buscar_producto" ? await buscarProducto((block.input as any).consulta ?? "") : JSON.stringify({ error: "tool desconocida" });
+        const out = block.name === "buscar_producto"
+          ? await buscarProducto((block.input as any).consulta ?? "")
+          : block.name === "info_tienda"
+          ? await infoTienda((block.input as any).tema ?? "todos")
+          : JSON.stringify({ error: "tool desconocida" });
         results.push({ type: "tool_result", tool_use_id: block.id, content: out });
       }
     }
@@ -120,7 +145,7 @@ async function log(action: string, ok: boolean, detail: unknown) {
 Deno.serve(async (req) => {
   const url = new URL(req.url);
   if (req.method === "GET") {
-    return Response.json({ status: "ok", function: "copilot-webhook", version: "v7-newcontact", mode: MODE, model: MODEL, llm_configured: !!anthropic, wati_send_configured: !!(WATI_API_TOKEN && WATI_API_BASE), ts: new Date().toISOString() });
+    return Response.json({ status: "ok", function: "copilot-webhook", version: "v8-info_tienda", mode: MODE, model: MODEL, llm_configured: !!anthropic, wati_send_configured: !!(WATI_API_TOKEN && WATI_API_BASE), ts: new Date().toISOString() });
   }
   if (req.method !== "POST") return Response.json({ error: "method_not_allowed" }, { status: 405 });
   if (url.searchParams.get("key") !== WEBHOOK_KEY) return Response.json({ error: "forbidden" }, { status: 403 });
