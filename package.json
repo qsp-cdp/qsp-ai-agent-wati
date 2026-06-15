@@ -8,6 +8,7 @@
     "start": "node src/index.js",
     "dev": "node --watch src/index.js",
     "setup:webhook": "node scripts/setup-webhook.js",
+    "test:catalog": "node scripts/test-catalog.js",
     "wati": "wati"
   },
   "repository": {
