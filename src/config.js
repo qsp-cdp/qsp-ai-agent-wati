@@ -28,6 +28,13 @@ export const config = {
     thinking: (process.env.ANTHROPIC_THINKING || 'adaptive').toLowerCase(),
   },
 
+  // Shopify (real-time product catalog — optional)
+  shopify: {
+    domain: process.env.SHOPIFY_STORE_DOMAIN || '',
+    token: process.env.SHOPIFY_ADMIN_ACCESS_TOKEN || '',
+    apiVersion: process.env.SHOPIFY_API_VERSION || '2026-01',
+  },
+
   // Webhook HTTP server
   server: {
     port: int(process.env.PORT, 3000),
@@ -69,6 +76,7 @@ export function configSummary() {
     'Model': config.anthropic.model,
     'Max tokens': config.anthropic.maxTokens,
     'Thinking': config.anthropic.thinking,
+    'Catálogo': config.shopify.domain && config.shopify.token ? `Shopify (${config.shopify.domain})` : '(off)',
     'Port': config.server.port,
     'Webhook path': config.server.webhookPath,
     'Webhook token': config.server.verifyToken ? 'set' : '(none)',

@@ -9,6 +9,7 @@ import { config } from './config.js';
 import { generateReply } from './llm.js';
 import { loadKnowledgeBase } from './knowledge.js';
 import { getConversationMessages, sendText } from './wati.js';
+import { getCatalogTools, runCatalogTool, isCatalogEnabled } from './catalog.js';
 
 const BASE_INSTRUCTIONS = `Eres el asistente virtual de QSP (Quick Service Panama) que atiende a clientes por WhatsApp.
 
@@ -20,11 +21,19 @@ Cómo debes comportarte:
 - No prometas acciones que no puedes realizar (cobros, envíos, citas) a menos que la base de conocimiento indique cómo hacerlo.
 - Ante temas sensibles, quejas serias o solicitudes fuera de tu alcance, ofrece escalar a un agente humano.`;
 
+const CATALOG_INSTRUCTIONS = `Catálogo en tiempo real:
+- Tienes la herramienta \`buscar_productos\`, conectada al catálogo de Shopify de QSP.
+- Úsala SIEMPRE que el cliente pregunte por precio, disponibilidad, existencias o si se vende un producto. Nunca respondas precios ni stock de memoria.
+- Da el precio con su moneda e indica si hay existencias. Si el producto no aparece, dilo con claridad y ofrece buscar alternativas o pasar con una persona.`;
+
 // Frozen prefix: identical across every message, so it can be prompt-cached.
 // Keep it free of per-conversation values (see buildConversationContext).
 function buildFrozenSystem() {
   const knowledge = loadKnowledgeBase();
   const sections = [BASE_INSTRUCTIONS];
+  if (isCatalogEnabled()) {
+    sections.push(CATALOG_INSTRUCTIONS);
+  }
   if (knowledge) {
     sections.push(`BASE DE CONOCIMIENTO DE QSP:\n\n${knowledge}`);
   } else {
@@ -139,8 +148,14 @@ export async function handleIncomingMessage({ from, text, senderName, eventType 
   const system = buildFrozenSystem();
   const context = buildConversationContext({ senderName, eventType });
 
-  // 3. Generate the reply.
-  const reply = await generateReply({ system, context, messages });
+  // 3. Generate the reply (with real-time catalog tools when Shopify is set up).
+  const reply = await generateReply({
+    system,
+    context,
+    messages,
+    tools: getCatalogTools(),
+    runTool: runCatalogTool,
+  });
   if (!reply) {
     console.warn(`[agent] empty reply generated for ${from}; nothing sent`);
     return '';

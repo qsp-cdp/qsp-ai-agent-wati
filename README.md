@@ -44,6 +44,7 @@ Variables principales (ver `.env.example` para el detalle):
 | `WATI_AUTH_TOKEN` | Token Bearer de la API de WATI |
 | `ANTHROPIC_API_KEY` | Clave de API de Claude |
 | `ANTHROPIC_MODEL` | Modelo (por defecto `claude-sonnet-4-6`; usa `claude-opus-4-8` para máxima calidad o `claude-haiku-4-5` para menor costo) |
+| `SHOPIFY_STORE_DOMAIN` / `SHOPIFY_ADMIN_ACCESS_TOKEN` | Opcional: habilitan el catálogo en tiempo real (precio + stock) vía Shopify |
 | `PORT` / `WEBHOOK_PATH` | Puerto y ruta del webhook (por defecto `3000` y `/webhook`) |
 
 > Alternativamente puedes guardar las credenciales de WATI con `npx wati configure init`
@@ -102,6 +103,30 @@ scripts/
 knowledge/
   qsp-knowledge-base.md  Conocimiento de QSP (plantilla a completar)
   README.md              Cómo migrar el contenido de qsp-cdp-docs
+```
+
+## Catálogo en tiempo real (Shopify)
+
+El agente puede responder **precio y existencias en vivo** consultando Shopify. Se
+implementa con *tool-use*: Claude dispone de la herramienta `buscar_productos`
+(definida en `src/catalog.js`) y la llama cuando el cliente pregunta por precio,
+disponibilidad o si se vende un producto; el código consulta la **Shopify Admin
+GraphQL API** y devuelve datos reales (precio, moneda, stock).
+
+- Se activa solo si defines `SHOPIFY_STORE_DOMAIN` y `SHOPIFY_ADMIN_ACCESS_TOKEN`
+  (el token Admin necesita permiso `read_products`). Sin ellos, el agente funciona
+  igual pero sin precios/stock.
+- El agente tiene instrucción de **no inventar** precios: usa la herramienta o lo
+  dice y ofrece pasar con una persona.
+- Nota de costo: los mensajes que disparan la herramienta hacen 2 llamadas al LLM
+  (decidir + responder), por lo que cuestan ~2× respecto a un mensaje simple; el
+  prompt caching del prefijo amortigua parte de ese costo.
+
+```
+Cliente: "¿Cuánto cuesta el taladro y tienen en stock?"
+   → Claude llama buscar_productos("taladro")
+       → src/catalog.js consulta Shopify Admin API (precio + inventoryQuantity)
+   → Claude responde: "El taladro cuesta B/. 49.99 y tenemos 12 en stock."
 ```
 
 ## Base de conocimiento y migración desde `qsp-cdp-docs`
