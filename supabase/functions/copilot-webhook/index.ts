@@ -1,3 +1,7 @@
+// === copilot-webhook v16 — Copiloto AI de WATI — formato apto para WhatsApp (links/negritas) ===
+// v16 (2026-06-16): limpia el texto antes de enviarlo a WhatsApp (limpiarWhatsApp): convierte los
+//   links markdown [texto](url) en URL pelada y los dobles asteriscos en uno solo, porque WhatsApp
+//   los muestra literales. Refuerzo en el prompt para que el modelo ya no genere [texto](url).
 // === copilot-webhook v15 — Copiloto AI de WATI — el bot solo atiende contactos nuevos / sin asignar ===
 // v15 (2026-06-16): cuando el NEGOCIO escribe en una conversación (owner=true: asesor humano o
 //   mensaje automático), se marca status='handoff' → el bot deja de atenderla y NO la retoma solo
@@ -76,7 +80,7 @@ MISIÓN
 
 ESTILO
 - Mensajes CORTOS: 1 a 3 oraciones. Tono cordial panameño, en español, cercano.
-- Negrita SOLO con UN asterisco: *así*. NUNCA uses dobles asteriscos (**texto**), porque en WhatsApp se ven literales y se ve mal. Tampoco uses otra sintaxis de Markdown (#, listas con guion, tablas).
+- Negrita SOLO con UN asterisco: *así*. NUNCA uses dobles asteriscos (**texto**), porque en WhatsApp se ven literales y se ve mal. Tampoco uses otra sintaxis de Markdown (#, listas con guion, tablas). Para enlaces, escribe la URL completa tal cual (https://...); NUNCA uses el formato [texto](url) — en WhatsApp se ve literal.
 - Emojis con moderación (uno o dos por mensaje, no más).
 
 REGLA DE ORO — precio, stock y promociones
@@ -249,6 +253,14 @@ async function responderLLM(history: { role: string; content: string; model?: st
   return { text: null, toolCalls, tokensIn, tokensOut };
 }
 
+// Limpia formato que WhatsApp NO renderiza (si no, se ve literal): links markdown [texto](url) → URL
+// pelada, y dobles asteriscos → uno solo. (v16 — estilo)
+function limpiarWhatsApp(t: string): string {
+  return t
+    .replace(new RegExp("\\[([^\\]]*)\\]\\((https?://[^)\\s]+)\\)", "g"), "$2")
+    .replace(new RegExp("\\*\\*([^*\\n]+)\\*\\*", "g"), "*$1*");
+}
+
 async function enviarWati(waId: string, texto: string): Promise<boolean> {
   if (!WATI_API_TOKEN || !WATI_API_BASE) return false;
   const u = `${WATI_API_BASE}/api/v1/sendSessionMessage/${encodeURIComponent(waId)}?messageText=${encodeURIComponent(texto)}`;
@@ -274,7 +286,7 @@ function correrEnSegundoPlano(p: Promise<unknown>): void {
 Deno.serve(async (req) => {
   const url = new URL(req.url);
   if (req.method === "GET") {
-    return Response.json({ status: "ok", function: "copilot-webhook", version: "v15-solo-nuevos", mode: MODE, model: MODEL, llm_configured: !!anthropic, wati_send_configured: !!(WATI_API_TOKEN && WATI_API_BASE), live_targets: MODE === "live" ? (LIVE_ALL ? "all" : LIVE_ALLOWLIST.length) : 0, ts: new Date().toISOString() });
+    return Response.json({ status: "ok", function: "copilot-webhook", version: "v16-estilo-whatsapp", mode: MODE, model: MODEL, llm_configured: !!anthropic, wati_send_configured: !!(WATI_API_TOKEN && WATI_API_BASE), live_targets: MODE === "live" ? (LIVE_ALL ? "all" : LIVE_ALLOWLIST.length) : 0, ts: new Date().toISOString() });
   }
   if (req.method !== "POST") return Response.json({ error: "method_not_allowed" }, { status: 405 });
   if (url.searchParams.get("key") !== WEBHOOK_KEY) return Response.json({ error: "forbidden" }, { status: 403 });
@@ -364,9 +376,10 @@ Deno.serve(async (req) => {
         const { data: hist } = await sb.from("messages").select("role,content,model").eq("conversation_id", conv.id).in("role", ["user", "assistant"]).order("created_at", { ascending: false }).limit(10);
         const history = (hist ?? []).reverse();
         const r = await responderLLM(history as any, NEEDS_TOOL_RE.test(texto));
+        const salida = r.text ? limpiarWhatsApp(r.text) : null; // formato apto para WhatsApp (v16)
         let modoFinal = "shadow"; let enviado = false;
-        if (r.text && liveAllowed(waId)) { enviado = await enviarWati(waId, r.text); modoFinal = enviado ? "live" : "shadow"; }
-        await sb.from("messages").insert({ conversation_id: conv.id, role: "assistant", content: r.text, tool_calls: r.toolCalls.length ? r.toolCalls : null, mode: modoFinal, model: anthropic ? MODEL : null, tokens_in: r.tokensIn || null, tokens_out: r.tokensOut || null, latency_ms: Date.now() - t0 });
+        if (salida && liveAllowed(waId)) { enviado = await enviarWati(waId, salida); modoFinal = enviado ? "live" : "shadow"; }
+        await sb.from("messages").insert({ conversation_id: conv.id, role: "assistant", content: salida, tool_calls: r.toolCalls.length ? r.toolCalls : null, mode: modoFinal, model: anthropic ? MODEL : null, tokens_in: r.tokensIn || null, tokens_out: r.tokensOut || null, latency_ms: Date.now() - t0 });
         if (!anthropic) await log("llm_no_configurado", true, { waId });
       } catch (e) {
         await log("error", false, { waId, fase: "async", error: String(e).slice(0, 400) });
