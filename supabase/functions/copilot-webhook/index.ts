@@ -1,7 +1,11 @@
-// === copilot-webhook v8 — Copiloto AI de WATI (MODO SOMBRA) — prompt v2 + new-contact + info_tienda ===
-// v8 (2026-06-15): Fase 1.5 — añade la tool `info_tienda` (envíos/pagos/ubicación/horarios)
-//   que lee de la tabla `store_facts` (fuente única). Reemplaza el "puente honesto" de
-//   LOGÍSTICA/PAGOS del prompt. Resto de v7 intacto. (Rellenar store_facts para activarla.)
+// === copilot-webhook v9 — Copiloto AI de WATI (MODO SOMBRA) — prompt v2 + new-contact + info_tienda + anti-interrupción ===
+// v9 (2026-06-16): guardrail PRE-LLM de anti-interrupción — ante señales de trámite/pago/dato
+//   fiscal (INTERRUPT_RE) o si un humano atendió hace poco (job_log `mensaje_humano` < 45 min),
+//   el bot se ABSTIENE (no llama al LLM, solo loggea). Registra los mensajes del negocio
+//   (owner=true) en job_log. `info_tienda` devuelve TODOS los datos de store_facts (keys del
+//   metaobjeto Shopify store_facts/datos-tienda).
+// v8 (2026-06-15): Fase 1.5 — tool `info_tienda` que lee de `store_facts`. Reemplaza el
+//   "puente honesto" de LOGÍSTICA/PAGOS del prompt.
 // v7 (2026-06-13): maneja el evento WATI `newContactMessageReceived` (sin texto):
 //   marca la conversación como confirmed_new + first_contact_at y lo registra
 //   (señal autoritativa de lead nuevo / conteo). El texto real llega aparte en el
@@ -47,10 +51,11 @@ REGLA ANTI-INTERRUPCIÓN — no te metas si hay un humano atendiendo
   - entrega datos sueltos de un trámite: correo, cédula/RUC, nombre para factura, un monto, comprobante o "le adjunto el pago", instrucciones de retiro/entrega ("el chico va en camino", "que retire X"), confirmaciones tipo "paso el lunes";
   - pregunta por una cotización, pedido o pago YA en curso.
 - Ante la duda, NO interrumpas: es mejor que un humano siga la venta a que tú la cortes. Mensajes sueltos de cierre ("ok", "gracias", "listo", "recibido") no requieren respuesta tuya salvo que claramente te estén preguntando algo.
+- NUNCA captures, repitas ni confirmes datos fiscales, de facturación o de pago (RUC, cédula, razón social, "factura a nombre de", comprobantes, transferencias). Si el cliente los envía, NO los proceses: indica en UNA línea que un asesor se encarga y no pidas más datos.
 
 LOGÍSTICA, PAGOS Y DATOS DE LA TIENDA (envíos, ubicación, horarios, métodos de pago)
 - Para envíos/entregas, ubicación, horarios o métodos de pago usa SIEMPRE la herramienta info_tienda y responde SOLO con lo que devuelva.
-- NUNCA inventes montos de envío, direcciones, horarios ni formas de pago.
+- NUNCA inventes montos de envío, direcciones, horarios ni formas de pago. Para pagos: NUNCA compartas números de cuenta; di que Yappy/ACH/transferencia se coordinan por WhatsApp al confirmar el pedido.
 - Si info_tienda no tiene el dato (devuelve "sin datos disponibles"): dilo con honestidad y deriva a un asesor para confirmarlo. No prometas plazos ni costos específicos.
 
 HANDOFF A HUMANO (deriva con calma y sin prometer de más)
@@ -66,12 +71,26 @@ const TOOLS: Anthropic.Tool[] = [{
   input_schema: { type: "object", properties: { consulta: { type: "string", description: "Términos de búsqueda, ej: 'tinta hp 954 negra'" } }, required: ["consulta"], additionalProperties: false },
 } as Anthropic.Tool, {
   name: "info_tienda",
-  description: "Devuelve datos oficiales de la tienda QSP: envíos/entregas, métodos de pago, ubicación y horarios. Llama esta herramienta SIEMPRE que pregunten por estos temas; responde SOLO con lo que devuelva y NUNCA inventes montos, direcciones, horarios ni formas de pago.",
-  strict: true,
-  input_schema: { type: "object", properties: { tema: { type: "string", enum: ["envios", "pagos", "ubicacion", "horarios", "todos"], description: "Tema consultado; usa 'todos' si piden varios o no está claro." } }, required: ["tema"], additionalProperties: false },
+  description: "Devuelve los datos oficiales de la tienda QSP (envíos/entregas, métodos de pago, ubicación, horarios, devoluciones, contacto) como pares clave→valor. Llama esta herramienta SIEMPRE que pregunten por esos temas y responde SOLO con lo que devuelva; NUNCA inventes montos, direcciones, cuentas ni horarios. Para pagos: NUNCA compartas números de cuenta (Yappy/ACH se coordinan por WhatsApp).",
+  input_schema: { type: "object", properties: { tema: { type: "string", description: "Opcional e informativo: el tema preguntado (envío, pago, ubicación, horario…). La herramienta devuelve TODOS los datos de la tienda." } } },
 } as Anthropic.Tool];
 
 const HANDOFF_RE = /\b(humano|persona|asesor|agente|reclamo|queja|devoluci[oó]n|garant[ií]a|hablar con alguien|supervisor)\b/i;
+
+// Anti-interrupción (guardrail PRE-LLM): señales de un trámite/pago/dato fiscal EN CURSO
+// (típicamente atendido por un humano). Si el texto entrante matchea, el bot se ABSTIENE
+// (no llama al LLM, solo loggea). Sesgo deliberado: mejor callar que cortar una venta humana.
+// Evita matchear preguntas legítimas ("¿aceptan yappy?", "¿dónde retiro?") — esas las
+// resuelve info_tienda.
+const INTERRUPT_RE = new RegExp([
+  // datos fiscales / facturación
+  "\\bruc\\b", "\\bdv\\b", "c[eé]dula", "raz[oó]n social", "factura a nombre", "facturar a", "datos (de|para) (la )?factura", "a nombre de",
+  "\\b\\d{1,4}-\\d{2,4}-\\d{4,7}\\b", // RUC/cédula PA (ej. 557-538-101617); no matchea fechas (último grupo >=4 dígitos)
+  // pago/comprobante EN CURSO (no "¿aceptan X?")
+  "le adjunto", "adjunto (el|la|mi) ?(pago|comprobante|transferencia|recibo)", "comprobante", "ya (le |te )?(hice|mand[eé]|envi[eé]|pagu[eé])", "dep[oó]sit",
+  // entrega/retiro EN CURSO
+  "mensajer[oa]", "el chico", "va en camino", "que retir", "va a retirar", "pas(o|a|ar[eé]) (el |la )?(lunes|martes|mi[eé]rcoles|jueves|viernes|s[aá]bado|domingo|mañana|hoy)",
+].join("|"), "i");
 
 async function buscarProducto(consulta: string): Promise<string> {
   try {
@@ -84,15 +103,16 @@ async function buscarProducto(consulta: string): Promise<string> {
   } catch (e) { return JSON.stringify({ error: String(e).slice(0, 200) }); }
 }
 
-// Fase 1.5 — datos de tienda (envíos/pagos/ubicación/horarios) desde una fuente única (tabla store_facts).
-async function infoTienda(tema: string): Promise<string> {
+// Fase 1.5 — datos de tienda desde una fuente única (tabla store_facts, espejo del
+// metaobjeto Shopify store_facts/datos-tienda). Devuelve TODOS los pares key→value con
+// valor; omite vacíos. Si no hay datos, el bot deriva a un asesor.
+async function infoTienda(): Promise<string> {
   try {
-    let q = sb.from("store_facts").select("key,label,value").not("value", "is", null).neq("value", "");
-    if (tema && tema !== "todos") q = q.eq("key", tema);
-    const { data, error } = await q;
+    const { data, error } = await sb.from("store_facts").select("key,value").not("value", "is", null).neq("value", "");
     if (error) return JSON.stringify({ error: `store_facts: ${error.message}` });
-    const facts = (data ?? []).map((f: any) => ({ tema: f.key, titulo: f.label, info: f.value }));
-    return JSON.stringify(facts.length ? facts : { resultado: "sin datos disponibles; deriva a un asesor" });
+    const facts: Record<string, string> = {};
+    for (const f of (data ?? []) as { key: string; value: string }[]) facts[f.key] = f.value;
+    return JSON.stringify(Object.keys(facts).length ? facts : { resultado: "sin datos disponibles; deriva a un asesor" });
   } catch (e) { return JSON.stringify({ error: String(e).slice(0, 200) }); }
 }
 
@@ -121,7 +141,7 @@ async function responderLLM(history: { role: string; content: string }[]): Promi
         const out = block.name === "buscar_producto"
           ? await buscarProducto((block.input as any).consulta ?? "")
           : block.name === "info_tienda"
-          ? await infoTienda((block.input as any).tema ?? "todos")
+          ? await infoTienda()
           : JSON.stringify({ error: "tool desconocida" });
         results.push({ type: "tool_result", tool_use_id: block.id, content: out });
       }
@@ -145,7 +165,7 @@ async function log(action: string, ok: boolean, detail: unknown) {
 Deno.serve(async (req) => {
   const url = new URL(req.url);
   if (req.method === "GET") {
-    return Response.json({ status: "ok", function: "copilot-webhook", version: "v8-info_tienda", mode: MODE, model: MODEL, llm_configured: !!anthropic, wati_send_configured: !!(WATI_API_TOKEN && WATI_API_BASE), ts: new Date().toISOString() });
+    return Response.json({ status: "ok", function: "copilot-webhook", version: "v9-anti-interrupcion", mode: MODE, model: MODEL, llm_configured: !!anthropic, wati_send_configured: !!(WATI_API_TOKEN && WATI_API_BASE), ts: new Date().toISOString() });
   }
   if (req.method !== "POST") return Response.json({ error: "method_not_allowed" }, { status: 405 });
   if (url.searchParams.get("key") !== WEBHOOK_KEY) return Response.json({ error: "forbidden" }, { status: 403 });
@@ -170,8 +190,15 @@ Deno.serve(async (req) => {
     return Response.json({ ok: true, skipped: "new_contact_sin_waid" });
   }
 
-  if (!waId || !texto || esDelNegocio || tipo !== "text") {
-    if (!esDelNegocio && !texto) await log("evento_sin_texto", true, { tipo, eventType: eventType || null });
+  // Mensaje del negocio (humano/asesor): regístralo en job_log para detectar atención
+  // humana reciente (anti-interrupción) y termina.
+  if (esDelNegocio && waId && texto && tipo === "text") {
+    await log("mensaje_humano", true, { waId });
+    return Response.json({ ok: true, skipped: "mensaje_del_negocio_registrado" });
+  }
+
+  if (!waId || !texto || tipo !== "text") {
+    if (!texto) await log("evento_sin_texto", true, { tipo, eventType: eventType || null });
     return Response.json({ ok: true, skipped: "no_es_mensaje_de_cliente" });
   }
 
@@ -191,6 +218,15 @@ Deno.serve(async (req) => {
 
     if (conv.status === "handoff") return Response.json({ ok: true, skipped: "en_handoff" });
     if (conv.turns_today > MAX_TURNS_DIA) { await log("tope_turnos", true, { waId }); return Response.json({ ok: true, skipped: "tope_diario" }); }
+
+    // Anti-interrupción 1: ¿un humano del equipo atendió esta conversación hace < 45 min?
+    const humanCutoff = new Date(Date.now() - 45 * 60 * 1000).toISOString();
+    const { data: humanRecent } = await sb.from("job_log").select("id").eq("function_name", "copilot-webhook").eq("action", "mensaje_humano").gte("created_at", humanCutoff).filter("detail->>waId", "eq", waId).limit(1);
+    if (humanRecent && humanRecent.length) { await log("abstencion_humano_reciente", true, { waId }); return Response.json({ ok: true, skipped: "humano_atendiendo" }); }
+
+    // Anti-interrupción 2: señales de trámite/pago/dato fiscal en curso → abstenerse.
+    if (INTERRUPT_RE.test(texto)) { await log("abstencion_interrupcion", true, { waId }); return Response.json({ ok: true, skipped: "interrupcion_tramite" }); }
+
     if (HANDOFF_RE.test(texto)) {
       await sb.from("conversations").update({ status: "handoff" }).eq("id", conv.id);
       await sb.from("handoffs").insert({ conversation_id: conv.id, motivo: `keyword: ${texto.slice(0, 120)}` });

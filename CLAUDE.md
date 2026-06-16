@@ -13,10 +13,11 @@ básico y sumando capacidades. Tienda: **quickservicepanama.com** (suministros d
 impresión y tecnología en Panamá).
 
 ## Estado actual (2026-06-15)
-- **EN VIVO: `copilot-webhook` v7, ACTIVE, MODO SOMBRA.** (En el repo: **v8** con
-  Fase 1.5 / tool `info_tienda`, pendiente de desplegar + aplicar la migración
-  `store_facts`.) "Sombra" = registra lo que respondería pero **NO envía nada al
-  cliente**. Cambiar a "live" es una decisión deliberada (env `COPILOT_MODE=live`).
+- **EN VIVO: `copilot-webhook` v7, ACTIVE, MODO SOMBRA.** (En el repo: **v9** —
+  Fase 1.5 `info_tienda` + guardrail de anti-interrupción; pendiente de aplicar la
+  migración `store_facts` y desplegar.) "Sombra" = registra lo que respondería pero
+  **NO envía nada al cliente**. Cambiar a "live" es una decisión deliberada (env
+  `COPILOT_MODE=live`).
 - Tráfico real loggeado: **102 conversaciones, 865 mensajes**. Verificado:
   modelo **Claude Haiku 4.5**, ~**$0.003/turno**, ~**4 s** de latencia.
 - Evento de contacto nuevo de WATI ya cableado (v7).
@@ -50,8 +51,9 @@ WATI (WhatsApp) ──webhook POST?key=──► Supabase Edge Function `copilot
 - **handoffs** — `conversation_id`, `motivo`, `resuelto`.
 - **job_log** — `function_name`, `action`, `ok`, `detail` jsonb (telemetría;
   "nunca romper").
-- **store_facts** (Fase 1.5) — `key` (envios/pagos/ubicacion/horarios), `label`,
-  `value` (vacío = no disponible). Fuente única que lee la tool `info_tienda`.
+- **store_facts** (Fase 1.5) — `key`/`value` (vacío = no disponible). Espejo
+  (snapshot) del metaobjeto Shopify `store_facts/datos-tienda` (canónico, ~17 campos:
+  envío, pagos, ubicación, horario, devoluciones, contacto). Fuente única de `info_tienda`.
 - **RPC `upsert_conversation(p_wa_id, p_sender_name)`** — upsert atómico por
   `wa_id` + incremento del contador diario de turnos. `security definer`, solo
   `service_role`.
@@ -66,10 +68,13 @@ Migraciones (ver `supabase/migrations/`):
 2. **POST**: valida `?key=` (guard, porque `verify_jwt=false`) → parse JSON.
 3. Si `eventType` incluye `newcontact` (evento WATI `newContactMessageReceived`,
    sin texto): marca `confirmed_new=true` + `first_contact_at`, loggea y retorna.
-4. Filtra: sin `waId`/sin texto/`owner=true` (mensaje del negocio)/`type!=text` → skip.
+4. Filtra: sin `waId`/sin texto/`type!=text` → skip. `owner=true` (mensaje del negocio)
+   → se registra en job_log (`mensaje_humano`, para anti-interrupción) y retorna.
 5. `upsert_conversation` → inserta msg de usuario (dedup por `wati_message_id`).
-6. Cortes: si `status=handoff` → skip; si `turns_today>40` → skip; si el texto
-   matchea `HANDOFF_RE` (humano|asesor|reclamo|garantía|devolución|…) → handoff.
+6. Cortes: si `status=handoff` → skip; si `turns_today>40` → skip. **Anti-interrupción
+   (v9):** si un humano atendió hace <45 min (job_log `mensaje_humano`) o el texto matchea
+   `INTERRUPT_RE` (RUC/cédula/razón social/pago/comprobante/mensajero…) → ABSTENERSE (no
+   llama al LLM). Si matchea `HANDOFF_RE` (humano|asesor|reclamo|…) → handoff.
 7. Trae historial (últimos 8 user/assistant) → `responderLLM` (Haiku + loop de
    tool use, máx 4 iteraciones).
 8. Inserta respuesta del assistant con `mode` shadow|live. En **live** además
@@ -94,9 +99,8 @@ Reglas clave (texto completo en `index.ts`, const `SYSTEM_PROMPT`):
 - **`buscar_producto(consulta)`** — `GET ${STORE}/search/suggest.json?q=...`
   (`STORE=https://www.quickservicepanama.com`). Devuelve `{titulo, precio_usd,
   disponible, url}` (máx 5).
-- **`info_tienda(tema)`** (Fase 1.5) — lee la tabla `store_facts` y devuelve
-  `{tema, titulo, info}` para `envios|pagos|ubicacion|horarios|todos`. Omite los
-  vacíos; si no hay dato, el bot deriva a un asesor.
+- **`info_tienda()`** (Fase 1.5) — lee `store_facts` y devuelve TODOS los pares
+  `key→value` con valor (omite vacíos); si no hay datos, el bot deriva a un asesor.
 
 ## Variables de entorno / secretos (en Supabase Edge Function secrets — NO en el repo)
 `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, `ANTHROPIC_API_KEY`, `WATI_API_TOKEN`,
@@ -107,6 +111,9 @@ Reglas clave (texto completo en `index.ts`, const `SYSTEM_PROMPT`):
 - **MODO SOMBRA por defecto.** No enviar a clientes hasta encender `COPILOT_MODE=live`
   a propósito. Cualquier cambio que pueda mandar mensajes reales = avisar antes.
 - **Anti-interrupción es sagrada:** mejor no contestar que cortar una venta humana.
+  Reforzada en v9 con guardrail PRE-LLM en código (`INTERRUPT_RE` + humano reciente vía
+  job_log) que ABSTIENE al bot ante trámites/pagos/datos fiscales. El bot NUNCA captura ni
+  repite RUC/datos de factura/pago.
 - **Auto-expose OFF** en este proyecto → toda tabla nueva necesita `GRANT` manual a
   `service_role` (si no, la función da `permission denied`).
 - **RLS on sin policies** = solo `service_role`. El `?key=` es obligatorio.
