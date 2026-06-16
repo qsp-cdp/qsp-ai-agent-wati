@@ -1,3 +1,8 @@
+// === copilot-webhook v13 — Copiloto AI de WATI — contexto de asesores + anti-eco + piloto live por allowlist ===
+// v13 (2026-06-16): (1) guarda los mensajes de asesores (owner=true) en el hilo para CONTEXTO
+//   completo del agente; (2) guardia anti-eco (no confunde los envíos propios del bot con un
+//   humano → evita auto-abstención en live); (3) piloto: COPILOT_LIVE_ALLOWLIST limita el envío
+//   (vacío = nadie; "all" = todos); (4) descarta "assistant" al inicio del historial.
 // === copilot-webhook v12 — Copiloto AI de WATI (MODO SOMBRA) — todo lo anterior + forzado de tools ===
 // v12 (2026-06-16): el prompt v11 no bastó con Haiku (seguía inventando precios/stock en
 //   preguntas de categoría). Ahora se FUERZA el uso de tool (tool_choice:"any" en la 1ª
@@ -38,6 +43,16 @@ const MODEL = Deno.env.get("COPILOT_MODEL") ?? "claude-haiku-4-5";
 const WEBHOOK_KEY = Deno.env.get("COPILOT_WEBHOOK_KEY") ?? "cw-qsp-9f2e7b3a1c5d4806";
 const MAX_TURNS_DIA = 40;
 const STORE = "https://www.quickservicepanama.com";
+
+// Piloto gradual: en live, SOLO se envía a estos wa_id. Vacío = no se envía a nadie (sigue
+// registrando en sombra); "all"/"*" = todos. Evita ir a live total por accidente.
+const LIVE_RAW = (Deno.env.get("COPILOT_LIVE_ALLOWLIST") ?? "").trim().toLowerCase();
+const LIVE_ALL = LIVE_RAW === "all" || LIVE_RAW === "*";
+const LIVE_ALLOWLIST = LIVE_RAW.split(",").map((s) => s.replace(/\D/g, "")).filter(Boolean);
+function liveAllowed(waId: string): boolean {
+  if (MODE !== "live") return false;
+  return LIVE_ALL || LIVE_ALLOWLIST.includes(waId);
+}
 
 const sb = createClient(SB_URL, SB_KEY, { auth: { persistSession: false } });
 const anthropic = ANTHROPIC_API_KEY ? new Anthropic({ apiKey: ANTHROPIC_API_KEY }) : null;
@@ -179,14 +194,19 @@ async function infoTienda(): Promise<string> {
   } catch (e) { return JSON.stringify({ error: String(e).slice(0, 200) }); }
 }
 
-async function responderLLM(history: { role: string; content: string }[], forceTool: boolean): Promise<{ text: string | null; toolCalls: unknown[]; tokensIn: number; tokensOut: number }> {
+async function responderLLM(history: { role: string; content: string; model?: string | null }[], forceTool: boolean): Promise<{ text: string | null; toolCalls: unknown[]; tokensIn: number; tokensOut: number }> {
   if (!anthropic) return { text: null, toolCalls: [], tokensIn: 0, tokensOut: 0 };
-  const esNuevo = history.length <= 1;
+  // La API exige que el primer mensaje sea del usuario: descarta "assistant" al inicio
+  // (puede pasar si un asesor escribió primero).
+  const hist = [...history];
+  while (hist.length && hist[0].role === "assistant") hist.shift();
+  const esNuevo = hist.length <= 1;
   const ctx = esNuevo
     ? "\n\nCONTEXTO INTERNO: Es la PRIMERA interacción registrada de este contacto (aplica bienvenida + presentación una sola vez)."
     : "\n\nCONTEXTO INTERNO: Contacto con conversación ya en curso (NO repitas bienvenida ni presentación; ve al grano).";
   const system = SYSTEM_PROMPT + ctx;
-  const messages: Anthropic.MessageParam[] = history.map((m) => ({ role: m.role === "assistant" ? "assistant" as const : "user" as const, content: m.content || "(vacío)" }));
+  // Los mensajes de un asesor humano se marcan para que el agente sepa que los dijo una persona.
+  const messages: Anthropic.MessageParam[] = hist.map((m) => ({ role: m.role === "assistant" ? "assistant" as const : "user" as const, content: (m.model === "human-agent" ? "[Asesor del equipo]: " : "") + (m.content || "(vacío)") }));
   const toolCalls: unknown[] = [];
   let tokensIn = 0, tokensOut = 0;
   for (let i = 0; i < 4; i++) {
@@ -231,7 +251,7 @@ async function log(action: string, ok: boolean, detail: unknown) {
 Deno.serve(async (req) => {
   const url = new URL(req.url);
   if (req.method === "GET") {
-    return Response.json({ status: "ok", function: "copilot-webhook", version: "v12-tools-forzadas", mode: MODE, model: MODEL, llm_configured: !!anthropic, wati_send_configured: !!(WATI_API_TOKEN && WATI_API_BASE), ts: new Date().toISOString() });
+    return Response.json({ status: "ok", function: "copilot-webhook", version: "v13-contexto-piloto", mode: MODE, model: MODEL, llm_configured: !!anthropic, wati_send_configured: !!(WATI_API_TOKEN && WATI_API_BASE), live_targets: MODE === "live" ? (LIVE_ALL ? "all" : LIVE_ALLOWLIST.length) : 0, ts: new Date().toISOString() });
   }
   if (req.method !== "POST") return Response.json({ error: "method_not_allowed" }, { status: 405 });
   if (url.searchParams.get("key") !== WEBHOOK_KEY) return Response.json({ error: "forbidden" }, { status: 403 });
@@ -256,10 +276,19 @@ Deno.serve(async (req) => {
     return Response.json({ ok: true, skipped: "new_contact_sin_waid" });
   }
 
-  // Mensaje del negocio (humano/asesor): regístralo en job_log para detectar atención
-  // humana reciente (anti-interrupción) y termina.
+  // Mensaje del negocio (owner=true): puede ser un ASESOR humano o el ECO de un envío propio del bot.
   if (esDelNegocio && waId && texto && tipo === "text") {
-    await log("mensaje_humano", true, { waId });
+    const { data: convH } = await sb.from("conversations").select("id").eq("wa_id", waId).maybeSingle();
+    if (convH?.id) {
+      // ¿Eco de un envío propio reciente del bot? (mismo texto, respuesta del bot < 5 min) → ignorar.
+      const desde = new Date(Date.now() - 5 * 60 * 1000).toISOString();
+      const { data: eco } = await sb.from("messages").select("id").eq("conversation_id", convH.id)
+        .eq("role", "assistant").neq("model", "human-agent").eq("content", texto).gte("created_at", desde).limit(1);
+      if (eco && eco.length) return Response.json({ ok: true, skipped: "eco_propio" });
+      // Asesor humano real: guárdalo en el hilo (contexto para el agente) + marca atención humana.
+      await sb.from("messages").insert({ conversation_id: convH.id, role: "assistant", content: texto.slice(0, 4000), mode: "live", model: "human-agent" });
+      await log("mensaje_humano", true, { waId });
+    }
     return Response.json({ ok: true, skipped: "mensaje_del_negocio_registrado" });
   }
 
@@ -297,17 +326,17 @@ Deno.serve(async (req) => {
       await sb.from("conversations").update({ status: "handoff" }).eq("id", conv.id);
       await sb.from("handoffs").insert({ conversation_id: conv.id, motivo: `keyword: ${texto.slice(0, 120)}` });
       const despedida = "Con gusto, ya le paso con un asesor que le responderá en breve. ¡Gracias por escribirnos!";
-      const enviado = MODE === "live" ? await enviarWati(waId, despedida) : false;
+      const enviado = liveAllowed(waId) ? await enviarWati(waId, despedida) : false;
       await sb.from("messages").insert({ conversation_id: conv.id, role: "assistant", content: despedida, mode: enviado ? "live" : "shadow", latency_ms: Date.now() - t0 });
       return Response.json({ ok: true, handoff: true });
     }
 
-    const { data: hist } = await sb.from("messages").select("role,content").eq("conversation_id", conv.id).in("role", ["user", "assistant"]).order("created_at", { ascending: false }).limit(8);
+    const { data: hist } = await sb.from("messages").select("role,content,model").eq("conversation_id", conv.id).in("role", ["user", "assistant"]).order("created_at", { ascending: false }).limit(10);
     const history = (hist ?? []).reverse();
     const r = await responderLLM(history as any, NEEDS_TOOL_RE.test(texto));
 
     let modoFinal = "shadow"; let enviado = false;
-    if (r.text && MODE === "live") { enviado = await enviarWati(waId, r.text); modoFinal = enviado ? "live" : "shadow"; }
+    if (r.text && liveAllowed(waId)) { enviado = await enviarWati(waId, r.text); modoFinal = enviado ? "live" : "shadow"; }
     await sb.from("messages").insert({ conversation_id: conv.id, role: "assistant", content: r.text, tool_calls: r.toolCalls.length ? r.toolCalls : null, mode: modoFinal, model: anthropic ? MODEL : null, tokens_in: r.tokensIn || null, tokens_out: r.tokensOut || null, latency_ms: Date.now() - t0 });
     if (!anthropic) await log("llm_no_configurado", true, { waId });
     return Response.json({ ok: true, mode: modoFinal, respondido: !!r.text, enviado, nuevo: history.length <= 1 });
