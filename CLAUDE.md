@@ -13,9 +13,9 @@ básico y sumando capacidades. Tienda: **quickservicepanama.com** (suministros d
 impresión y tecnología en Panamá).
 
 ## Estado actual (2026-06-15)
-- **EN VIVO: `copilot-webhook` v7, ACTIVE, MODO SOMBRA.** (En el repo: **v9** —
-  Fase 1.5 `info_tienda` + guardrail de anti-interrupción; pendiente de aplicar la
-  migración `store_facts` y desplegar.) "Sombra" = registra lo que respondería pero
+- **EN VIVO: `copilot-webhook` v7, ACTIVE, MODO SOMBRA.** (En el repo: **v10** —
+  Fase 1.5 `info_tienda` + anti-interrupción + búsqueda de productos robusta; pendiente
+  de aplicar la migración `store_facts` y desplegar.) "Sombra" = registra lo que respondería pero
   **NO envía nada al cliente**. Cambiar a "live" es una decisión deliberada (env
   `COPILOT_MODE=live`).
 - Tráfico real loggeado: **102 conversaciones, 865 mensajes**. Verificado:
@@ -82,10 +82,16 @@ Migraciones (ver `supabase/migrations/`):
 
 ## System prompt v2 (íntegro — es el corazón del comportamiento)
 Reglas clave (texto completo en `index.ts`, const `SYSTEM_PROMPT`):
+- **MISIÓN (v10):** apoyar al equipo humano; responder con certeza lo que se pueda y
+  callar/derivar ante la duda o si puede comprometer a la empresa. Mejor no responder
+  que responder mal.
 - **ESTILO:** mensajes cortos (1-3 oraciones), tono panameño, **negrita con UN
   solo asterisco** `*así*` (NUNCA `**` — en WhatsApp se ve literal), sin Markdown.
 - **REGLA DE ORO:** precio/stock/promos SOLO vía tool `buscar_producto`; nunca
   inventar.
+- **BÚSQUEDA (v10):** términos concisos (marca+modelo; el modelo es la señal más fuerte);
+  sinónimos/línea (Pixma↔Canon…); reformular si no encuentra; preguntas de categoría con
+  1-2 ejemplos; NO afirmar compatibilidad sin evidencia del catálogo.
 - **CONTACTO NUEVO vs CONOCIDO:** bienvenida+presentación una sola vez al nuevo;
   al conocido ir al grano.
 - **REGLA ANTI-INTERRUPCIÓN:** si un humano está atendiendo (datos de trámite,
@@ -98,7 +104,9 @@ Reglas clave (texto completo en `index.ts`, const `SYSTEM_PROMPT`):
 ## Tools
 - **`buscar_producto(consulta)`** — `GET ${STORE}/search/suggest.json?q=...`
   (`STORE=https://www.quickservicepanama.com`). Devuelve `{titulo, precio_usd,
-  disponible, url}` (máx 5).
+  disponible, marca, tipo, url}` (máx 5). v10: si la consulta libre no encuentra,
+  reintenta por número/código de modelo (G2170, 954…); el prompt maneja sinónimos/línea
+  (Pixma↔Canon, EcoTank↔Epson) y preguntas de categoría, y el LLM puede reformular.
 - **`info_tienda()`** (Fase 1.5) — lee `store_facts` y devuelve TODOS los pares
   `key→value` con valor (omite vacíos); si no hay datos, el bot deriva a un asesor.
 

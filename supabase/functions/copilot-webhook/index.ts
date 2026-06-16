@@ -1,3 +1,8 @@
+// === copilot-webhook v10 — Copiloto AI de WATI (MODO SOMBRA) — prompt v2 + new-contact + info_tienda + anti-interrupción + búsqueda robusta ===
+// v10 (2026-06-16): misión "apoyar al equipo humano"; búsqueda de productos más robusta
+//   (fallback por número/código de modelo cuando la consulta libre no encuentra; manejo de
+//   sinónimos/línea y preguntas de categoría vía prompt; resultados con marca/tipo) y regla
+//   de NO afirmar compatibilidad sin evidencia del catálogo.
 // === copilot-webhook v9 — Copiloto AI de WATI (MODO SOMBRA) — prompt v2 + new-contact + info_tienda + anti-interrupción ===
 // v9 (2026-06-16): guardrail PRE-LLM de anti-interrupción — ante señales de trámite/pago/dato
 //   fiscal (INTERRUPT_RE) o si un humano atendió hace poco (job_log `mensaje_humano` < 45 min),
@@ -30,6 +35,9 @@ const anthropic = ANTHROPIC_API_KEY ? new Anthropic({ apiKey: ANTHROPIC_API_KEY 
 
 const SYSTEM_PROMPT = `Eres el asistente de Quick Service Panamá (quickservicepanama.com), tienda de suministros de impresión y tecnología en Panamá. Atiendes por WhatsApp.
 
+MISIÓN
+- Tu trabajo es APOYAR al equipo humano de QSP: adelanta lo que puedas responder con certeza (precio, disponibilidad, información general y de la tienda) y, cuando no estés seguro o una respuesta pueda comprometer a la empresa con una promesa, NO respondas: deja que un asesor humano siga. Mejor no responder que responder mal. Nunca inventes ni prometas de más.
+
 ESTILO
 - Mensajes CORTOS: 1 a 3 oraciones. Tono cordial panameño, en español, cercano.
 - Negrita SOLO con UN asterisco: *así*. NUNCA uses dobles asteriscos (**texto**), porque en WhatsApp se ven literales y se ve mal. Tampoco uses otra sintaxis de Markdown (#, listas con guion, tablas).
@@ -40,6 +48,13 @@ REGLA DE ORO — precio, stock y promociones
 - NUNCA inventes precios, existencias, descuentos ni promociones.
 - Incluye el link del producto cuando lo tengas.
 - Si la tool no encuentra el producto, o piden algo fuera de catálogo: discúlpate breve e indica que un asesor confirmará disponibilidad y opciones.
+
+BÚSQUEDA DE PRODUCTOS (cómo usar buscar_producto)
+- Convierte lo que pide el cliente en términos CONCISOS. Quita relleno ("¿venden?", "tienen", "necesito", "para") y conserva la MARCA y sobre todo el MODELO — el número/código de modelo es la señal más fuerte. Ej.: "¿venden tinta para mi Canon Pixma G2170?" → busca "tinta G2170".
+- Un mismo producto se nombra de varias formas: "Canon" ↔ línea "Pixma"; "Epson" ↔ "EcoTank"/"WorkForce"; "HP" ↔ "DeskJet/LaserJet/OfficeJet". Para "tinta para [impresora]", busca por el modelo de la impresora (la tinta suele indicar los modelos compatibles) y, si hace falta, por el modelo de la tinta.
+- Si la primera búsqueda no encuentra, REFORMULA y vuelve a llamar buscar_producto (prueba solo el número de modelo, la línea, o el modelo de la tinta) ANTES de derivar.
+- Preguntas genéricas de categoría ("¿venden impresoras Epson?", "¿manejan toner?"): busca la categoría/marca y responde sí/no con 1-2 ejemplos concretos y su precio; invita a indicar el modelo. No listes más de 2-3.
+- COMPATIBILIDAD: NO afirmes que un producto sirve para cierto equipo a menos que el resultado de buscar_producto lo indique. Si no estás seguro, dilo y deja que un asesor confirme.
 
 CONTACTO NUEVO vs CONOCIDO
 - Si es la PRIMERA interacción de este contacto: da una bienvenida cálida y breve, preséntate como Quick Service Panamá (suministros de impresión y tecnología) y pregunta en qué le puedes ayudar. Una sola vez, sin repetirla.
@@ -66,7 +81,7 @@ LÍMITES
 
 const TOOLS: Anthropic.Tool[] = [{
   name: "buscar_producto",
-  description: "Busca productos en el catálogo de Quick Service Panamá. Llama esta herramienta SIEMPRE que el cliente pregunte precio, disponibilidad/stock, o mencione un producto (tinta, toner, impresora, etc.). Devuelve título, precio en USD, disponibilidad y link.",
+  description: "Busca productos en el catálogo de Quick Service Panamá (Shopify). Llámala SIEMPRE que el cliente pregunte precio, disponibilidad/stock, compatibilidad, o mencione/insinúe un producto, marca o categoría (tinta, toner, impresora Epson/Canon/HP, etc.). Pasa términos CONCISOS: marca + MODELO (el número de modelo es la mejor señal); para 'tinta para [impresora]' busca por el modelo de la impresora. Puedes llamarla varias veces reformulando si no encuentras. Devuelve título, precio USD, disponibilidad, marca, tipo y link (máx 5).",
   strict: true,
   input_schema: { type: "object", properties: { consulta: { type: "string", description: "Términos de búsqueda, ej: 'tinta hp 954 negra'" } }, required: ["consulta"], additionalProperties: false },
 } as Anthropic.Tool, {
@@ -92,15 +107,45 @@ const INTERRUPT_RE = new RegExp([
   "mensajer[oa]", "el chico", "va en camino", "que retir", "va a retirar", "pas(o|a|ar[eé]) (el |la )?(lunes|martes|mi[eé]rcoles|jueves|viernes|s[aá]bado|domingo|mañana|hoy)",
 ].join("|"), "i");
 
+// Una llamada al buscador predictivo de Shopify (suggest.json). Devuelve [] si no hay
+// resultados; lanza solo ante error de red/HTTP (lo maneja buscarProducto).
+async function suggestShopify(q: string): Promise<any[]> {
+  const u = `${STORE}/search/suggest.json?q=${encodeURIComponent(q)}&resources%5Btype%5D=product&resources%5Blimit%5D=5&resources%5Boptions%5D%5Bunavailable_products%5D=show`;
+  const r = await fetch(u, { signal: AbortSignal.timeout(8000) });
+  if (!r.ok) throw new Error(`tienda respondió ${r.status}`);
+  const j = await r.json();
+  return (j?.resources?.results?.products ?? []).map((p: any) => ({
+    titulo: p.title,
+    precio_usd: p.price,
+    disponible: p.available === true,
+    marca: p.vendor || undefined,
+    tipo: p.product_type || p.type || undefined,
+    url: p.url?.startsWith("http") ? p.url : `${STORE}${p.url ?? ""}`,
+  }));
+}
+
+// Extrae códigos/números de modelo (la señal más fuerte para hallar el producto correcto
+// pese a sinónimos/alias): G2170, L3250, GI-11, TS3450, 954, 664...
+function modelosEn(q: string): string[] {
+  const t = new Set<string>();
+  for (const m of q.matchAll(/\b[a-z]{1,4}-?\d{2,5}[a-z]{0,3}\b/gi)) t.add(m[0]);
+  for (const m of q.matchAll(/\b\d{3,4}\b/g)) t.add(m[0]);
+  return [...t].slice(0, 3);
+}
+
 async function buscarProducto(consulta: string): Promise<string> {
-  try {
-    const u = `${STORE}/search/suggest.json?q=${encodeURIComponent(consulta)}&resources%5Btype%5D=product&resources%5Blimit%5D=5&resources%5Boptions%5D%5Bunavailable_products%5D=show`;
-    const r = await fetch(u, { signal: AbortSignal.timeout(8000) });
-    if (!r.ok) return JSON.stringify({ error: `tienda respondió ${r.status}` });
-    const j = await r.json();
-    const prods = (j?.resources?.results?.products ?? []).map((p: any) => ({ titulo: p.title, precio_usd: p.price, disponible: p.available === true, url: p.url?.startsWith("http") ? p.url : `${STORE}${p.url ?? ""}` }));
-    return JSON.stringify(prods.length ? prods : { resultado: "sin coincidencias en el catálogo" });
-  } catch (e) { return JSON.stringify({ error: String(e).slice(0, 200) }); }
+  // Primero la consulta libre tal cual; si no hay resultados, reintenta por número/código de modelo.
+  const base = consulta.trim().toLowerCase();
+  const intentos = [consulta, ...modelosEn(consulta).filter((m) => m.toLowerCase() !== base)];
+  let lastErr: string | null = null;
+  for (const q of intentos) {
+    try {
+      const prods = await suggestShopify(q);
+      if (prods.length) return JSON.stringify(prods.slice(0, 5));
+    } catch (e) { lastErr = String(e).slice(0, 120); }
+  }
+  if (lastErr) return JSON.stringify({ error: lastErr });
+  return JSON.stringify({ resultado: "sin coincidencias en el catálogo" });
 }
 
 // Fase 1.5 — datos de tienda desde una fuente única (tabla store_facts, espejo del
@@ -165,7 +210,7 @@ async function log(action: string, ok: boolean, detail: unknown) {
 Deno.serve(async (req) => {
   const url = new URL(req.url);
   if (req.method === "GET") {
-    return Response.json({ status: "ok", function: "copilot-webhook", version: "v9-anti-interrupcion", mode: MODE, model: MODEL, llm_configured: !!anthropic, wati_send_configured: !!(WATI_API_TOKEN && WATI_API_BASE), ts: new Date().toISOString() });
+    return Response.json({ status: "ok", function: "copilot-webhook", version: "v10-busqueda-robusta", mode: MODE, model: MODEL, llm_configured: !!anthropic, wati_send_configured: !!(WATI_API_TOKEN && WATI_API_BASE), ts: new Date().toISOString() });
   }
   if (req.method !== "POST") return Response.json({ error: "method_not_allowed" }, { status: 405 });
   if (url.searchParams.get("key") !== WEBHOOK_KEY) return Response.json({ error: "forbidden" }, { status: 403 });
