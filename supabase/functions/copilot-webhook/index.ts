@@ -1,4 +1,8 @@
-// === copilot-webhook v11 — Copiloto AI de WATI (MODO SOMBRA) — todo lo anterior + datos siempre fundamentados en tools ===
+// === copilot-webhook v12 — Copiloto AI de WATI (MODO SOMBRA) — todo lo anterior + forzado de tools ===
+// v12 (2026-06-16): el prompt v11 no bastó con Haiku (seguía inventando precios/stock en
+//   preguntas de categoría). Ahora se FUERZA el uso de tool (tool_choice:"any" en la 1ª
+//   iteración) cuando el mensaje pide datos de catálogo/tienda (NEEDS_TOOL_RE) → grounding
+//   garantizado en buscar_producto/info_tienda.
 // v11 (2026-06-16): regla dura "sin tool, sin datos" — el bot NO menciona producto/precio/stock
 //   sin buscar_producto, ni envíos/pagos/ubicación/horarios sin info_tienda (single source =
 //   store_facts; se quita la data duplicada del prompt). Corrige que inventara precios en
@@ -113,7 +117,15 @@ const INTERRUPT_RE = new RegExp([
   "mensajer[oa]", "el chico", "va en camino", "que retir", "va a retirar", "pas(o|a|ar[eé]) (el |la )?(lunes|martes|mi[eé]rcoles|jueves|viernes|s[aá]bado|domingo|mañana|hoy)",
 ].join("|"), "i");
 
-// Una llamada al buscador predictivo de Shopify (suggest.json). Devuelve [] si no hay
+// Mensajes que piden datos de catálogo o de la tienda → forzar uso de tool (tool_choice:"any").
+// Haiku a veces responde "de memoria" en preguntas genéricas; esto lo obliga a buscar/consultar.
+// No incluye saludos/acks (esos no fuerzan tool). garantía/devolución las intercepta HANDOFF_RE.
+const NEEDS_TOOL_RE = new RegExp([
+  "impresor", "multifuncional", "\\btinta", "t[oó]ner", "toner", "cartuch", "consumible", "\\bpapel", "resma",
+  "precio", "cu[aá]nto", "cuesta", "cotiza", "disponib", "stock", "existenc", "\\bmodelo", "\\bvende", "manejan",
+  "epson", "canon", "\\bhp\\b", "brother", "pixma", "ecotank", "workforce", "laserjet", "deskjet", "officejet", "\\bg\\d{3,4}\\b", "\\bl\\d{3,4}\\b", "gi-?\\d",
+  "env[ií]o", "entrega", "delivery", "horario", "ubicaci", "direcci", "\\bd[oó]nde\\b", "\\bpago", "pagar", "yappy", "\\bach\\b", "transferen", "tarjeta", "reembols",
+].join("|"), "i");
 // resultados; lanza solo ante error de red/HTTP (lo maneja buscarProducto).
 async function suggestShopify(q: string): Promise<any[]> {
   const u = `${STORE}/search/suggest.json?q=${encodeURIComponent(q)}&resources%5Btype%5D=product&resources%5Blimit%5D=5&resources%5Boptions%5D%5Bunavailable_products%5D=show`;
@@ -167,7 +179,7 @@ async function infoTienda(): Promise<string> {
   } catch (e) { return JSON.stringify({ error: String(e).slice(0, 200) }); }
 }
 
-async function responderLLM(history: { role: string; content: string }[]): Promise<{ text: string | null; toolCalls: unknown[]; tokensIn: number; tokensOut: number }> {
+async function responderLLM(history: { role: string; content: string }[], forceTool: boolean): Promise<{ text: string | null; toolCalls: unknown[]; tokensIn: number; tokensOut: number }> {
   if (!anthropic) return { text: null, toolCalls: [], tokensIn: 0, tokensOut: 0 };
   const esNuevo = history.length <= 1;
   const ctx = esNuevo
@@ -178,7 +190,10 @@ async function responderLLM(history: { role: string; content: string }[]): Promi
   const toolCalls: unknown[] = [];
   let tokensIn = 0, tokensOut = 0;
   for (let i = 0; i < 4; i++) {
-    const resp = await anthropic.messages.create({ model: MODEL, max_tokens: 1024, system, tools: TOOLS, messages });
+    const resp = await anthropic.messages.create({
+      model: MODEL, max_tokens: 1024, system, tools: TOOLS, messages,
+      ...(i === 0 && forceTool ? { tool_choice: { type: "any" as const } } : {}),
+    });
     tokensIn += resp.usage.input_tokens; tokensOut += resp.usage.output_tokens;
     if (resp.stop_reason !== "tool_use") {
       const text = resp.content.filter((b) => b.type === "text").map((b: any) => b.text).join("\n").trim();
@@ -216,7 +231,7 @@ async function log(action: string, ok: boolean, detail: unknown) {
 Deno.serve(async (req) => {
   const url = new URL(req.url);
   if (req.method === "GET") {
-    return Response.json({ status: "ok", function: "copilot-webhook", version: "v11-fundamentado", mode: MODE, model: MODEL, llm_configured: !!anthropic, wati_send_configured: !!(WATI_API_TOKEN && WATI_API_BASE), ts: new Date().toISOString() });
+    return Response.json({ status: "ok", function: "copilot-webhook", version: "v12-tools-forzadas", mode: MODE, model: MODEL, llm_configured: !!anthropic, wati_send_configured: !!(WATI_API_TOKEN && WATI_API_BASE), ts: new Date().toISOString() });
   }
   if (req.method !== "POST") return Response.json({ error: "method_not_allowed" }, { status: 405 });
   if (url.searchParams.get("key") !== WEBHOOK_KEY) return Response.json({ error: "forbidden" }, { status: 403 });
@@ -289,7 +304,7 @@ Deno.serve(async (req) => {
 
     const { data: hist } = await sb.from("messages").select("role,content").eq("conversation_id", conv.id).in("role", ["user", "assistant"]).order("created_at", { ascending: false }).limit(8);
     const history = (hist ?? []).reverse();
-    const r = await responderLLM(history as any);
+    const r = await responderLLM(history as any, NEEDS_TOOL_RE.test(texto));
 
     let modoFinal = "shadow"; let enviado = false;
     if (r.text && MODE === "live") { enviado = await enviarWati(waId, r.text); modoFinal = enviado ? "live" : "shadow"; }
