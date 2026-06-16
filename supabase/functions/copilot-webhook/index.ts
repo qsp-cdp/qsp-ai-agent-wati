@@ -1,3 +1,8 @@
+// === copilot-webhook v14 — Copiloto AI de WATI — respuesta rápida a WATI (procesa en segundo plano) ===
+// v14 (2026-06-16): el webhook responde 200 al instante y hace el trabajo lento (historial +
+//   LLM + envío + guardado) en SEGUNDO PLANO (EdgeRuntime.waitUntil). Evita el timeout de WATI
+//   (que marcaba las entregas como "Err" y reintentaba). La deduplicación del mensaje de usuario
+//   sigue siendo síncrona (antes de responder), así que los reintentos quedan cubiertos.
 // === copilot-webhook v13 — Copiloto AI de WATI — contexto de asesores + anti-eco + piloto live por allowlist ===
 // v13 (2026-06-16): (1) guarda los mensajes de asesores (owner=true) en el hilo para CONTEXTO
 //   completo del agente; (2) guardia anti-eco (no confunde los envíos propios del bot con un
@@ -248,10 +253,21 @@ async function log(action: string, ok: boolean, detail: unknown) {
   try { await sb.from("job_log").insert({ function_name: "copilot-webhook", action, ok, detail }); } catch { /* nunca romper */ }
 }
 
+// Corre una tarea DESPUÉS de responder, manteniendo viva la instancia (Supabase
+// EdgeRuntime.waitUntil). Si el runtime no expone waitUntil, la tarea igual ya está
+// corriendo; su try/catch interno evita que rompa nada.
+function correrEnSegundoPlano(p: Promise<unknown>): void {
+  try {
+    const er = (globalThis as any).EdgeRuntime;
+    if (er && typeof er.waitUntil === "function") er.waitUntil(p);
+  } catch { /* nunca romper */ }
+  void p;
+}
+
 Deno.serve(async (req) => {
   const url = new URL(req.url);
   if (req.method === "GET") {
-    return Response.json({ status: "ok", function: "copilot-webhook", version: "v13-contexto-piloto", mode: MODE, model: MODEL, llm_configured: !!anthropic, wati_send_configured: !!(WATI_API_TOKEN && WATI_API_BASE), live_targets: MODE === "live" ? (LIVE_ALL ? "all" : LIVE_ALLOWLIST.length) : 0, ts: new Date().toISOString() });
+    return Response.json({ status: "ok", function: "copilot-webhook", version: "v14-ack-rapido", mode: MODE, model: MODEL, llm_configured: !!anthropic, wati_send_configured: !!(WATI_API_TOKEN && WATI_API_BASE), live_targets: MODE === "live" ? (LIVE_ALL ? "all" : LIVE_ALLOWLIST.length) : 0, ts: new Date().toISOString() });
   }
   if (req.method !== "POST") return Response.json({ error: "method_not_allowed" }, { status: 405 });
   if (url.searchParams.get("key") !== WEBHOOK_KEY) return Response.json({ error: "forbidden" }, { status: 403 });
@@ -331,15 +347,24 @@ Deno.serve(async (req) => {
       return Response.json({ ok: true, handoff: true });
     }
 
-    const { data: hist } = await sb.from("messages").select("role,content,model").eq("conversation_id", conv.id).in("role", ["user", "assistant"]).order("created_at", { ascending: false }).limit(10);
-    const history = (hist ?? []).reverse();
-    const r = await responderLLM(history as any, NEEDS_TOOL_RE.test(texto));
-
-    let modoFinal = "shadow"; let enviado = false;
-    if (r.text && liveAllowed(waId)) { enviado = await enviarWati(waId, r.text); modoFinal = enviado ? "live" : "shadow"; }
-    await sb.from("messages").insert({ conversation_id: conv.id, role: "assistant", content: r.text, tool_calls: r.toolCalls.length ? r.toolCalls : null, mode: modoFinal, model: anthropic ? MODEL : null, tokens_in: r.tokensIn || null, tokens_out: r.tokensOut || null, latency_ms: Date.now() - t0 });
-    if (!anthropic) await log("llm_no_configurado", true, { waId });
-    return Response.json({ ok: true, mode: modoFinal, respondido: !!r.text, enviado, nuevo: history.length <= 1 });
+    // Trabajo lento (historial + LLM + envío + guardado) en SEGUNDO PLANO: así le
+    // respondemos a WATI al instante y evitamos su timeout/reintentos (v14). El insert
+    // del mensaje de usuario (dedup) ya ocurrió de forma síncrona más arriba.
+    const procesar = (async () => {
+      try {
+        const { data: hist } = await sb.from("messages").select("role,content,model").eq("conversation_id", conv.id).in("role", ["user", "assistant"]).order("created_at", { ascending: false }).limit(10);
+        const history = (hist ?? []).reverse();
+        const r = await responderLLM(history as any, NEEDS_TOOL_RE.test(texto));
+        let modoFinal = "shadow"; let enviado = false;
+        if (r.text && liveAllowed(waId)) { enviado = await enviarWati(waId, r.text); modoFinal = enviado ? "live" : "shadow"; }
+        await sb.from("messages").insert({ conversation_id: conv.id, role: "assistant", content: r.text, tool_calls: r.toolCalls.length ? r.toolCalls : null, mode: modoFinal, model: anthropic ? MODEL : null, tokens_in: r.tokensIn || null, tokens_out: r.tokensOut || null, latency_ms: Date.now() - t0 });
+        if (!anthropic) await log("llm_no_configurado", true, { waId });
+      } catch (e) {
+        await log("error", false, { waId, fase: "async", error: String(e).slice(0, 400) });
+      }
+    })();
+    correrEnSegundoPlano(procesar);
+    return Response.json({ ok: true, queued: true });
   } catch (e) {
     await log("error", false, { waId, error: String(e).slice(0, 400) });
     return Response.json({ ok: false, error: "internal" }, { status: 200 });
