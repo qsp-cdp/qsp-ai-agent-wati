@@ -1,3 +1,10 @@
+// === copilot-webhook v15 — Copiloto AI de WATI — el bot solo atiende contactos nuevos / sin asignar ===
+// v15 (2026-06-16): cuando el NEGOCIO escribe en una conversación (owner=true: asesor humano o
+//   mensaje automático), se marca status='handoff' → el bot deja de atenderla y NO la retoma solo
+//   (antes volvía a los 45 min, lo que hacía que se "robara" conversaciones ya atendidas por un
+//   humano, incluso después de marcarlas resueltas). El bot solo responde a contactos nuevos o
+//   conversaciones sin intervención del negocio. Para devolver una conversación al bot: status='bot'.
+//   Se registra el operador (operatorName) del payload saliente de WATI.
 // === copilot-webhook v14 — Copiloto AI de WATI — respuesta rápida a WATI (procesa en segundo plano) ===
 // v14 (2026-06-16): el webhook responde 200 al instante y hace el trabajo lento (historial +
 //   LLM + envío + guardado) en SEGUNDO PLANO (EdgeRuntime.waitUntil). Evita el timeout de WATI
@@ -267,7 +274,7 @@ function correrEnSegundoPlano(p: Promise<unknown>): void {
 Deno.serve(async (req) => {
   const url = new URL(req.url);
   if (req.method === "GET") {
-    return Response.json({ status: "ok", function: "copilot-webhook", version: "v14-ack-rapido", mode: MODE, model: MODEL, llm_configured: !!anthropic, wati_send_configured: !!(WATI_API_TOKEN && WATI_API_BASE), live_targets: MODE === "live" ? (LIVE_ALL ? "all" : LIVE_ALLOWLIST.length) : 0, ts: new Date().toISOString() });
+    return Response.json({ status: "ok", function: "copilot-webhook", version: "v15-solo-nuevos", mode: MODE, model: MODEL, llm_configured: !!anthropic, wati_send_configured: !!(WATI_API_TOKEN && WATI_API_BASE), live_targets: MODE === "live" ? (LIVE_ALL ? "all" : LIVE_ALLOWLIST.length) : 0, ts: new Date().toISOString() });
   }
   if (req.method !== "POST") return Response.json({ error: "method_not_allowed" }, { status: 405 });
   if (url.searchParams.get("key") !== WEBHOOK_KEY) return Response.json({ error: "forbidden" }, { status: 403 });
@@ -280,6 +287,7 @@ Deno.serve(async (req) => {
   const esDelNegocio = p.owner === true || p.owner === "true";
   const tipo = (p.type ?? "text").toString();
   const eventType = (p.eventType ?? p.event ?? "").toString().toLowerCase();
+  const operador = (p.operatorName ?? p.operatorEmail ?? "").toString().trim(); // asesor que escribió (v15)
 
   // Evento WATI de contacto nuevo (sin texto): marcar lead nuevo. El texto llega aparte.
   if (eventType.includes("newcontact")) {
@@ -292,20 +300,22 @@ Deno.serve(async (req) => {
     return Response.json({ ok: true, skipped: "new_contact_sin_waid" });
   }
 
-  // Mensaje del negocio (owner=true): puede ser un ASESOR humano o el ECO de un envío propio del bot.
+  // Mensaje del NEGOCIO (owner=true): asesor humano/automático, o el ECO de un envío propio del bot.
   if (esDelNegocio && waId && texto && tipo === "text") {
-    const { data: convH } = await sb.from("conversations").select("id").eq("wa_id", waId).maybeSingle();
+    const { data: convH } = await sb.from("conversations").select("id,status").eq("wa_id", waId).maybeSingle();
     if (convH?.id) {
       // ¿Eco de un envío propio reciente del bot? (mismo texto, respuesta del bot < 5 min) → ignorar.
       const desde = new Date(Date.now() - 5 * 60 * 1000).toISOString();
       const { data: eco } = await sb.from("messages").select("id").eq("conversation_id", convH.id)
         .eq("role", "assistant").neq("model", "human-agent").eq("content", texto).gte("created_at", desde).limit(1);
       if (eco && eco.length) return Response.json({ ok: true, skipped: "eco_propio" });
-      // Asesor humano real: guárdalo en el hilo (contexto para el agente) + marca atención humana.
+      // El negocio está atendiendo: guarda el mensaje como contexto y marca la conversación como
+      // ATENDIDA POR HUMANO (v15). El bot no la retoma hasta que se devuelva a status='bot'.
       await sb.from("messages").insert({ conversation_id: convH.id, role: "assistant", content: texto.slice(0, 4000), mode: "live", model: "human-agent" });
-      await log("mensaje_humano", true, { waId });
+      if (convH.status !== "handoff") await sb.from("conversations").update({ status: "handoff" }).eq("id", convH.id);
+      await log("mensaje_humano", true, { waId, operador: operador || null });
     }
-    return Response.json({ ok: true, skipped: "mensaje_del_negocio_registrado" });
+    return Response.json({ ok: true, skipped: "negocio_atendiendo" });
   }
 
   if (!waId || !texto || tipo !== "text") {
@@ -330,10 +340,9 @@ Deno.serve(async (req) => {
     if (conv.status === "handoff") return Response.json({ ok: true, skipped: "en_handoff" });
     if (conv.turns_today > MAX_TURNS_DIA) { await log("tope_turnos", true, { waId }); return Response.json({ ok: true, skipped: "tope_diario" }); }
 
-    // Anti-interrupción 1: ¿un humano del equipo atendió esta conversación hace < 45 min?
-    const humanCutoff = new Date(Date.now() - 45 * 60 * 1000).toISOString();
-    const { data: humanRecent } = await sb.from("job_log").select("id").eq("function_name", "copilot-webhook").eq("action", "mensaje_humano").gte("created_at", humanCutoff).filter("detail->>waId", "eq", waId).limit(1);
-    if (humanRecent && humanRecent.length) { await log("abstencion_humano_reciente", true, { waId }); return Response.json({ ok: true, skipped: "humano_atendiendo" }); }
+    // Anti-interrupción 1 (v15): si el negocio ya atendió la conversación, quedó en status='handoff'
+    // (se marca cuando un owner=true escribe, arriba) y ya se saltó en el corte de status de arriba.
+    // El bot solo atiende contactos nuevos / sin asignar a un humano.
 
     // Anti-interrupción 2: señales de trámite/pago/dato fiscal en curso → abstenerse.
     if (INTERRUPT_RE.test(texto)) { await log("abstencion_interrupcion", true, { waId }); return Response.json({ ok: true, skipped: "interrupcion_tramite" }); }
