@@ -1,4 +1,9 @@
-// === copilot-webhook v10 — Copiloto AI de WATI (MODO SOMBRA) — prompt v2 + new-contact + info_tienda + anti-interrupción + búsqueda robusta ===
+// === copilot-webhook v11 — Copiloto AI de WATI (MODO SOMBRA) — todo lo anterior + datos siempre fundamentados en tools ===
+// v11 (2026-06-16): regla dura "sin tool, sin datos" — el bot NO menciona producto/precio/stock
+//   sin buscar_producto, ni envíos/pagos/ubicación/horarios sin info_tienda (single source =
+//   store_facts; se quita la data duplicada del prompt). Corrige que inventara precios en
+//   preguntas de categoría (#3). (Pendiente en este v11 antes de desplegar: recall de productos
+//   + ajustes según docs de WATI.)
 // v10 (2026-06-16): misión "apoyar al equipo humano"; búsqueda de productos más robusta
 //   (fallback por número/código de modelo cuando la consulta libre no encuentra; manejo de
 //   sinónimos/línea y preguntas de categoría vía prompt; resultados con marca/tipo) y regla
@@ -45,6 +50,7 @@ ESTILO
 
 REGLA DE ORO — precio, stock y promociones
 - Para CUALQUIER precio o disponibilidad usa SIEMPRE la herramienta buscar_producto y responde SOLO con lo que ella devuelve.
+- NUNCA menciones un producto, modelo, precio o disponibilidad que no provenga de un resultado de buscar_producto EN ESTE MISMO TURNO. Si no llamaste a la tool, NO nombres modelos ni des precios/stock: búscalo primero. Aplica también a preguntas de categoría ("¿venden impresoras Epson?"): primero busca, luego responde con lo que devuelva.
 - NUNCA inventes precios, existencias, descuentos ni promociones.
 - Incluye el link del producto cuando lo tengas.
 - Si la tool no encuentra el producto, o piden algo fuera de catálogo: discúlpate breve e indica que un asesor confirmará disponibilidad y opciones.
@@ -69,8 +75,8 @@ REGLA ANTI-INTERRUPCIÓN — no te metas si hay un humano atendiendo
 - NUNCA captures, repitas ni confirmes datos fiscales, de facturación o de pago (RUC, cédula, razón social, "factura a nombre de", comprobantes, transferencias). Si el cliente los envía, NO los proceses: indica en UNA línea que un asesor se encarga y no pidas más datos.
 
 LOGÍSTICA, PAGOS Y DATOS DE LA TIENDA (envíos, ubicación, horarios, métodos de pago)
-- Para envíos/entregas, ubicación, horarios o métodos de pago usa SIEMPRE la herramienta info_tienda y responde SOLO con lo que devuelva.
-- NUNCA inventes montos de envío, direcciones, horarios ni formas de pago. Para pagos: NUNCA compartas números de cuenta; di que Yappy/ACH/transferencia se coordinan por WhatsApp al confirmar el pedido.
+- Para envíos/entregas, ubicación, horarios o métodos de pago usa SIEMPRE la herramienta info_tienda y responde SOLO con lo que devuelva. No respondas estos temas de memoria.
+- NUNCA inventes montos, direcciones, horarios ni formas de pago, y NUNCA compartas números de cuenta (Yappy/ACH/transferencia). Para "cómo pago", responde con lo que devuelva info_tienda y deja la coordinación a un asesor.
 - Si info_tienda no tiene el dato (devuelve "sin datos disponibles"): dilo con honestidad y deriva a un asesor para confirmarlo. No prometas plazos ni costos específicos.
 
 HANDOFF A HUMANO (deriva con calma y sin prometer de más)
@@ -86,7 +92,7 @@ const TOOLS: Anthropic.Tool[] = [{
   input_schema: { type: "object", properties: { consulta: { type: "string", description: "Términos de búsqueda, ej: 'tinta hp 954 negra'" } }, required: ["consulta"], additionalProperties: false },
 } as Anthropic.Tool, {
   name: "info_tienda",
-  description: "Devuelve los datos oficiales de la tienda QSP (envíos/entregas, métodos de pago, ubicación, horarios, devoluciones, contacto) como pares clave→valor. Llama esta herramienta SIEMPRE que pregunten por esos temas y responde SOLO con lo que devuelva; NUNCA inventes montos, direcciones, cuentas ni horarios. Para pagos: NUNCA compartas números de cuenta (Yappy/ACH se coordinan por WhatsApp).",
+  description: "Devuelve los datos oficiales de la tienda QSP (envíos/entregas, métodos de pago, ubicación, horarios, devoluciones, contacto) como pares clave→valor. Llama esta herramienta SIEMPRE que pregunten por esos temas y responde SOLO con lo que devuelva; NUNCA inventes montos, direcciones, cuentas ni horarios, y NUNCA compartas números de cuenta.",
   input_schema: { type: "object", properties: { tema: { type: "string", description: "Opcional e informativo: el tema preguntado (envío, pago, ubicación, horario…). La herramienta devuelve TODOS los datos de la tienda." } } },
 } as Anthropic.Tool];
 
@@ -210,7 +216,7 @@ async function log(action: string, ok: boolean, detail: unknown) {
 Deno.serve(async (req) => {
   const url = new URL(req.url);
   if (req.method === "GET") {
-    return Response.json({ status: "ok", function: "copilot-webhook", version: "v10-busqueda-robusta", mode: MODE, model: MODEL, llm_configured: !!anthropic, wati_send_configured: !!(WATI_API_TOKEN && WATI_API_BASE), ts: new Date().toISOString() });
+    return Response.json({ status: "ok", function: "copilot-webhook", version: "v11-fundamentado", mode: MODE, model: MODEL, llm_configured: !!anthropic, wati_send_configured: !!(WATI_API_TOKEN && WATI_API_BASE), ts: new Date().toISOString() });
   }
   if (req.method !== "POST") return Response.json({ error: "method_not_allowed" }, { status: 405 });
   if (url.searchParams.get("key") !== WEBHOOK_KEY) return Response.json({ error: "forbidden" }, { status: 403 });
