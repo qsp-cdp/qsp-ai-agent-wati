@@ -1,0 +1,156 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Envíos al interior y recogida en sucursal · Quick Service Panamá</title>
+  <!--
+    Página lista para Shopify.
+    · Para previsualizar: abrí este archivo en el navegador.
+    · Para Shopify: Tienda → Páginas → Agregar página → (botón <> "Mostrar HTML") y pegá
+      TODO lo que está entre las marcas "PEGAR DESDE AQUÍ / HASTA AQUÍ".
+    · Para cambiar el color de marca: editá --qsp-accent en el <style>.
+    · Verificá que la URL del localizador Servientrega sea la pública correcta.
+  -->
+</head>
+<body>
+
+<!-- ===================== PEGAR DESDE AQUÍ EN SHOPIFY ===================== -->
+<div class="qsp-envios">
+  <style>
+    .qsp-envios{
+      --qsp-accent:#1d4ed8;          /* color de marca — cambialo si hace falta */
+      --qsp-accent-dark:#1742a8;
+      --qsp-ink:#1f2937;
+      --qsp-muted:#5b6573;
+      --qsp-line:#e6e9ef;
+      --qsp-soft:#f7f9fc;
+      --qsp-radius:16px;
+      max-width:880px;margin:0 auto;padding:8px 18px 48px;
+      font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+      color:var(--qsp-ink);line-height:1.6;-webkit-font-smoothing:antialiased;
+    }
+    .qsp-envios *{box-sizing:border-box}
+    .qsp-envios .qsp-hero{text-align:center;padding:34px 0 6px}
+    .qsp-envios .qsp-badge{display:inline-block;background:rgba(29,78,216,.08);color:var(--qsp-accent);
+      font-weight:600;font-size:.8rem;letter-spacing:.04em;text-transform:uppercase;
+      padding:6px 14px;border-radius:999px;margin-bottom:16px}
+    .qsp-envios .qsp-hero h1{font-size:2rem;margin:0 0 12px;letter-spacing:-.02em;line-height:1.2}
+    .qsp-envios .qsp-hero p{font-size:1.1rem;color:var(--qsp-muted);max-width:620px;margin:0 auto}
+    .qsp-envios h2{font-size:1.35rem;margin:40px 0 18px;letter-spacing:-.01em;text-align:center}
+    .qsp-envios .qsp-steps{display:grid;grid-template-columns:repeat(2,1fr);gap:16px}
+    .qsp-envios .qsp-step{background:#fff;border:1px solid var(--qsp-line);border-radius:var(--qsp-radius);
+      padding:22px 20px;box-shadow:0 1px 3px rgba(16,24,40,.05)}
+    .qsp-envios .qsp-step .n{display:inline-flex;align-items:center;justify-content:center;width:34px;height:34px;
+      border-radius:50%;background:var(--qsp-accent);color:#fff;font-weight:700;font-size:1rem;margin-bottom:12px}
+    .qsp-envios .qsp-step h3{margin:0 0 6px;font-size:1.08rem}
+    .qsp-envios .qsp-step p{margin:0;color:var(--qsp-muted);font-size:.96rem}
+    .qsp-envios .qsp-cta{margin:30px 0;background:linear-gradient(135deg,var(--qsp-accent),var(--qsp-accent-dark));
+      border-radius:20px;padding:36px 26px;text-align:center;color:#fff}
+    .qsp-envios .qsp-cta h2{color:#fff;margin:0 0 8px}
+    .qsp-envios .qsp-cta p{margin:0 auto 22px;max-width:520px;color:rgba(255,255,255,.9)}
+    .qsp-envios .qsp-btn{display:inline-block;background:#fff;color:var(--qsp-accent);text-decoration:none;
+      font-weight:700;font-size:1.05rem;padding:15px 34px;border-radius:999px;
+      box-shadow:0 6px 18px rgba(0,0,0,.15);transition:transform .15s ease}
+    .qsp-envios .qsp-btn:hover{transform:translateY(-2px)}
+    .qsp-envios .qsp-info{display:grid;grid-template-columns:repeat(2,1fr);gap:14px;margin-top:4px}
+    .qsp-envios .qsp-card{background:var(--qsp-soft);border:1px solid var(--qsp-line);
+      border-radius:var(--qsp-radius);padding:20px}
+    .qsp-envios .qsp-card .ic{font-size:1.5rem;line-height:1;margin-bottom:8px}
+    .qsp-envios .qsp-card h3{margin:0 0 6px;font-size:1.02rem}
+    .qsp-envios .qsp-card p{margin:0;color:var(--qsp-muted);font-size:.95rem}
+    .qsp-envios .qsp-card strong{color:var(--qsp-ink)}
+    .qsp-envios .qsp-note{margin-top:18px;background:#fff7ed;border:1px solid #fed7aa;color:#9a3412;
+      border-radius:var(--qsp-radius);padding:16px 18px;font-size:.95rem}
+    .qsp-envios .qsp-contact{text-align:center;margin-top:34px;padding-top:28px;border-top:1px solid var(--qsp-line)}
+    .qsp-envios .qsp-contact p{color:var(--qsp-muted);margin:0 0 16px}
+    .qsp-envios .qsp-wa{display:inline-flex;align-items:center;gap:9px;background:#25D366;color:#fff;
+      text-decoration:none;font-weight:700;padding:13px 26px;border-radius:999px}
+    .qsp-envios .qsp-wa:hover{filter:brightness(.96)}
+    @media(max-width:600px){
+      .qsp-envios .qsp-steps,.qsp-envios .qsp-info{grid-template-columns:1fr}
+      .qsp-envios .qsp-hero h1{font-size:1.6rem}
+    }
+  </style>
+
+  <div class="qsp-hero">
+    <span class="qsp-badge">Envíos al interior del país</span>
+    <h1>Recoge tu pedido en la sucursal más cercana</h1>
+    <p>Si vives en el interior, puedes recibir tus compras de Quick Service Panamá en la
+       agencia de <strong>Servientrega</strong> que más te convenga. Rápido, seguro y sin complicaciones.</p>
+  </div>
+
+  <h2>¿Cómo funciona?</h2>
+  <div class="qsp-steps">
+    <div class="qsp-step">
+      <span class="n">1</span>
+      <h3>Elige “Recoger en sucursal”</h3>
+      <p>Al finalizar tu compra, selecciona la opción de envío a sucursal del interior.</p>
+    </div>
+    <div class="qsp-step">
+      <span class="n">2</span>
+      <h3>Despachamos tu pedido</h3>
+      <p>Lo enviamos vía Servientrega a la agencia que elijas. Por lo general llega al día hábil siguiente.</p>
+    </div>
+    <div class="qsp-step">
+      <span class="n">3</span>
+      <h3>Te avisamos</h3>
+      <p>Te notificamos cuando tu pedido esté listo para retirar en la sucursal.</p>
+    </div>
+    <div class="qsp-step">
+      <span class="n">4</span>
+      <h3>Retira tu pedido</h3>
+      <p>Acércate a la sucursal con tu cédula o identificación y listo. ¡A disfrutar tu compra!</p>
+    </div>
+  </div>
+
+  <div class="qsp-cta">
+    <h2>📍 Encuentra tu sucursal</h2>
+    <p>Consulta el listado oficial de agencias Servientrega en todo el país y elige la que te quede mejor.</p>
+    <a class="qsp-btn" href="https://servientrega.com.pa/Agencias/GetAgencias" target="_blank" rel="noopener">
+      Ver sucursales Servientrega →
+    </a>
+  </div>
+
+  <h2>Tarifas y plazos del interior</h2>
+  <div class="qsp-info">
+    <div class="qsp-card">
+      <div class="ic">🏢</div>
+      <h3>A sucursal</h3>
+      <p>Desde <strong>B/.6.00</strong></p>
+    </div>
+    <div class="qsp-card">
+      <div class="ic">🚪</div>
+      <h3>Puerta a puerta</h3>
+      <p>Desde <strong>B/.9.00</strong></p>
+    </div>
+    <div class="qsp-card">
+      <div class="ic">⏱️</div>
+      <h3>Plazo de entrega</h3>
+      <p>Día hábil siguiente. <strong>Bocas del Toro y Darién:</strong> de 3 a 5 días hábiles.</p>
+    </div>
+    <div class="qsp-card">
+      <div class="ic">🎁</div>
+      <h3>Envío gratis</h3>
+      <p>En compras en línea mayores a <strong>US$300</strong>.</p>
+    </div>
+  </div>
+
+  <div class="qsp-note">
+    <strong>Importante:</strong> por el momento no entregamos en las comarcas
+    Guna Yala, Emberá-Wounaan y Ngäbe-Buglé. Si la dirección proporcionada es incorrecta,
+    el costo del reenvío corre por cuenta del cliente.
+  </div>
+
+  <div class="qsp-contact">
+    <p>¿Dudas con tu envío o quieres dar seguimiento a tu pedido?</p>
+    <a class="qsp-wa" href="https://wa.me/50769509988?text=Hola,%20tengo%20una%20consulta%20sobre%20mi%20env%C3%ADo%20al%20interior"
+       target="_blank" rel="noopener">
+      💬 Escríbenos por WhatsApp · +507 6950-9988
+    </a>
+  </div>
+</div>
+<!-- ===================== HASTA AQUÍ ===================== -->
+
+</body>
+</html>
