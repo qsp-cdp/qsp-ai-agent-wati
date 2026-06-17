@@ -1,3 +1,9 @@
+// === copilot-webhook v17 — Copiloto AI de WATI — modelo exacto + soporte/reparaciones ===
+// v17 (2026-06-17): (1) anti-"modelo equivocado": el bot usa el título real del resultado y, si el
+//   modelo pedido no aparece, lo dice en vez de renombrar (corrige casos como el monitor 322pv que
+//   se respondió con el link de otro modelo); (2) soporte/reparaciones: QSP no repara, sugiere la
+//   empresa de la marca desde store_facts (key soporte_reparaciones) — se fuerza info_tienda ante
+//   preguntas de reparación/soporte/sucursal (NEEDS_TOOL_RE).
 // === copilot-webhook v16 — Copiloto AI de WATI — formato apto para WhatsApp (links/negritas) ===
 // v16 (2026-06-16): limpia el texto antes de enviarlo a WhatsApp (limpiarWhatsApp): convierte los
 //   links markdown [texto](url) en URL pelada y los dobles asteriscos en uno solo, porque WhatsApp
@@ -96,6 +102,7 @@ BÚSQUEDA DE PRODUCTOS (cómo usar buscar_producto)
 - Si la primera búsqueda no encuentra, REFORMULA y vuelve a llamar buscar_producto (prueba solo el número de modelo, la línea, o el modelo de la tinta) ANTES de derivar.
 - Preguntas genéricas de categoría ("¿venden impresoras Epson?", "¿manejan toner?"): busca la categoría/marca y responde sí/no con 1-2 ejemplos concretos y su precio; invita a indicar el modelo. No listes más de 2-3.
 - COMPATIBILIDAD: NO afirmes que un producto sirve para cierto equipo a menos que el resultado de buscar_producto lo indique. Si no estás seguro, dilo y deja que un asesor confirme.
+- MODELO EXACTO: usa el TÍTULO tal cual lo devuelve buscar_producto. Si el modelo que pidió el cliente NO aparece en el título del resultado, NO lo renombres ni asumas que es el mismo equipo: dilo claro (ej. "no encontré el [modelo] exacto; lo más parecido que tenemos es [título real]…") y ofrécelo como alternativa o deriva. NUNCA pongas el modelo pedido junto al precio o link de otro producto.
 
 CONTACTO NUEVO vs CONOCIDO
 - Si es la PRIMERA interacción de este contacto: da una bienvenida cálida y breve, preséntate como Quick Service Panamá (suministros de impresión y tecnología) y pregunta en qué le puedes ayudar. Una sola vez, sin repetirla.
@@ -113,6 +120,9 @@ LOGÍSTICA, PAGOS Y DATOS DE LA TIENDA (envíos, ubicación, horarios, métodos 
 - Para envíos/entregas, ubicación, horarios o métodos de pago usa SIEMPRE la herramienta info_tienda y responde SOLO con lo que devuelva. No respondas estos temas de memoria.
 - NUNCA inventes montos, direcciones, horarios ni formas de pago, y NUNCA compartas números de cuenta (Yappy/ACH/transferencia). Para "cómo pago", responde con lo que devuelva info_tienda y deja la coordinación a un asesor.
 - Si info_tienda no tiene el dato (devuelve "sin datos disponibles"): dilo con honestidad y deriva a un asesor para confirmarlo. No prometas plazos ni costos específicos.
+
+SOPORTE TÉCNICO Y REPARACIONES
+- QSP NO ofrece soporte técnico ni servicios de reparación. Si preguntan por reparar/arreglar un equipo, soporte técnico, o que algo "no enciende/no imprime", usa info_tienda y sugiere la empresa de la marca correspondiente que ahí figure; NUNCA inventes teléfonos ni empresas, y si no hay dato, deriva a un asesor.
 
 HANDOFF A HUMANO (deriva con calma y sin prometer de más)
 - Deriva a un asesor cuando: la tool no encuentra el producto; piden algo fuera de catálogo; quieren reclamar o están molestos; piden hablar con una persona; detectas un trámite/pago en curso (ver anti-interrupción); o la consulta excede lo que puedes resolver. Discúlpate breve e indica que un asesor le responderá pronto.
@@ -156,6 +166,7 @@ const NEEDS_TOOL_RE = new RegExp([
   "precio", "cu[aá]nto", "cuesta", "cotiza", "disponib", "stock", "existenc", "\\bmodelo", "\\bvende", "manejan",
   "epson", "canon", "\\bhp\\b", "brother", "pixma", "ecotank", "workforce", "laserjet", "deskjet", "officejet", "\\bg\\d{3,4}\\b", "\\bl\\d{3,4}\\b", "gi-?\\d",
   "env[ií]o", "entrega", "delivery", "horario", "ubicaci", "direcci", "\\bd[oó]nde\\b", "\\bpago", "pagar", "yappy", "\\bach\\b", "transferen", "tarjeta", "reembols",
+  "repar", "soporte t[eé]cnico", "averi", "da[ñn]ad", "no enciende", "no prende", "no imprime", "sucursal", "recoger", "retir",
 ].join("|"), "i");
 // resultados; lanza solo ante error de red/HTTP (lo maneja buscarProducto).
 async function suggestShopify(q: string): Promise<any[]> {
@@ -286,7 +297,7 @@ function correrEnSegundoPlano(p: Promise<unknown>): void {
 Deno.serve(async (req) => {
   const url = new URL(req.url);
   if (req.method === "GET") {
-    return Response.json({ status: "ok", function: "copilot-webhook", version: "v16-estilo-whatsapp", mode: MODE, model: MODEL, llm_configured: !!anthropic, wati_send_configured: !!(WATI_API_TOKEN && WATI_API_BASE), live_targets: MODE === "live" ? (LIVE_ALL ? "all" : LIVE_ALLOWLIST.length) : 0, ts: new Date().toISOString() });
+    return Response.json({ status: "ok", function: "copilot-webhook", version: "v17-modelo-soporte", mode: MODE, model: MODEL, llm_configured: !!anthropic, wati_send_configured: !!(WATI_API_TOKEN && WATI_API_BASE), live_targets: MODE === "live" ? (LIVE_ALL ? "all" : LIVE_ALLOWLIST.length) : 0, ts: new Date().toISOString() });
   }
   if (req.method !== "POST") return Response.json({ error: "method_not_allowed" }, { status: 405 });
   if (url.searchParams.get("key") !== WEBHOOK_KEY) return Response.json({ error: "forbidden" }, { status: 403 });
