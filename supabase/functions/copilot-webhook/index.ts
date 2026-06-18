@@ -1,3 +1,8 @@
+// === copilot-webhook v18 — Copiloto AI de WATI — búsqueda tolerante al guion en modelos ===
+// v18 (2026-06-18): buscar_producto prueba el código de modelo CON y SIN guion (TN830XL ↔
+//   TN-830XL, GI11 ↔ GI-11). Shopify no matchea una forma contra la otra, así que el bot decía
+//   "no lo tengo" a productos que SÍ existen. Las variantes se generan EN CÓDIGO (no depende de
+//   que el LLM adivine el guion) y se deduplican los intentos.
 // === copilot-webhook v17 — Copiloto AI de WATI — modelo exacto + soporte/reparaciones ===
 // v17 (2026-06-17): (1) anti-"modelo equivocado": el bot usa el título real del resultado y, si el
 //   modelo pedido no aparece, lo dice en vez de renombrar (corrige casos como el monitor 322pv que
@@ -193,12 +198,27 @@ function modelosEn(q: string): string[] {
   return [...t].slice(0, 3);
 }
 
+// Variantes de un código de modelo para tolerar el guion: Shopify no matchea "TN830XL" contra
+// "TN-830XL" (ni "GI11" contra "GI-11"). Probamos ambas formas — generadas en código, sin
+// depender de que el modelo adivine el guion. (v18)
+function variantesModelo(m: string): string[] {
+  const v = new Set<string>([m]);
+  const sin = m.replace(/-/g, "");                       // TN-830XL -> TN830XL
+  v.add(sin);
+  v.add(sin.replace(/^([a-z]{1,4})(\d)/i, "$1-$2"));     // TN830XL  -> TN-830XL
+  return [...v];
+}
+
 async function buscarProducto(consulta: string): Promise<string> {
-  // Primero la consulta libre tal cual; si no hay resultados, reintenta por número/código de modelo.
-  const base = consulta.trim().toLowerCase();
-  const intentos = [consulta, ...modelosEn(consulta).filter((m) => m.toLowerCase() !== base)];
+  // Consulta libre tal cual; si no encuentra, reintenta por código de modelo y sus variantes
+  // con/sin guion. Deduplica para no repetir llamadas. (v18)
+  const intentos = [consulta, ...modelosEn(consulta).flatMap(variantesModelo)];
+  const vistos = new Set<string>();
   let lastErr: string | null = null;
   for (const q of intentos) {
+    const k = q.trim().toLowerCase();
+    if (!k || vistos.has(k)) continue;
+    vistos.add(k);
     try {
       const prods = await suggestShopify(q);
       if (prods.length) return JSON.stringify(prods.slice(0, 5));
@@ -297,7 +317,7 @@ function correrEnSegundoPlano(p: Promise<unknown>): void {
 Deno.serve(async (req) => {
   const url = new URL(req.url);
   if (req.method === "GET") {
-    return Response.json({ status: "ok", function: "copilot-webhook", version: "v17-modelo-soporte", mode: MODE, model: MODEL, llm_configured: !!anthropic, wati_send_configured: !!(WATI_API_TOKEN && WATI_API_BASE), live_targets: MODE === "live" ? (LIVE_ALL ? "all" : LIVE_ALLOWLIST.length) : 0, ts: new Date().toISOString() });
+    return Response.json({ status: "ok", function: "copilot-webhook", version: "v18-busqueda-guion", mode: MODE, model: MODEL, llm_configured: !!anthropic, wati_send_configured: !!(WATI_API_TOKEN && WATI_API_BASE), live_targets: MODE === "live" ? (LIVE_ALL ? "all" : LIVE_ALLOWLIST.length) : 0, ts: new Date().toISOString() });
   }
   if (req.method !== "POST") return Response.json({ error: "method_not_allowed" }, { status: 405 });
   if (url.searchParams.get("key") !== WEBHOOK_KEY) return Response.json({ error: "forbidden" }, { status: 403 });
