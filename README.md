@@ -19,18 +19,17 @@ sombra por seguridad.
 ```
 CLAUDE.md                                  # contexto autoritativo (leer primero)
 supabase/
-  functions/copilot-webhook/index.ts       # la edge function (v19, = lo desplegado)
+  functions/copilot-webhook/index.ts       # la edge function (v20, = lo desplegado)
 web/
   envios-interior-sucursal.html            # página de envíos al interior (45 sucursales)
   migrations/*.sql                          # esquema reproducible (6 migraciones)
 ```
 
 ## Estado
-- Edge function `copilot-webhook` **v19 (`v19-vision`), ACTIVE** — EN VIVO a todos, en
-  Sonnet 4.6. Coexistencia con asesor humano validada (v15). Fix v18 del guion validado
-  (`tn830xl` → `TN-830XL`). **v19 visión validada en producción:** el bot ve las imágenes
-  del cliente, identifica el producto y lo cotiza con `buscar_producto`; ante un
-  comprobante/dato fiscal se abstiene.
+- Edge function `copilot-webhook` **v20 (`v20-endurecimiento`), ACTIVE** — EN VIVO a todos,
+  en Sonnet 4.6. Coexistencia validada (v15) · visión validada (v19). **v20:** tras auditar
+  el 1er día live (101 convs, 0 clientes pisados), se endureció: anti-duplicado en ráfaga,
+  anti-carrera (no pisar al asesor), `MODE` a prueba de typos, guard de prefill.
 - `store_facts` aplicada (17 datos reales). Sonnet 4.6 ~$0.017/turno, ~8 s.
 
 ## Desarrollo / deploy

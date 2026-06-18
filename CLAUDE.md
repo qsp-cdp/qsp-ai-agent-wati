@@ -1,7 +1,7 @@
 # CLAUDE.md — Copiloto AI de WhatsApp (WATI) · Quick Service Panamá
 
 > Contexto base para Claude Code trabajando en ESTE repo. Lee esto primero.
-> Generado 2026-06-15; actualizado 2026-06-18 al estado real (edge function v19 +
+> Generado 2026-06-15; actualizado 2026-06-18 al estado real (edge function v20 +
 > esquema del proyecto Supabase). Docs de diseño originales en el repo
 > `qsp-cdp/qsp-cdp-docs` (`docs/design/2026-06-12-proyecto-copilot-wati.md` y
 > `docs/design/2026-06-13-copilot-analisis-sombra-prompt-v2.md`).
@@ -13,9 +13,9 @@ con certeza, y calla/deriva cuando es mejor que responda un humano. Tienda:
 **quickservicepanama.com** (suministros de impresión y tecnología en Panamá).
 
 ## Estado actual (2026-06-18)
-- **EN VIVO: `copilot-webhook` v19 (`v19-vision`), ACTIVE.** Desplegado el
+- **EN VIVO: `copilot-webhook` v20 (`v20-endurecimiento`), ACTIVE.** Desplegado el
   2026-06-18 con `verify_jwt=false`. Healthcheck (GET, sin key) reporta
-  `version/mode/model/llm_configured/wati_send_configured/live_targets`.
+  `version/mode/mode_raw/model/llm_configured/wati_send_configured/live_targets`.
 - **MODO: LIVE A TODOS.** `COPILOT_MODE=live` + `COPILOT_LIVE_ALLOWLIST=all`
   (`live_targets:"all"`). El piloto por allowlist (sombra → número por número) ya se
   completó; hoy el bot responde a todos los clientes. El default del CÓDIGO sigue
@@ -35,6 +35,15 @@ con certeza, y calla/deriva cuando es mejor que responda un humano. Tienda:
   pago / dato fiscal) → se ABSTIENE ("un asesor lo revisa"). Los dos caminos —el útil y
   el seguro— funcionando. El descubrimiento del shape de media de WATI se hizo con el
   diagnóstico v18.1 (la URL del archivo viene en el campo `data`).
+- **v20 (endurecimiento) tras AUDITAR el 1er día live a todos (2026-06-18):** la auditoría
+  (101 convs, 156 resp del bot, 88 con asesor) confirmó la coexistencia → **0 clientes
+  reales pisados** (las 2 alarmas eran la línea de pruebas), 13 abstenciones, visión 15/15,
+  grounding ~50%. Se hallaron 2 problemas NO de seguridad, arreglados en v20: (1) respuestas
+  dobles/triples en ráfaga → **anti-duplicado** (solo el último mensaje contesta, chequeo
+  pre/post LLM); (2) 23 errores `messages_mode_check` por cruzar `COPILOT_MODE`↔`COPILOT_MODEL`
+  → **clamp de MODE** (inválido cae a `shadow`, no rompe inserts). Además **anti-carrera**
+  (no pisar si un asesor entró durante el LLM) y **guard de prefill** (la conversación
+  siempre termina en mensaje de usuario). Veredicto: **GO** para mantenerlo abierto a todos.
 - `store_facts` **aplicada** con los **17 datos reales** de QSP (envío, pagos,
   ubicación, horario, devoluciones, contacto). Secretos WATI configurados
   (`wati_send_configured:true`).
@@ -121,9 +130,12 @@ Migraciones (ver `supabase/migrations/`):
    el texto matchea `NEEDS_TOOL_RE` (catálogo/tienda/reparación) se fuerza
    `tool_choice:"any"` en la 1ª iteración → grounding garantizado.
 8. **(v16)** Antes de enviar, `limpiarWhatsApp` convierte links markdown `[txt](url)` →
-   URL pelada y `**` → `*` (WhatsApp los muestra literales). Inserta respuesta del
-   assistant con `mode` shadow|live. Envía por WATI **solo si `liveAllowed(waId)`**
-   (MODE=live Y el número en el allowlist/`all`); si no, queda en sombra.
+   URL pelada y `**` → `*` (WhatsApp los muestra literales). **(v20) Re-chequeos antes de
+   enviar:** si llegó un mensaje de cliente más nuevo → descarta (anti-duplicado en ráfaga,
+   `descartado_superado`); si la conversación pasó a `handoff` durante el LLM → no envía
+   (anti-carrera, `descartado_handoff_tardio`). Inserta respuesta del assistant con `mode`
+   shadow|live. Envía por WATI **solo si `liveAllowed(waId)`** (MODE=live Y el número en el
+   allowlist/`all`); si no, queda en sombra.
 
 ## System prompt (íntegro — es el corazón del comportamiento)
 Reglas clave (texto completo en `index.ts`, const `SYSTEM_PROMPT`):
@@ -184,7 +196,9 @@ Reglas clave (texto completo en `index.ts`, const `SYSTEM_PROMPT`):
 > ⚠️ **OJO — no cruzar `COPILOT_MODE` con `COPILOT_MODEL`** (pasó 3 veces): el ID del
 > modelo (`claude-…`) va SIEMPRE en `COPILOT_MODE**L**` (la L = modeLo). `COPILOT_MODE`
 > es solo `live` o `shadow`. Si se cruzan, `MODE` deja de ser `live` y el bot queda
-> mudo (`live_targets:0`). Verificar siempre con el healthcheck GET tras tocar secretos.
+> mudo (`live_targets:0`). **(v20)** Ya no es catastrófico: un `COPILOT_MODE` inválido cae a
+> `shadow` (no rompe los inserts como antes — eran 23 errores/día) y el healthcheck muestra
+> `mode_raw` con el valor crudo para detectarlo. Verificar siempre el healthcheck tras tocar secretos.
 
 ## Guardrails (NO romper)
 - **MODO SOMBRA es el default del código.** Hoy el secreto está en `live`+`all`, pero si
@@ -192,8 +206,14 @@ Reglas clave (texto completo en `index.ts`, const `SYSTEM_PROMPT`):
   alterar a quién/si se le manda = avisar antes.
 - **Anti-interrupción es sagrada:** mejor no contestar que cortar una venta humana.
   (1) **v15:** owner=true → `status='handoff'`, el bot no retoma solo. (2) Guardrail
-  PRE-LLM `INTERRUPT_RE` que ABSTIENE ante trámites/pagos/datos fiscales. El bot NUNCA
-  captura ni repite RUC/datos de factura/pago.
+  PRE-LLM `INTERRUPT_RE` que ABSTIENE ante trámites/pagos/datos fiscales. (3) **v20:**
+  re-chequeo de `status='handoff'` JUSTO antes de enviar (anti-carrera: si un asesor entró
+  durante los ~8s del LLM, el bot no la pisa). El bot NUNCA captura ni repite RUC/datos de
+  factura/pago.
+- **Anti-duplicado (v20):** en ráfaga, solo el ÚLTIMO mensaje del cliente recibe respuesta
+  (chequeo pre/post LLM de "¿hay uno más nuevo?") → no más respuestas dobles/triples.
+- **MODE a prueba de typos (v20):** `COPILOT_MODE` inválido → `shadow` (no rompe los inserts);
+  `mode_raw` en el healthcheck delata el cruce.
 - **Anti-eco (v13):** un `owner=true` que sea el eco de un envío propio del bot NO se
   trata como humano (evita que el bot se auto-abstenga / se ponga en handoff en live).
 - **Auto-expose OFF** en este proyecto → toda tabla nueva necesita `GRANT` manual a
@@ -227,8 +247,9 @@ Eventos WATI suscritos (necesarios): **Message Received**, **Session Message Sen
    (en vivo, sin réplica ni token) para que el bot no adivine compatibilidad. Se decidió
    NO hacer réplica completa de Shopify en Supabase (riesgo de datos viejos para un bot
    "no inventar"; el precio/stock se mantienen en vivo; FTS/trigram antes que pgvector).
-4. **Debounce / anti-repetición** para mensajes en ráfaga (saludos dobles, "un asesor"
-   triplicado) — afecta a todos los modelos, es arreglo de arquitectura, no de prompt.
+4. **Debounce / anti-repetición: ✅ hecho en v20.** En ráfaga, solo el último mensaje del
+   cliente contesta (chequeo pre/post LLM) → mata las respuestas dobles/triples. Sin timers:
+   si llega uno más nuevo, el viejo se descarta antes de enviar (`descartado_superado`).
 5. **Página web "Envíos al interior y recogida en sucursal"** (`web/envios-interior-sucursal.html`,
    45 sucursales con data propia) → publicar en Shopify y poner su URL en el `store_facts`
    `sucursales_interior`. Correr la SQL `soporte_reparaciones` (feature v17).
