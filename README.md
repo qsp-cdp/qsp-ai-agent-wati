@@ -2,8 +2,9 @@
 
 Asistente de IA dentro de **WATI** (WhatsApp, ~90% de las ventas de QSP). Apoya al
 equipo humano: contesta preguntas generales, indica disponibilidad/stock y da precio,
-y calla/deriva cuando es mejor que responda un humano. En **piloto live por allowlist**
-(por defecto sombra: solo envía a los números de `COPILOT_LIVE_ALLOWLIST`).
+y calla/deriva cuando es mejor que responda un humano. **EN VIVO a todos los clientes**
+(`COPILOT_MODE=live`, `COPILOT_LIVE_ALLOWLIST=all`); el default del código sigue siendo
+sombra por seguridad.
 
 > **Lee `CLAUDE.md`** para el contexto completo (arquitectura, decisiones,
 > guardrails, roadmap). Es la fuente de verdad para trabajar este repo.
@@ -11,23 +12,26 @@ y calla/deriva cuando es mejor que responda un humano. En **piloto live por allo
 ## Stack
 - **Supabase** proyecto `jbigmlcalcwiphqeudxd` (qsp-wati-copilot) — separado del
   CDP. Edge function Deno/TS + Postgres.
-- **Anthropic** Claude Haiku 4.5 (chat + tool use).
+- **Anthropic** Claude Sonnet 4.6 (chat + tool use; evaluado contra Haiku 4.5 y Opus 4.8).
 - **WATI** (webhooks de WhatsApp).
 
 ## Estructura
 ```
 CLAUDE.md                                  # contexto autoritativo (leer primero)
 supabase/
-  functions/copilot-webhook/index.ts       # la edge function (v13, = lo desplegado)
+  functions/copilot-webhook/index.ts       # la edge function (v18, = lo desplegado)
+web/
+  envios-interior-sucursal.html            # página de envíos al interior (45 sucursales)
   migrations/*.sql                          # esquema reproducible (6 migraciones)
 ```
 
 ## Estado
-- Edge function `copilot-webhook` **v13 (`v13-contexto-piloto`), ACTIVE** — piloto
-  live por allowlist (default sombra). Smoke test 7/7 OK (2026-06-16); primer envío
-  real por WATI verificado. Falta validar coexistencia con asesor humano.
-- `store_facts` aplicada (17 datos reales). ~102 conversaciones / 865 mensajes
-  históricos de sombra. Haiku 4.5, ~$0.003/turno, ~4 s.
+- Edge function `copilot-webhook` **v18 (`v18-busqueda-guion`), ACTIVE** — EN VIVO a
+  todos, en Sonnet 4.6. Coexistencia con asesor humano validada (v15: el bot no retoma
+  conversaciones atendidas por una persona). Fix v18 del guion validado en producción
+  (`tn830xl` → encuentra `TN-830XL`).
+- `store_facts` aplicada (17 datos reales). Sonnet 4.6 ~$0.017/turno, ~8 s.
+  **Próximo:** v19 visión/imágenes (clientes mandan capturas que el bot aún no ve).
 
 ## Desarrollo / deploy
 - Secretos van en **Supabase Edge Function secrets** (NO en el repo): `ANTHROPIC_API_KEY`,
