@@ -1,3 +1,11 @@
+// === copilot-webhook v19 — Copiloto AI de WATI — visión (el bot ve imágenes del cliente) ===
+// v19 (2026-06-18): el bot ahora PROCESA las imágenes que envía el cliente (type:image,
+//   owner=false). Descarga el archivo de WATI (campo `data` del webhook, con el token), lo
+//   pasa a Claude vision junto al caption y el historial, y responde con las MISMAS reglas:
+//   si ve un producto identifica marca/modelo y lo busca con buscar_producto (precio SOLO de
+//   la tool, nunca leído de la imagen); si ve un comprobante/dato fiscal se ABSTIENE; si no
+//   entiende, deriva. Respeta status='handoff', el tope de turnos y el guardrail INTERRUPT_RE
+//   (sobre el caption). Documentos y demás no-texto se siguen registrando y saltando (v18.1).
 // === copilot-webhook v18.1 — diagnóstico de media (paso previo a visión v19) ===
 // v18.1 (2026-06-18): registra el payload COMPLETO de los mensajes que NO son texto
 //   (imágenes, documentos…) en job_log (action `evento_sin_texto`, campo `payload`,
@@ -135,6 +143,12 @@ LOGÍSTICA, PAGOS Y DATOS DE LA TIENDA (envíos, ubicación, horarios, métodos 
 SOPORTE TÉCNICO Y REPARACIONES
 - QSP NO ofrece soporte técnico ni servicios de reparación. Si preguntan por reparar/arreglar un equipo, soporte técnico, o que algo "no enciende/no imprime", usa info_tienda y sugiere la empresa de la marca correspondiente que ahí figure; NUNCA inventes teléfonos ni empresas, y si no hay dato, deriva a un asesor.
 
+IMÁGENES (el cliente envía una foto o captura)
+- Si te llega una imagen, OBSÉRVALA y actúa según lo que muestre:
+  - PRODUCTO (captura de nuestro ecommerce o de Instagram, foto de un toner, tinta, impresora o su caja): identifica la MARCA y el MODELO visibles y úsalos para llamar buscar_producto. NUNCA des un precio "leído" de la imagen ni inventes el modelo — el precio y la disponibilidad SIEMPRE salen de buscar_producto. Si no logras leer el modelo con claridad, descríbelo en una línea y pide que confirme el modelo, o deriva a un asesor.
+  - COMPROBANTE DE PAGO, transferencia, factura, RUC/cédula o cualquier dato fiscal: NO lo proceses ni repitas datos; di en UNA línea que un asesor lo revisa (anti-interrupción).
+  - Si no entiendes la imagen o no es de la tienda: discúlpate breve y deriva a un asesor.
+
 HANDOFF A HUMANO (deriva con calma y sin prometer de más)
 - Deriva a un asesor cuando: la tool no encuentra el producto; piden algo fuera de catálogo; quieren reclamar o están molestos; piden hablar con una persona; detectas un trámite/pago en curso (ver anti-interrupción); o la consulta excede lo que puedes resolver. Discúlpate breve e indica que un asesor le responderá pronto.
 
@@ -247,7 +261,7 @@ async function infoTienda(): Promise<string> {
   } catch (e) { return JSON.stringify({ error: String(e).slice(0, 200) }); }
 }
 
-async function responderLLM(history: { role: string; content: string; model?: string | null }[], forceTool: boolean): Promise<{ text: string | null; toolCalls: unknown[]; tokensIn: number; tokensOut: number }> {
+async function responderLLM(history: { role: string; content: string; model?: string | null }[], forceTool: boolean, imagen?: { b64: string; mediaType: string } | null, imagenFallo?: boolean): Promise<{ text: string | null; toolCalls: unknown[]; tokensIn: number; tokensOut: number }> {
   if (!anthropic) return { text: null, toolCalls: [], tokensIn: 0, tokensOut: 0 };
   // La API exige que el primer mensaje sea del usuario: descarta "assistant" al inicio
   // (puede pasar si un asesor escribió primero).
@@ -260,6 +274,21 @@ async function responderLLM(history: { role: string; content: string; model?: st
   const system = SYSTEM_PROMPT + ctx;
   // Los mensajes de un asesor humano se marcan para que el agente sepa que los dijo una persona.
   const messages: Anthropic.MessageParam[] = hist.map((m) => ({ role: m.role === "assistant" ? "assistant" as const : "user" as const, content: (m.model === "human-agent" ? "[Asesor del equipo]: " : "") + (m.content || "(vacío)") }));
+  // v19 (visión): adjunta la imagen del cliente al ÚLTIMO mensaje de usuario (el que la trae).
+  if ((imagen || imagenFallo) && messages.length) {
+    const last = messages[messages.length - 1];
+    if (last.role === "user" && typeof last.content === "string") {
+      const cap = (last.content && last.content !== "[imagen]" && last.content !== "(vacío)") ? last.content : "";
+      if (imagen) {
+        last.content = [
+          { type: "image", source: { type: "base64", media_type: imagen.mediaType as any, data: imagen.b64 } },
+          { type: "text", text: cap || "El cliente envió esta imagen. Si muestra un producto, identifica marca y modelo y búscalo con buscar_producto." },
+        ] as any;
+      } else {
+        last.content = (cap ? cap + " " : "") + "[Nota interna: el cliente envió una imagen que no se pudo cargar. Pídele el modelo exacto o deriva a un asesor.]";
+      }
+    }
+  }
   const toolCalls: unknown[] = [];
   let tokensIn = 0, tokensOut = 0;
   for (let i = 0; i < 4; i++) {
@@ -305,6 +334,33 @@ async function enviarWati(waId: string, texto: string): Promise<boolean> {
   return r.ok;
 }
 
+// v19 — descarga una imagen enviada por el cliente desde WATI (el campo `data` del webhook es
+// un link de live-mt-server.wati.io que requiere el token) y la devuelve en base64 para pasarla
+// a Claude vision. Devuelve null si falla, no es imagen soportada o pesa demasiado.
+async function descargarMediaWati(dataUrl: string): Promise<{ b64: string; mediaType: string } | null> {
+  if (!dataUrl || !/^https?:\/\//i.test(dataUrl)) return null;
+  try {
+    const headers: Record<string, string> = WATI_API_TOKEN ? { Authorization: `Bearer ${WATI_API_TOKEN}` } : {};
+    const r = await fetch(dataUrl, { headers, signal: AbortSignal.timeout(15000) });
+    if (!r.ok) return null;
+    const buf = new Uint8Array(await r.arrayBuffer());
+    if (!buf.byteLength || buf.byteLength > 3_500_000) return null; // evita imágenes enormes (límite de vision)
+    // media_type: confía en el content-type si es imagen; si no, infiere por la extensión del fileName.
+    let mt = (r.headers.get("content-type") || "").split(";")[0].trim().toLowerCase();
+    if (!/^image\/(jpeg|png|gif|webp)$/.test(mt)) {
+      mt = /\.png/i.test(dataUrl) ? "image/png"
+        : /\.webp/i.test(dataUrl) ? "image/webp"
+        : /\.gif/i.test(dataUrl) ? "image/gif"
+        : "image/jpeg";
+    }
+    // base64 por chunks (evita desbordar el call stack con String.fromCharCode(...buf) entero).
+    let bin = "";
+    const CH = 0x8000;
+    for (let i = 0; i < buf.length; i += CH) bin += String.fromCharCode(...buf.subarray(i, i + CH));
+    return { b64: btoa(bin), mediaType: mt };
+  } catch { return null; }
+}
+
 async function log(action: string, ok: boolean, detail: unknown) {
   try { await sb.from("job_log").insert({ function_name: "copilot-webhook", action, ok, detail }); } catch { /* nunca romper */ }
 }
@@ -323,7 +379,7 @@ function correrEnSegundoPlano(p: Promise<unknown>): void {
 Deno.serve(async (req) => {
   const url = new URL(req.url);
   if (req.method === "GET") {
-    return Response.json({ status: "ok", function: "copilot-webhook", version: "v18.1-diag-imagen", mode: MODE, model: MODEL, llm_configured: !!anthropic, wati_send_configured: !!(WATI_API_TOKEN && WATI_API_BASE), live_targets: MODE === "live" ? (LIVE_ALL ? "all" : LIVE_ALLOWLIST.length) : 0, ts: new Date().toISOString() });
+    return Response.json({ status: "ok", function: "copilot-webhook", version: "v19-vision", mode: MODE, model: MODEL, llm_configured: !!anthropic, wati_send_configured: !!(WATI_API_TOKEN && WATI_API_BASE), live_targets: MODE === "live" ? (LIVE_ALL ? "all" : LIVE_ALLOWLIST.length) : 0, ts: new Date().toISOString() });
   }
   if (req.method !== "POST") return Response.json({ error: "method_not_allowed" }, { status: 405 });
   if (url.searchParams.get("key") !== WEBHOOK_KEY) return Response.json({ error: "forbidden" }, { status: 403 });
@@ -367,10 +423,13 @@ Deno.serve(async (req) => {
     return Response.json({ ok: true, skipped: "negocio_atendiendo" });
   }
 
-  if (!waId || !texto || tipo !== "text") {
-    // Diagnóstico v18.1: registrar el payload COMPLETO de mensajes no-texto (imágenes,
-    // documentos…) para descubrir dónde viene la URL/ID de media en el webhook de WATI
-    // y construir v19 (visión) sin adivinar. Trunca strings largos (evita base64 enorme).
+  // v19: una imagen de un CLIENTE (owner=false) SÍ se procesa (visión). El resto de mensajes
+  // no-texto (documentos, audio, o imágenes del propio negocio) se registran y se saltan.
+  const esImagenCliente = tipo === "image" && !esDelNegocio && !!waId;
+
+  if (!esImagenCliente && (!waId || !texto || tipo !== "text")) {
+    // Diagnóstico v18.1: registrar el payload COMPLETO de mensajes no-texto (documentos,
+    // audio…) para conocer el shape real de media de WATI. Trunca strings largos.
     const muestra: Record<string, unknown> = {};
     for (const [k, val] of Object.entries(p ?? {})) {
       muestra[k] = typeof val === "string" && val.length > 500 ? val.slice(0, 500) + "…[trunc]" : val;
@@ -387,7 +446,9 @@ Deno.serve(async (req) => {
     if (!conv?.id) throw new Error("upsert_conversation devolvió vacío");
 
     const watiMsgId = (p.id ?? p.whatsappMessageId ?? null)?.toString() ?? null;
-    const ins = await sb.from("messages").insert({ conversation_id: conv.id, role: "user", content: texto.slice(0, 4000), mode: MODE, wati_message_id: watiMsgId }).select("id");
+    // Para una imagen el caption va en `texto`; si no hay caption, se guarda un marcador.
+    const contenido = esImagenCliente ? (texto || "[imagen]") : texto;
+    const ins = await sb.from("messages").insert({ conversation_id: conv.id, role: "user", content: contenido.slice(0, 4000), mode: MODE, wati_message_id: watiMsgId }).select("id");
     if (ins.error) {
       if (ins.error.code === "23505") return Response.json({ ok: true, skipped: "duplicado" });
       throw new Error(`insert user msg: ${ins.error.message}`);
@@ -417,13 +478,20 @@ Deno.serve(async (req) => {
     // del mensaje de usuario (dedup) ya ocurrió de forma síncrona más arriba.
     const procesar = (async () => {
       try {
+        // v19: si es una imagen del cliente, descárgala de WATI para pasarla a Claude vision.
+        let imagen: { b64: string; mediaType: string } | null = null;
+        if (esImagenCliente) {
+          imagen = await descargarMediaWati(String(p.data ?? ""));
+          if (!imagen) await log("imagen_no_descargada", false, { waId, url: String(p.data ?? "").slice(0, 160) });
+        }
         const { data: hist } = await sb.from("messages").select("role,content,model").eq("conversation_id", conv.id).in("role", ["user", "assistant"]).order("created_at", { ascending: false }).limit(10);
         const history = (hist ?? []).reverse();
-        const r = await responderLLM(history as any, NEEDS_TOOL_RE.test(texto));
+        const r = await responderLLM(history as any, imagen ? false : NEEDS_TOOL_RE.test(texto), imagen, esImagenCliente && !imagen);
         const salida = r.text ? limpiarWhatsApp(r.text) : null; // formato apto para WhatsApp (v16)
         let modoFinal = "shadow"; let enviado = false;
         if (salida && liveAllowed(waId)) { enviado = await enviarWati(waId, salida); modoFinal = enviado ? "live" : "shadow"; }
         await sb.from("messages").insert({ conversation_id: conv.id, role: "assistant", content: salida, tool_calls: r.toolCalls.length ? r.toolCalls : null, mode: modoFinal, model: anthropic ? MODEL : null, tokens_in: r.tokensIn || null, tokens_out: r.tokensOut || null, latency_ms: Date.now() - t0 });
+        if (esImagenCliente) await log("imagen_procesada", true, { waId, descargada: !!imagen, enviado });
         if (!anthropic) await log("llm_no_configurado", true, { waId });
       } catch (e) {
         await log("error", false, { waId, fase: "async", error: String(e).slice(0, 400) });
