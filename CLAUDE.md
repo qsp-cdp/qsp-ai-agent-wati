@@ -1,7 +1,7 @@
 # CLAUDE.md — Copiloto AI de WhatsApp (WATI) · Quick Service Panamá
 
 > Contexto base para Claude Code trabajando en ESTE repo. Lee esto primero.
-> Generado 2026-06-15; actualizado 2026-06-18 al estado real (edge function v18 +
+> Generado 2026-06-15; actualizado 2026-06-18 al estado real (edge function v19 +
 > esquema del proyecto Supabase). Docs de diseño originales en el repo
 > `qsp-cdp/qsp-cdp-docs` (`docs/design/2026-06-12-proyecto-copilot-wati.md` y
 > `docs/design/2026-06-13-copilot-analisis-sombra-prompt-v2.md`).
@@ -13,7 +13,7 @@ con certeza, y calla/deriva cuando es mejor que responda un humano. Tienda:
 **quickservicepanama.com** (suministros de impresión y tecnología en Panamá).
 
 ## Estado actual (2026-06-18)
-- **EN VIVO: `copilot-webhook` v18 (`v18-busqueda-guion`), ACTIVE.** Desplegado el
+- **EN VIVO: `copilot-webhook` v19 (`v19-vision`), ACTIVE.** Desplegado el
   2026-06-18 con `verify_jwt=false`. Healthcheck (GET, sin key) reporta
   `version/mode/model/llm_configured/wati_send_configured/live_targets`.
 - **MODO: LIVE A TODOS.** `COPILOT_MODE=live` + `COPILOT_LIVE_ALLOWLIST=all`
@@ -30,6 +30,11 @@ con certeza, y calla/deriva cuando es mejor que responda un humano. Tienda:
 - **v18 validado en producción (2026-06-18):** el cliente escribió `toner tn830xl` (sin
   guion) → el bot encontró el *TN-830XL ($116)* en vez de decir "no lo tengo". Fix del
   guion (con/sin) funcionando.
+- **v19 (visión) validado en producción (2026-06-18):** caso A (foto de producto) → el
+  bot identifica, busca con `buscar_producto` y da precio real; caso B (comprobante de
+  pago / dato fiscal) → se ABSTIENE ("un asesor lo revisa"). Los dos caminos —el útil y
+  el seguro— funcionando. El descubrimiento del shape de media de WATI se hizo con el
+  diagnóstico v18.1 (la URL del archivo viene en el campo `data`).
 - `store_facts` **aplicada** con los **17 datos reales** de QSP (envío, pagos,
   ubicación, horario, devoluciones, contacto). Secretos WATI configurados
   (`wati_send_configured:true`).
@@ -44,7 +49,8 @@ con certeza, y calla/deriva cuando es mejor que responda un humano. Tienda:
 WATI (WhatsApp) ──webhook POST?key=──► Supabase Edge Function `copilot-webhook`
                                           │  (Deno/TS, verify_jwt=false; ACK rápido,
                                           │   trabajo lento en EdgeRuntime.waitUntil)
-                                          ├─► Anthropic Messages API (Sonnet 4.6) + tool use
+                                          ├─► Anthropic Messages API (Sonnet 4.6) + tool use + visión
+                                          │      ├─ imágenes del cliente → descarga de WATI (campo data) → base64
                                           │      ├─ tool buscar_producto → Shopify search/suggest.json
                                           │      └─ tool info_tienda     → Postgres store_facts
                                           ├─► Postgres (conversations/messages/handoffs/job_log)
@@ -98,8 +104,11 @@ Migraciones (ver `supabase/migrations/`):
    → se guarda en el hilo (`model='human-agent'`), se pone la conversación en
    `status='handoff'` (**v15**: el bot no la retoma solo) y se registra `mensaje_humano`.
    Retorna.
-5. Filtra: sin `waId`/sin texto/`type!=text` → skip. `upsert_conversation` → inserta msg
-   de usuario (dedup por `wati_message_id`, síncrono).
+5. Filtra: skip si falta `waId`. **v19:** una imagen de un cliente (`type:image`,
+   `owner=false`) SÍ pasa (visión); el resto de no-texto (documento/audio/imagen del
+   negocio) se registra (`evento_sin_texto.payload`, diagnóstico v18.1) y se salta.
+   `upsert_conversation` → inserta msg de usuario (el caption o `[imagen]`; dedup por
+   `wati_message_id`, síncrono).
 6. Cortes: si `status=handoff` → skip (cubre la atención humana de v15); si
    `turns_today>40` → skip. **Anti-interrupción 2:** si el texto matchea `INTERRUPT_RE`
    (RUC/cédula/razón social/pago/comprobante/mensajero…) → ABSTENERSE (no llama al LLM).
@@ -137,6 +146,9 @@ Reglas clave (texto completo en `index.ts`, const `SYSTEM_PROMPT`):
 - **SOPORTE/REPARACIONES (v17):** QSP NO repara ni da soporte técnico; ante "reparar /
   no enciende / no imprime" usar `info_tienda` y sugerir la empresa de la marca que
   figure ahí; nunca inventar teléfonos/empresas; si no hay dato, derivar.
+- **IMÁGENES (v19):** si llega una foto, mirarla: si es un PRODUCTO → identificar
+  marca/modelo y buscar con `buscar_producto` (precio SOLO de la tool, nunca leído de la
+  imagen); si es un COMPROBANTE/dato fiscal → abstenerse; si no se entiende → derivar.
 - **CONTACTO NUEVO vs CONOCIDO:** bienvenida+presentación una sola vez al nuevo;
   al conocido ir al grano.
 - **REGLA ANTI-INTERRUPCIÓN:** si un humano está atendiendo (datos de trámite,
@@ -156,6 +168,11 @@ Reglas clave (texto completo en `index.ts`, const `SYSTEM_PROMPT`):
   y se deduplican los intentos. El prompt maneja sinónimos/línea y preguntas de categoría.
 - **`info_tienda(tema?)`** (Fase 1.5, desplegada) — lee `store_facts` y devuelve TODOS
   los pares `key→value` con valor (omite vacíos); si no hay datos, el bot deriva a un asesor.
+- **Visión (v19, desplegada — no es una tool, es entrada multimodal):** las imágenes del
+  cliente (`type:image`, `owner=false`) se descargan de WATI (`descargarMediaWati`: campo
+  `data` + `Authorization: Bearer WATI_API_TOKEN`, base64, límite ~3.5 MB) y se adjuntan al
+  último mensaje de usuario para Claude vision. Si la descarga falla → el bot pide el modelo
+  o deriva. Telemetría: `job_log` `imagen_procesada` / `imagen_no_descargada`.
 
 ## Variables de entorno / secretos (en Supabase Edge Function secrets — NO en el repo)
 `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, `ANTHROPIC_API_KEY`, `WATI_API_TOKEN`,
@@ -201,11 +218,11 @@ Eventos WATI suscritos (necesarios): **Message Received**, **Session Message Sen
 1. **Fase 1.5 — `info_tienda`: ✅ desplegada y `store_facts` aplicada** (17 datos reales).
    Opción futura: re-apuntar la fuente a un metaobjeto/páginas de Shopify para unificar
    con el "single source of truth" del proyecto SEO (qsp-cdp-docs).
-2. **v19 — Visión / imágenes (PRÓXIMO):** clientes mandan capturas (del ecommerce, de
-   Instagram, "¿es este?"). Manejar `type:image`, descargar de WATI, clasificar con
-   Claude vision (producto vs pago/dato fiscal → abstenerse), buscar en catálogo; NUNCA
-   cotizar precio desde una imagen. Pendiente: confirmar el mecanismo de entrega de media
-   de WATI.
+2. **v19 — Visión / imágenes: ✅ desplegada y validada (2026-06-18).** El bot maneja
+   `type:image` de clientes: descarga de WATI (campo `data`), Claude vision clasifica
+   (producto → buscar en catálogo; pago/dato fiscal → abstenerse), nunca cotiza precio
+   desde la imagen. Pendiente menor: extender a `type:document` (PDF) si hace falta; hoy
+   los documentos se registran y se saltan.
 3. **Enriquecer con descripción/tags/variantes** vía `products/{handle}.json` público
    (en vivo, sin réplica ni token) para que el bot no adivine compatibilidad. Se decidió
    NO hacer réplica completa de Shopify en Supabase (riesgo de datos viejos para un bot

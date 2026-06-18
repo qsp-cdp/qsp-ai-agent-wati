@@ -19,19 +19,19 @@ sombra por seguridad.
 ```
 CLAUDE.md                                  # contexto autoritativo (leer primero)
 supabase/
-  functions/copilot-webhook/index.ts       # la edge function (v18, = lo desplegado)
+  functions/copilot-webhook/index.ts       # la edge function (v19, = lo desplegado)
 web/
   envios-interior-sucursal.html            # página de envíos al interior (45 sucursales)
   migrations/*.sql                          # esquema reproducible (6 migraciones)
 ```
 
 ## Estado
-- Edge function `copilot-webhook` **v18 (`v18-busqueda-guion`), ACTIVE** — EN VIVO a
-  todos, en Sonnet 4.6. Coexistencia con asesor humano validada (v15: el bot no retoma
-  conversaciones atendidas por una persona). Fix v18 del guion validado en producción
-  (`tn830xl` → encuentra `TN-830XL`).
+- Edge function `copilot-webhook` **v19 (`v19-vision`), ACTIVE** — EN VIVO a todos, en
+  Sonnet 4.6. Coexistencia con asesor humano validada (v15). Fix v18 del guion validado
+  (`tn830xl` → `TN-830XL`). **v19 visión validada en producción:** el bot ve las imágenes
+  del cliente, identifica el producto y lo cotiza con `buscar_producto`; ante un
+  comprobante/dato fiscal se abstiene.
 - `store_facts` aplicada (17 datos reales). Sonnet 4.6 ~$0.017/turno, ~8 s.
-  **Próximo:** v19 visión/imágenes (clientes mandan capturas que el bot aún no ve).
 
 ## Desarrollo / deploy
 - Secretos van en **Supabase Edge Function secrets** (NO en el repo): `ANTHROPIC_API_KEY`,
