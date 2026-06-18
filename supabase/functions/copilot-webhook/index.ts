@@ -1,3 +1,11 @@
+// === copilot-webhook v20 — Copiloto AI de WATI — endurecimiento (anti-duplicado, anti-carrera, MODE seguro) ===
+// v20 (2026-06-18): tras auditar el 1er día live a todos. (1) CLAMP de MODE: si COPILOT_MODE no es
+//   "live" cae a "shadow" — un secreto cruzado con COPILOT_MODEL ya NO rompe todos los inserts
+//   (era el 96% de los errores del día: messages.mode solo acepta live|shadow). (2) ANTI-DUPLICADO:
+//   en ráfaga de mensajes, solo el ÚLTIMO contesta (chequeo pre y post LLM de "¿hay uno más nuevo?")
+//   — mata las respuestas dobles/triples. (3) ANTI-CARRERA: re-chequea status='handoff' justo antes
+//   de enviar (si un asesor tomó la conversación durante los ~8s del LLM, el bot no la pisa). (4) Guard
+//   de prefill: la conversación siempre termina en mensaje de usuario (mata el error 400 de Anthropic).
 // === copilot-webhook v19 — Copiloto AI de WATI — visión (el bot ve imágenes del cliente) ===
 // v19 (2026-06-18): el bot ahora PROCESA las imágenes que envía el cliente (type:image,
 //   owner=false). Descarga el archivo de WATI (campo `data` del webhook, con el token), lo
@@ -79,7 +87,11 @@ const SB_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
 const ANTHROPIC_API_KEY = Deno.env.get("ANTHROPIC_API_KEY") ?? "";
 const WATI_API_TOKEN = Deno.env.get("WATI_API_TOKEN") ?? "";
 const WATI_API_BASE = Deno.env.get("WATI_API_BASE") ?? "";
-const MODE = (Deno.env.get("COPILOT_MODE") ?? "shadow").toLowerCase();
+// v20: clamp a valores válidos. Si COPILOT_MODE trae basura (p.ej. un id de modelo por cruzar el
+// secreto con COPILOT_MODEL) cae a "shadow" (seguro) en vez de romper TODOS los inserts: la columna
+// messages.mode solo acepta live|shadow. MODE_RAW se expone en el healthcheck para diagnóstico.
+const MODE_RAW = (Deno.env.get("COPILOT_MODE") ?? "shadow").toLowerCase();
+const MODE = MODE_RAW === "live" ? "live" : "shadow";
 const MODEL = Deno.env.get("COPILOT_MODEL") ?? "claude-haiku-4-5";
 const WEBHOOK_KEY = Deno.env.get("COPILOT_WEBHOOK_KEY") ?? "cw-qsp-9f2e7b3a1c5d4806";
 const MAX_TURNS_DIA = 40;
@@ -274,6 +286,11 @@ async function responderLLM(history: { role: string; content: string; model?: st
   const system = SYSTEM_PROMPT + ctx;
   // Los mensajes de un asesor humano se marcan para que el agente sepa que los dijo una persona.
   const messages: Anthropic.MessageParam[] = hist.map((m) => ({ role: m.role === "assistant" ? "assistant" as const : "user" as const, content: (m.model === "human-agent" ? "[Asesor del equipo]: " : "") + (m.content || "(vacío)") }));
+  // v20: la API exige que el ÚLTIMO mensaje sea de usuario; varios modelos no aceptan "prefill"
+  // (terminar en assistant). Si el historial termina en assistant (p.ej. un mensaje de asesor que
+  // entró último), se descartan los assistant finales para no romper la llamada (error 400).
+  while (messages.length && messages[messages.length - 1].role === "assistant") messages.pop();
+  if (!messages.length) return { text: null, toolCalls: [], tokensIn: 0, tokensOut: 0 };
   // v19 (visión): adjunta la imagen del cliente al ÚLTIMO mensaje de usuario (el que la trae).
   if ((imagen || imagenFallo) && messages.length) {
     const last = messages[messages.length - 1];
@@ -334,6 +351,14 @@ async function enviarWati(waId: string, texto: string): Promise<boolean> {
   return r.ok;
 }
 
+// v20 (anti-duplicado): ¿hay un mensaje de cliente MÁS NUEVO que el que estamos respondiendo?
+// Si llegan varios en ráfaga, solo el último contesta (evita respuestas dobles/triples).
+async function hayMensajeClienteMasNuevo(convId: string, desde: string): Promise<boolean> {
+  const { data } = await sb.from("messages").select("id")
+    .eq("conversation_id", convId).eq("role", "user").gt("created_at", desde).limit(1);
+  return !!(data && data.length);
+}
+
 // v19 — descarga una imagen enviada por el cliente desde WATI (el campo `data` del webhook es
 // un link de live-mt-server.wati.io que requiere el token) y la devuelve en base64 para pasarla
 // a Claude vision. Devuelve null si falla, no es imagen soportada o pesa demasiado.
@@ -379,7 +404,7 @@ function correrEnSegundoPlano(p: Promise<unknown>): void {
 Deno.serve(async (req) => {
   const url = new URL(req.url);
   if (req.method === "GET") {
-    return Response.json({ status: "ok", function: "copilot-webhook", version: "v19-vision", mode: MODE, model: MODEL, llm_configured: !!anthropic, wati_send_configured: !!(WATI_API_TOKEN && WATI_API_BASE), live_targets: MODE === "live" ? (LIVE_ALL ? "all" : LIVE_ALLOWLIST.length) : 0, ts: new Date().toISOString() });
+    return Response.json({ status: "ok", function: "copilot-webhook", version: "v20-endurecimiento", mode: MODE, mode_raw: MODE_RAW, model: MODEL, llm_configured: !!anthropic, wati_send_configured: !!(WATI_API_TOKEN && WATI_API_BASE), live_targets: MODE === "live" ? (LIVE_ALL ? "all" : LIVE_ALLOWLIST.length) : 0, ts: new Date().toISOString() });
   }
   if (req.method !== "POST") return Response.json({ error: "method_not_allowed" }, { status: 405 });
   if (url.searchParams.get("key") !== WEBHOOK_KEY) return Response.json({ error: "forbidden" }, { status: 403 });
@@ -448,11 +473,12 @@ Deno.serve(async (req) => {
     const watiMsgId = (p.id ?? p.whatsappMessageId ?? null)?.toString() ?? null;
     // Para una imagen el caption va en `texto`; si no hay caption, se guarda un marcador.
     const contenido = esImagenCliente ? (texto || "[imagen]") : texto;
-    const ins = await sb.from("messages").insert({ conversation_id: conv.id, role: "user", content: contenido.slice(0, 4000), mode: MODE, wati_message_id: watiMsgId }).select("id");
+    const ins = await sb.from("messages").insert({ conversation_id: conv.id, role: "user", content: contenido.slice(0, 4000), mode: MODE, wati_message_id: watiMsgId }).select("id,created_at");
     if (ins.error) {
       if (ins.error.code === "23505") return Response.json({ ok: true, skipped: "duplicado" });
       throw new Error(`insert user msg: ${ins.error.message}`);
     }
+    const userCreatedAt = (ins.data?.[0] as any)?.created_at ?? new Date().toISOString(); // v20: ancla para anti-duplicado
 
     if (conv.status === "handoff") return Response.json({ ok: true, skipped: "en_handoff" });
     if (conv.turns_today > MAX_TURNS_DIA) { await log("tope_turnos", true, { waId }); return Response.json({ ok: true, skipped: "tope_diario" }); }
@@ -484,10 +510,17 @@ Deno.serve(async (req) => {
           imagen = await descargarMediaWati(String(p.data ?? ""));
           if (!imagen) await log("imagen_no_descargada", false, { waId, url: String(p.data ?? "").slice(0, 160) });
         }
+        // v20 (anti-duplicado, pre-LLM): si ya llegó un mensaje más nuevo, ni gastamos el LLM.
+        if (await hayMensajeClienteMasNuevo(conv.id, userCreatedAt)) { await log("descartado_superado", true, { waId, fase: "pre-llm" }); return; }
         const { data: hist } = await sb.from("messages").select("role,content,model").eq("conversation_id", conv.id).in("role", ["user", "assistant"]).order("created_at", { ascending: false }).limit(10);
         const history = (hist ?? []).reverse();
         const r = await responderLLM(history as any, imagen ? false : NEEDS_TOOL_RE.test(texto), imagen, esImagenCliente && !imagen);
         const salida = r.text ? limpiarWhatsApp(r.text) : null; // formato apto para WhatsApp (v16)
+        // v20 (anti-duplicado, post-LLM): durante los ~8s del LLM pudo llegar otro mensaje → no enviar el viejo.
+        if (await hayMensajeClienteMasNuevo(conv.id, userCreatedAt)) { await log("descartado_superado", true, { waId, fase: "post-llm" }); return; }
+        // v20 (anti-carrera): si el negocio tomó la conversación mientras pensábamos, no la pisamos.
+        const { data: convAhora } = await sb.from("conversations").select("status").eq("id", conv.id).maybeSingle();
+        if (convAhora?.status === "handoff") { await log("descartado_handoff_tardio", true, { waId }); return; }
         let modoFinal = "shadow"; let enviado = false;
         if (salida && liveAllowed(waId)) { enviado = await enviarWati(waId, salida); modoFinal = enviado ? "live" : "shadow"; }
         await sb.from("messages").insert({ conversation_id: conv.id, role: "assistant", content: salida, tool_calls: r.toolCalls.length ? r.toolCalls : null, mode: modoFinal, model: anthropic ? MODEL : null, tokens_in: r.tokensIn || null, tokens_out: r.tokensOut || null, latency_ms: Date.now() - t0 });
