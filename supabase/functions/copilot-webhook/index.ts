@@ -1,3 +1,9 @@
+// === copilot-webhook v18.1 — diagnóstico de media (paso previo a visión v19) ===
+// v18.1 (2026-06-18): registra el payload COMPLETO de los mensajes que NO son texto
+//   (imágenes, documentos…) en job_log (action `evento_sin_texto`, campo `payload`,
+//   con strings largos truncados) para conocer el shape real de media de WATI — dónde
+//   viene la URL/ID del archivo — y construir v19 (visión) sin adivinar. NO cambia el
+//   comportamiento de envío: los no-texto se siguen saltando (el bot aún no ve imágenes).
 // === copilot-webhook v18 — Copiloto AI de WATI — búsqueda tolerante al guion en modelos ===
 // v18 (2026-06-18): buscar_producto prueba el código de modelo CON y SIN guion (TN830XL ↔
 //   TN-830XL, GI11 ↔ GI-11). Shopify no matchea una forma contra la otra, así que el bot decía
@@ -317,7 +323,7 @@ function correrEnSegundoPlano(p: Promise<unknown>): void {
 Deno.serve(async (req) => {
   const url = new URL(req.url);
   if (req.method === "GET") {
-    return Response.json({ status: "ok", function: "copilot-webhook", version: "v18-busqueda-guion", mode: MODE, model: MODEL, llm_configured: !!anthropic, wati_send_configured: !!(WATI_API_TOKEN && WATI_API_BASE), live_targets: MODE === "live" ? (LIVE_ALL ? "all" : LIVE_ALLOWLIST.length) : 0, ts: new Date().toISOString() });
+    return Response.json({ status: "ok", function: "copilot-webhook", version: "v18.1-diag-imagen", mode: MODE, model: MODEL, llm_configured: !!anthropic, wati_send_configured: !!(WATI_API_TOKEN && WATI_API_BASE), live_targets: MODE === "live" ? (LIVE_ALL ? "all" : LIVE_ALLOWLIST.length) : 0, ts: new Date().toISOString() });
   }
   if (req.method !== "POST") return Response.json({ error: "method_not_allowed" }, { status: 405 });
   if (url.searchParams.get("key") !== WEBHOOK_KEY) return Response.json({ error: "forbidden" }, { status: 403 });
@@ -362,7 +368,14 @@ Deno.serve(async (req) => {
   }
 
   if (!waId || !texto || tipo !== "text") {
-    if (!texto) await log("evento_sin_texto", true, { tipo, eventType: eventType || null });
+    // Diagnóstico v18.1: registrar el payload COMPLETO de mensajes no-texto (imágenes,
+    // documentos…) para descubrir dónde viene la URL/ID de media en el webhook de WATI
+    // y construir v19 (visión) sin adivinar. Trunca strings largos (evita base64 enorme).
+    const muestra: Record<string, unknown> = {};
+    for (const [k, val] of Object.entries(p ?? {})) {
+      muestra[k] = typeof val === "string" && val.length > 500 ? val.slice(0, 500) + "…[trunc]" : val;
+    }
+    await log("evento_sin_texto", true, { tipo, eventType: eventType || null, payload: muestra });
     return Response.json({ ok: true, skipped: "no_es_mensaje_de_cliente" });
   }
 
