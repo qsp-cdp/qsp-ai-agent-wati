@@ -1,3 +1,13 @@
+// === copilot-webhook v21 — Copiloto AI de WATI — ITBMS + inventario real + anti-eco + prefill duro ===
+// v21 (2026-06-19): (1) ITBMS: el precio de Shopify es SIN impuesto; buscar_producto devuelve
+//   precio_usd, itbms_7pct y total_con_itbms (cálculo en CÓDIGO, el LLM no hace aritmética). (2)
+//   INVENTARIO REAL: buscar_producto consulta Shopify Admin (totalInventory) y devuelve un campo
+//   `stock` ya resuelto — >3 muestra el número, ≤3 (incl. 0) deriva a un asesor para que verifique
+//   el inventario físico (el bot nunca ve ni inventa el número). Best-effort: sin token → "un asesor
+//   confirma la cantidad". (3) ANTI-ECO duro: la respuesta del bot se inserta ANTES de enviarse por
+//   WATI, para que el eco (owner=true) lo reconozca el anti-eco y NO dispare un handoff falso (ayer:
+//   5/día). (4) Guard de prefill endurecido: fin en mensaje de usuario antes de CADA llamada al
+//   modelo. Secretos nuevos: SHOPIFY_ADMIN_TOKEN, SHOPIFY_ADMIN_API_BASE.
 // === copilot-webhook v20 — Copiloto AI de WATI — endurecimiento (anti-duplicado, anti-carrera, MODE seguro) ===
 // v20 (2026-06-18): tras auditar el 1er día live a todos. (1) CLAMP de MODE: si COPILOT_MODE no es
 //   "live" cae a "shadow" — un secreto cruzado con COPILOT_MODEL ya NO rompe todos los inserts
@@ -96,6 +106,10 @@ const MODEL = Deno.env.get("COPILOT_MODEL") ?? "claude-haiku-4-5";
 const WEBHOOK_KEY = Deno.env.get("COPILOT_WEBHOOK_KEY") ?? "cw-qsp-9f2e7b3a1c5d4806";
 const MAX_TURNS_DIA = 40;
 const STORE = "https://www.quickservicepanama.com";
+// v21 — Shopify Admin (solo lectura) para la CANTIDAD real de inventario (totalInventory).
+// SHOPIFY_ADMIN_API_BASE: https://<tienda>.myshopify.com/admin/api/2024-10 (sin / al final).
+const SHOPIFY_ADMIN_TOKEN = Deno.env.get("SHOPIFY_ADMIN_TOKEN") ?? "";
+const SHOPIFY_ADMIN_API_BASE = (Deno.env.get("SHOPIFY_ADMIN_API_BASE") ?? "").replace(/\/$/, "");
 
 // Piloto gradual: en live, SOLO se envía a estos wa_id. Vacío = no se envía a nadie (sigue
 // registrando en sombra); "all"/"*" = todos. Evita ir a live total por accidente.
@@ -125,6 +139,8 @@ REGLA DE ORO — precio, stock y promociones
 - NUNCA menciones un producto, modelo, precio o disponibilidad que no provenga de un resultado de buscar_producto EN ESTE MISMO TURNO. Si no llamaste a la tool, NO nombres modelos ni des precios/stock: búscalo primero. Aplica también a preguntas de categoría ("¿venden impresoras Epson?"): primero busca, luego responde con lo que devuelva.
 - NUNCA inventes precios, existencias, descuentos ni promociones.
 - Incluye el link del producto cuando lo tengas.
+- PRECIO + ITBMS: los precios son SIN ITBMS. Muestra SIEMPRE el precio, el ITBMS (7%) y el total usando EXACTAMENTE los valores que devuelve la tool (precio_usd, itbms_7pct, total_con_itbms). Formato: "*$116.00 + ITBMS (7%) = $124.12*". NUNCA calcules el impuesto de memoria.
+- STOCK / CANTIDAD: indica la disponibilidad usando el campo "stock" que devuelve la tool, TAL CUAL. Si dice "X unidades", dilo; si dice "stock bajo — un asesor verifica…", dilo así. NUNCA inventes ni adivines una cantidad: di solo lo que aparezca en ese campo "stock".
 - Si la tool no encuentra el producto, o piden algo fuera de catálogo: discúlpate breve e indica que un asesor confirmará disponibilidad y opciones.
 
 BÚSQUEDA DE PRODUCTOS (cómo usar buscar_producto)
@@ -169,7 +185,7 @@ LÍMITES
 
 const TOOLS: Anthropic.Tool[] = [{
   name: "buscar_producto",
-  description: "Busca productos en el catálogo de Quick Service Panamá (Shopify). Llámala SIEMPRE que el cliente pregunte precio, disponibilidad/stock, compatibilidad, o mencione/insinúe un producto, marca o categoría (tinta, toner, impresora Epson/Canon/HP, etc.). Pasa términos CONCISOS: marca + MODELO (el número de modelo es la mejor señal); para 'tinta para [impresora]' busca por el modelo de la impresora. Puedes llamarla varias veces reformulando si no encuentras. Devuelve título, precio USD, disponibilidad, marca, tipo y link (máx 5).",
+  description: "Busca productos en el catálogo de Quick Service Panamá (Shopify). Llámala SIEMPRE que el cliente pregunte precio, disponibilidad/stock, compatibilidad, o mencione/insinúe un producto, marca o categoría (tinta, toner, impresora Epson/Canon/HP, etc.). Pasa términos CONCISOS: marca + MODELO (el número de modelo es la mejor señal); para 'tinta para [impresora]' busca por el modelo de la impresora. Puedes llamarla varias veces reformulando si no encuentras. Devuelve título, precio (precio_usd SIN ITBMS + itbms_7pct + total_con_itbms), stock (disponibilidad ya resuelta: muestra el número si hay >3, si no deriva a un asesor), marca, tipo y link (máx 5).",
   strict: true,
   input_schema: { type: "object", properties: { consulta: { type: "string", description: "Términos de búsqueda, ej: 'tinta hp 954 negra'" } }, required: ["consulta"], additionalProperties: false },
 } as Anthropic.Tool, {
@@ -212,6 +228,7 @@ async function suggestShopify(q: string): Promise<any[]> {
   if (!r.ok) throw new Error(`tienda respondió ${r.status}`);
   const j = await r.json();
   return (j?.resources?.results?.products ?? []).map((p: any) => ({
+    id: p.id,
     titulo: p.title,
     precio_usd: p.price,
     disponible: p.available === true,
@@ -241,6 +258,49 @@ function variantesModelo(m: string): string[] {
   return [...v];
 }
 
+// v21 — ITBMS (7%) calculado en CÓDIGO para no depender de la aritmética del LLM. El precio de
+// Shopify es SIN impuesto; devolvemos precio base, el ITBMS y el total (todo string, 2 decimales).
+function conItbms(precio: any): { precio_usd: string; itbms_7pct: string; total_con_itbms: string } {
+  const n = parseFloat(String(precio ?? "").replace(/[^0-9.]/g, ""));
+  if (!isFinite(n) || n <= 0) return { precio_usd: String(precio ?? ""), itbms_7pct: "", total_con_itbms: "" };
+  return { precio_usd: n.toFixed(2), itbms_7pct: (n * 0.07).toFixed(2), total_con_itbms: (n * 1.07).toFixed(2) };
+}
+
+// v21 — inventario real desde Shopify Admin (totalInventory por producto, UNA llamada para todos
+// los ids). Requiere SHOPIFY_ADMIN_TOKEN + SHOPIFY_ADMIN_API_BASE. Best-effort: si no está
+// configurado o falla, devuelve {} y el bot dirá "un asesor confirma la cantidad" (nunca inventa).
+async function inventarioShopify(ids: (string | number)[]): Promise<Record<string, number>> {
+  if (!SHOPIFY_ADMIN_TOKEN || !SHOPIFY_ADMIN_API_BASE || !ids.length) return {};
+  try {
+    const gids = ids.map((id) => `gid://shopify/Product/${String(id).replace(/\D/g, "")}`).filter((g) => /\d/.test(g));
+    if (!gids.length) return {};
+    const query = "query($ids:[ID!]!){ nodes(ids:$ids){ ... on Product { id totalInventory } } }";
+    const r = await fetch(`${SHOPIFY_ADMIN_API_BASE}/graphql.json`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "X-Shopify-Access-Token": SHOPIFY_ADMIN_TOKEN },
+      body: JSON.stringify({ query, variables: { ids: gids } }),
+      signal: AbortSignal.timeout(6000),
+    });
+    if (!r.ok) return {};
+    const j = await r.json();
+    const out: Record<string, number> = {};
+    for (const n of (j?.data?.nodes ?? [])) {
+      if (n?.id && typeof n.totalInventory === "number") out[String(n.id).replace(/\D/g, "")] = n.totalInventory;
+    }
+    return out;
+  } catch { return {}; }
+}
+
+// v21 — texto de stock LISTO para el bot (determinista). >3: muestra el número; 1-3: deriva sin
+// exponer el número; 0/desconocido pero disponible: deriva (puede ser sin seguimiento de stock);
+// no disponible: sin stock. Así el bot nunca ve ni inventa una cantidad que no deba decir.
+function stockTexto(disponible: boolean, cantidad: number | undefined): string {
+  if (typeof cantidad === "number" && cantidad >= 4) return `${cantidad} unidades disponibles`;
+  if (typeof cantidad === "number" && cantidad >= 1) return "stock bajo — un asesor verifica el inventario físico para confirmar la cantidad exacta";
+  if (disponible) return "un asesor verifica el inventario físico para confirmar la cantidad exacta";
+  return "sin stock — un asesor verifica el inventario físico";
+}
+
 async function buscarProducto(consulta: string): Promise<string> {
   // Consulta libre tal cual; si no encuentra, reintenta por código de modelo y sus variantes
   // con/sin guion. Deduplica para no repetir llamadas. (v18)
@@ -253,7 +313,26 @@ async function buscarProducto(consulta: string): Promise<string> {
     vistos.add(k);
     try {
       const prods = await suggestShopify(q);
-      if (prods.length) return JSON.stringify(prods.slice(0, 5));
+      if (prods.length) {
+        const top = prods.slice(0, 5);
+        // v21: enriquece con ITBMS (cálculo en código) y stock real (Shopify Admin, best-effort).
+        const inv = await inventarioShopify(top.map((p) => p.id).filter(Boolean));
+        const enriquecidos = top.map((p) => {
+          const precio = conItbms(p.precio_usd);
+          const cant = inv[String(p.id ?? "").replace(/\D/g, "")];
+          return {
+            titulo: p.titulo,
+            precio_usd: precio.precio_usd,
+            itbms_7pct: precio.itbms_7pct,
+            total_con_itbms: precio.total_con_itbms,
+            stock: stockTexto(p.disponible, cant),
+            marca: p.marca,
+            tipo: p.tipo,
+            url: p.url,
+          };
+        });
+        return JSON.stringify(enriquecidos);
+      }
     } catch (e) { lastErr = String(e).slice(0, 120); }
   }
   if (lastErr) return JSON.stringify({ error: lastErr });
@@ -309,6 +388,10 @@ async function responderLLM(history: { role: string; content: string; model?: st
   const toolCalls: unknown[] = [];
   let tokensIn = 0, tokensOut = 0;
   for (let i = 0; i < 4; i++) {
+    // v21: garantía dura — la conversación SIEMPRE termina en mensaje de usuario antes de CADA
+    // llamada al modelo (cierra el error 400 "does not support assistant message prefill").
+    while (messages.length && messages[messages.length - 1].role === "assistant") messages.pop();
+    if (!messages.length) break;
     const resp = await anthropic.messages.create({
       model: MODEL, max_tokens: 1024, system, tools: TOOLS, messages,
       ...(i === 0 && forceTool ? { tool_choice: { type: "any" as const } } : {}),
@@ -404,7 +487,7 @@ function correrEnSegundoPlano(p: Promise<unknown>): void {
 Deno.serve(async (req) => {
   const url = new URL(req.url);
   if (req.method === "GET") {
-    return Response.json({ status: "ok", function: "copilot-webhook", version: "v20-endurecimiento", mode: MODE, mode_raw: MODE_RAW, model: MODEL, llm_configured: !!anthropic, wati_send_configured: !!(WATI_API_TOKEN && WATI_API_BASE), live_targets: MODE === "live" ? (LIVE_ALL ? "all" : LIVE_ALLOWLIST.length) : 0, ts: new Date().toISOString() });
+    return Response.json({ status: "ok", function: "copilot-webhook", version: "v21-itbms-inventario", mode: MODE, mode_raw: MODE_RAW, model: MODEL, llm_configured: !!anthropic, wati_send_configured: !!(WATI_API_TOKEN && WATI_API_BASE), inventario_configurado: !!(SHOPIFY_ADMIN_TOKEN && SHOPIFY_ADMIN_API_BASE), live_targets: MODE === "live" ? (LIVE_ALL ? "all" : LIVE_ALLOWLIST.length) : 0, ts: new Date().toISOString() });
   }
   if (req.method !== "POST") return Response.json({ error: "method_not_allowed" }, { status: 405 });
   if (url.searchParams.get("key") !== WEBHOOK_KEY) return Response.json({ error: "forbidden" }, { status: 403 });
@@ -521,9 +604,17 @@ Deno.serve(async (req) => {
         // v20 (anti-carrera): si el negocio tomó la conversación mientras pensábamos, no la pisamos.
         const { data: convAhora } = await sb.from("conversations").select("status").eq("id", conv.id).maybeSingle();
         if (convAhora?.status === "handoff") { await log("descartado_handoff_tardio", true, { waId }); return; }
-        let modoFinal = "shadow"; let enviado = false;
-        if (salida && liveAllowed(waId)) { enviado = await enviarWati(waId, salida); modoFinal = enviado ? "live" : "shadow"; }
-        await sb.from("messages").insert({ conversation_id: conv.id, role: "assistant", content: salida, tool_calls: r.toolCalls.length ? r.toolCalls : null, mode: modoFinal, model: anthropic ? MODEL : null, tokens_in: r.tokensIn || null, tokens_out: r.tokensOut || null, latency_ms: Date.now() - t0 });
+        // v21 (anti-eco duro): insertar la respuesta ANTES de enviarla por WATI. Así, cuando WATI
+        // rebota el eco (owner=true), el anti-eco encuentra esta fila y NO lo guarda como mensaje de
+        // asesor → se evita el handoff falso. El modo se registra optimista y se corrige si falla.
+        const quiereEnviar = !!(salida && liveAllowed(waId));
+        let modoFinal = quiereEnviar ? "live" : "shadow";
+        const insAsst = await sb.from("messages").insert({ conversation_id: conv.id, role: "assistant", content: salida, tool_calls: r.toolCalls.length ? r.toolCalls : null, mode: modoFinal, model: anthropic ? MODEL : null, tokens_in: r.tokensIn || null, tokens_out: r.tokensOut || null, latency_ms: Date.now() - t0 }).select("id");
+        let enviado = false;
+        if (quiereEnviar) {
+          enviado = await enviarWati(waId, salida);
+          if (!enviado) { modoFinal = "shadow"; await sb.from("messages").update({ mode: "shadow" }).eq("id", insAsst.data?.[0]?.id); }
+        }
         if (esImagenCliente) await log("imagen_procesada", true, { waId, descargada: !!imagen, enviado });
         if (!anthropic) await log("llm_no_configurado", true, { waId });
       } catch (e) {
