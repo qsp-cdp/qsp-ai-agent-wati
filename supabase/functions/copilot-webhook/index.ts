@@ -1,3 +1,10 @@
+// === copilot-webhook v22 — Copiloto AI de WATI — conciencia de horario de atención ===
+// v22 (2026-06-20): el bot sabe en qué horario está (Lun-Vie 9:00am–5:00pm, hora de Panamá,
+//   UTC-5 fijo, sin horario de verano). Fuera de horario (noches/fines de semana) SIGUE
+//   respondiendo lo automático (precio/ITBMS, stock, info), pero al derivar o cuando el cliente
+//   espera a un humano, aclara que un asesor responde en el próximo horario hábil — no promete
+//   respuesta humana inmediata. El mensaje fijo de handoff también se vuelve consciente del
+//   horario. (Feriados: pendiente para una versión futura.)
 // === copilot-webhook v21 — Copiloto AI de WATI — ITBMS + inventario real + anti-eco + prefill duro ===
 // v21 (2026-06-19): (1) ITBMS: el precio de Shopify es SIN impuesto; buscar_producto devuelve
 //   precio_usd, itbms_7pct y total_con_itbms (cálculo en CÓDIGO, el LLM no hace aritmética). (2)
@@ -119,6 +126,16 @@ const LIVE_ALLOWLIST = LIVE_RAW.split(",").map((s) => s.replace(/\D/g, "")).filt
 function liveAllowed(waId: string): boolean {
   if (MODE !== "live") return false;
   return LIVE_ALL || LIVE_ALLOWLIST.includes(waId);
+}
+
+// v22 — horario de atención de QSP: Lun-Vie 9:00am–5:00pm, hora de Panamá (UTC-5 fijo, sin
+// horario de verano → basta desplazar UTC y leer). Sáb/Dom o fuera de 9–17 = fuera de horario.
+function horarioPanama(now: Date = new Date()): { dentro: boolean; dia: number; hora: number } {
+  const pa = new Date(now.getTime() - 5 * 3600 * 1000); // UTC-5
+  const dia = pa.getUTCDay();    // 0=Dom … 6=Sáb
+  const hora = pa.getUTCHours(); // 0–23
+  const dentro = dia >= 1 && dia <= 5 && hora >= 9 && hora < 17;
+  return { dentro, dia, hora };
 }
 
 const sb = createClient(SB_URL, SB_KEY, { auth: { persistSession: false } });
@@ -362,7 +379,13 @@ async function responderLLM(history: { role: string; content: string; model?: st
   const ctx = esNuevo
     ? "\n\nCONTEXTO INTERNO: Es la PRIMERA interacción registrada de este contacto (aplica bienvenida + presentación una sola vez)."
     : "\n\nCONTEXTO INTERNO: Contacto con conversación ya en curso (NO repitas bienvenida ni presentación; ve al grano).";
-  const system = SYSTEM_PROMPT + ctx;
+  // v22 — conciencia de horario: si estamos fuera del horario de atención, el bot sigue ayudando
+  // con lo automático pero aclara cuándo responde un asesor (sin prometer respuesta humana inmediata).
+  const hh = horarioPanama();
+  const diasSem = ["domingo", "lunes", "martes", "miércoles", "jueves", "viernes", "sábado"];
+  const ctxHorario = hh.dentro ? "" :
+    `\n\nCONTEXTO HORARIO: Ahora es ${diasSem[hh.dia]} ~${hh.hora}:00 en Panamá, FUERA del horario de atención de QSP (atención por WhatsApp y tienda: Lun-Vie 9:00am–5:00pm; sábados y domingos cerrado). Seguí ayudando con lo automático (precio/ITBMS, stock, info de tienda). Pero si el cliente necesita un asesor, una cotización formal o coordinar pago/entrega, aclará con calma que un asesor le responde en el próximo horario hábil (deducí cuál según el día y la hora actuales) y NO prometas respuesta humana inmediata.`;
+  const system = SYSTEM_PROMPT + ctx + ctxHorario;
   // Los mensajes de un asesor humano se marcan para que el agente sepa que los dijo una persona.
   const messages: Anthropic.MessageParam[] = hist.map((m) => ({ role: m.role === "assistant" ? "assistant" as const : "user" as const, content: (m.model === "human-agent" ? "[Asesor del equipo]: " : "") + (m.content || "(vacío)") }));
   // v20: la API exige que el ÚLTIMO mensaje sea de usuario; varios modelos no aceptan "prefill"
@@ -487,7 +510,7 @@ function correrEnSegundoPlano(p: Promise<unknown>): void {
 Deno.serve(async (req) => {
   const url = new URL(req.url);
   if (req.method === "GET") {
-    return Response.json({ status: "ok", function: "copilot-webhook", version: "v21-itbms-inventario", mode: MODE, mode_raw: MODE_RAW, model: MODEL, llm_configured: !!anthropic, wati_send_configured: !!(WATI_API_TOKEN && WATI_API_BASE), inventario_configurado: !!(SHOPIFY_ADMIN_TOKEN && SHOPIFY_ADMIN_API_BASE), live_targets: MODE === "live" ? (LIVE_ALL ? "all" : LIVE_ALLOWLIST.length) : 0, ts: new Date().toISOString() });
+    return Response.json({ status: "ok", function: "copilot-webhook", version: "v22-horario", mode: MODE, mode_raw: MODE_RAW, model: MODEL, llm_configured: !!anthropic, wati_send_configured: !!(WATI_API_TOKEN && WATI_API_BASE), inventario_configurado: !!(SHOPIFY_ADMIN_TOKEN && SHOPIFY_ADMIN_API_BASE), live_targets: MODE === "live" ? (LIVE_ALL ? "all" : LIVE_ALLOWLIST.length) : 0, ts: new Date().toISOString() });
   }
   if (req.method !== "POST") return Response.json({ error: "method_not_allowed" }, { status: 405 });
   if (url.searchParams.get("key") !== WEBHOOK_KEY) return Response.json({ error: "forbidden" }, { status: 403 });
@@ -576,7 +599,9 @@ Deno.serve(async (req) => {
     if (HANDOFF_RE.test(texto)) {
       await sb.from("conversations").update({ status: "handoff" }).eq("id", conv.id);
       await sb.from("handoffs").insert({ conversation_id: conv.id, motivo: `keyword: ${texto.slice(0, 120)}` });
-      const despedida = "Con gusto, ya le paso con un asesor que le responderá en breve. ¡Gracias por escribirnos!";
+      const despedida = horarioPanama().dentro
+        ? "Con gusto, ya le paso con un asesor que le responderá en breve. ¡Gracias por escribirnos!"
+        : "Con gusto, un asesor le responderá apenas estemos en horario (Lun-Vie 9:00am–5:00pm). ¡Gracias por escribirnos!";
       const enviado = liveAllowed(waId) ? await enviarWati(waId, despedida) : false;
       await sb.from("messages").insert({ conversation_id: conv.id, role: "assistant", content: despedida, mode: enviado ? "live" : "shadow", latency_ms: Date.now() - t0 });
       return Response.json({ ok: true, handoff: true });
