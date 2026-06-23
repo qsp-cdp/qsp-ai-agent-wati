@@ -1,3 +1,9 @@
+// === copilot-webhook v23 — Copiloto AI de WATI — resiliencia ante fallos de la API ===
+// v23 (2026-06-23): tras una auditoría que halló un bache de Anthropic (529 overloaded / 500
+//   internal) en una ventana de ~33 min que dejó ~21 turnos SIN respuesta. (1) maxRetries del SDK
+//   a 3 (reintenta con backoff los baches cortos). (2) RESPUESTA DE RESPALDO: si la llamada falla
+//   y no alcanzamos a responder, en vez de silencio se manda un "estamos con alto volumen, un asesor
+//   te ayuda…" (consciente del horario), respetando live / anti-duplicado / handoff.
 // === copilot-webhook v22 — Copiloto AI de WATI — conciencia de horario de atención ===
 // v22 (2026-06-20): el bot sabe en qué horario está (Lun-Vie 9:00am–5:00pm, hora de Panamá,
 //   UTC-5 fijo, sin horario de verano). Fuera de horario (noches/fines de semana) SIGUE
@@ -139,7 +145,8 @@ function horarioPanama(now: Date = new Date()): { dentro: boolean; dia: number; 
 }
 
 const sb = createClient(SB_URL, SB_KEY, { auth: { persistSession: false } });
-const anthropic = ANTHROPIC_API_KEY ? new Anthropic({ apiKey: ANTHROPIC_API_KEY }) : null;
+// v23: maxRetries 3 (default 2) para tolerar baches transitorios de la API (429/500/529) con backoff.
+const anthropic = ANTHROPIC_API_KEY ? new Anthropic({ apiKey: ANTHROPIC_API_KEY, maxRetries: 3 }) : null;
 
 const SYSTEM_PROMPT = `Eres el asistente de Quick Service Panamá (quickservicepanama.com), tienda de suministros de impresión y tecnología en Panamá. Atiendes por WhatsApp.
 
@@ -510,7 +517,7 @@ function correrEnSegundoPlano(p: Promise<unknown>): void {
 Deno.serve(async (req) => {
   const url = new URL(req.url);
   if (req.method === "GET") {
-    return Response.json({ status: "ok", function: "copilot-webhook", version: "v22-horario", mode: MODE, mode_raw: MODE_RAW, model: MODEL, llm_configured: !!anthropic, wati_send_configured: !!(WATI_API_TOKEN && WATI_API_BASE), inventario_configurado: !!(SHOPIFY_ADMIN_TOKEN && SHOPIFY_ADMIN_API_BASE), live_targets: MODE === "live" ? (LIVE_ALL ? "all" : LIVE_ALLOWLIST.length) : 0, ts: new Date().toISOString() });
+    return Response.json({ status: "ok", function: "copilot-webhook", version: "v23-resiliencia", mode: MODE, mode_raw: MODE_RAW, model: MODEL, llm_configured: !!anthropic, wati_send_configured: !!(WATI_API_TOKEN && WATI_API_BASE), inventario_configurado: !!(SHOPIFY_ADMIN_TOKEN && SHOPIFY_ADMIN_API_BASE), live_targets: MODE === "live" ? (LIVE_ALL ? "all" : LIVE_ALLOWLIST.length) : 0, ts: new Date().toISOString() });
   }
   if (req.method !== "POST") return Response.json({ error: "method_not_allowed" }, { status: 405 });
   if (url.searchParams.get("key") !== WEBHOOK_KEY) return Response.json({ error: "forbidden" }, { status: 403 });
@@ -611,6 +618,7 @@ Deno.serve(async (req) => {
     // respondemos a WATI al instante y evitamos su timeout/reintentos (v14). El insert
     // del mensaje de usuario (dedup) ya ocurrió de forma síncrona más arriba.
     const procesar = (async () => {
+      let respondido = false; // v23: marca si ya enviamos respuesta (para el respaldo del catch)
       try {
         // v19: si es una imagen del cliente, descárgala de WATI para pasarla a Claude vision.
         let imagen: { b64: string; mediaType: string } | null = null;
@@ -640,10 +648,27 @@ Deno.serve(async (req) => {
           enviado = await enviarWati(waId, salida);
           if (!enviado) { modoFinal = "shadow"; await sb.from("messages").update({ mode: "shadow" }).eq("id", insAsst.data?.[0]?.id); }
         }
+        respondido = true; // v23: ya insertamos/enviamos la respuesta del bot
         if (esImagenCliente) await log("imagen_procesada", true, { waId, descargada: !!imagen, enviado });
         if (!anthropic) await log("llm_no_configurado", true, { waId });
       } catch (e) {
         await log("error", false, { waId, fase: "async", error: String(e).slice(0, 400) });
+        // v23: respuesta de respaldo — si algo falló (p.ej. API de Anthropic 529/500) y NO alcanzamos
+        // a responder, no dejamos al cliente en silencio. Solo si: live, no llegó un mensaje más nuevo,
+        // y no entró un asesor. Mensaje consciente del horario.
+        try {
+          if (!respondido && liveAllowed(waId) && !(await hayMensajeClienteMasNuevo(conv.id, userCreatedAt))) {
+            const { data: cf } = await sb.from("conversations").select("status").eq("id", conv.id).maybeSingle();
+            if (cf?.status !== "handoff") {
+              const fb = horarioPanama().dentro
+                ? "Disculpá, estamos con alto volumen en este momento 🙏. Un asesor te ayuda en breve."
+                : "Disculpá, estamos con alto volumen en este momento 🙏. Un asesor te ayuda apenas estemos en horario (Lun-Vie 9:00am–5:00pm).";
+              const okfb = await enviarWati(waId, fb);
+              await sb.from("messages").insert({ conversation_id: conv.id, role: "assistant", content: fb, mode: okfb ? "live" : "shadow", model: "fallback", latency_ms: Date.now() - t0 });
+              await log("respuesta_respaldo", true, { waId, enviado: okfb });
+            }
+          }
+        } catch { /* nunca romper */ }
       }
     })();
     correrEnSegundoPlano(procesar);
