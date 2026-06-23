@@ -1,7 +1,7 @@
 # CLAUDE.md — Copiloto AI de WhatsApp (WATI) · Quick Service Panamá
 
 > Contexto base para Claude Code trabajando en ESTE repo. Lee esto primero.
-> Generado 2026-06-15; actualizado 2026-06-18 al estado real (edge function v20 +
+> Generado 2026-06-15; actualizado 2026-06-23 al estado real (edge function v23 +
 > esquema del proyecto Supabase). Docs de diseño originales en el repo
 > `qsp-cdp/qsp-cdp-docs` (`docs/design/2026-06-12-proyecto-copilot-wati.md` y
 > `docs/design/2026-06-13-copilot-analisis-sombra-prompt-v2.md`).
@@ -12,10 +12,10 @@ equipo humano: contesta preguntas generales, indica disponibilidad/stock y da pr
 con certeza, y calla/deriva cuando es mejor que responda un humano. Tienda:
 **quickservicepanama.com** (suministros de impresión y tecnología en Panamá).
 
-## Estado actual (2026-06-18)
-- **EN VIVO: `copilot-webhook` v20 (`v20-endurecimiento`), ACTIVE.** Desplegado el
-  2026-06-18 con `verify_jwt=false`. Healthcheck (GET, sin key) reporta
-  `version/mode/mode_raw/model/llm_configured/wati_send_configured/live_targets`.
+## Estado actual (2026-06-23)
+- **EN VIVO: `copilot-webhook` v23 (`v23-resiliencia`), ACTIVE.** Desplegado el
+  2026-06-23 con `verify_jwt=false`. Healthcheck (GET, sin key) reporta
+  `version/mode/mode_raw/model/llm_configured/wati_send_configured/inventario_configurado/live_targets`.
 - **MODO: LIVE A TODOS.** `COPILOT_MODE=live` + `COPILOT_LIVE_ALLOWLIST=all`
   (`live_targets:"all"`). El piloto por allowlist (sombra → número por número) ya se
   completó; hoy el bot responde a todos los clientes. El default del CÓDIGO sigue
@@ -44,6 +44,27 @@ con certeza, y calla/deriva cuando es mejor que responda un humano. Tienda:
   → **clamp de MODE** (inválido cae a `shadow`, no rompe inserts). Además **anti-carrera**
   (no pisar si un asesor entró durante el LLM) y **guard de prefill** (la conversación
   siempre termina en mensaje de usuario). Veredicto: **GO** para mantenerlo abierto a todos.
+- **v21 (ITBMS + inventario real + anti-eco duro + prefill, 2026-06-19):** (1) **ITBMS** — los
+  precios de Shopify son SIN impuesto; `buscar_producto` calcula en CÓDIGO y devuelve `precio_usd`
+  + `itbms_7pct` + `total_con_itbms` (el LLM no hace aritmética). (2) **Inventario real** —
+  `buscar_producto` consulta Shopify Admin (`totalInventory`) y devuelve un campo `stock` ya
+  resuelto: >3 muestra el número, ≤3 (incl. 0) deriva a un asesor para verificar inventario físico
+  (el bot nunca ve ni inventa el número); best-effort (sin token → "un asesor confirma"). (3)
+  **Anti-eco duro** — la respuesta se inserta ANTES de enviarse por WATI → el eco no se guarda como
+  asesor → se acabaron los handoffs falsos (eran ~5/día). (4) **Guard de prefill** endurecido.
+  Validado en prod (Epson 544 → $10.00 + ITBMS = $10.70; plotter → "un asesor verifica stock").
+- **v22 (conciencia de horario, 2026-06-19):** atención Lun-Vie **9:00am–5:00pm** (Panamá, UTC-5
+  fijo). Fuera de horario el bot SIGUE respondiendo lo automático, pero al derivar aclara que un
+  asesor responde en el próximo horario hábil (no promete humano inmediato); el handoff fijo
+  también es consciente del horario. (Feriados: pendiente.) Validado en prod.
+- **v23 (resiliencia ante fallos de API, 2026-06-23):** tras una auditoría que halló un bache de
+  Anthropic (`529 overloaded` / `500 internal`) de ~33 min que dejó ~21 turnos sin respuesta:
+  `maxRetries=3` en el SDK + **respuesta de respaldo** (si la API falla y no se alcanzó a responder,
+  en vez de silencio se manda "estamos con alto volumen, un asesor te ayuda…", consciente del
+  horario; respeta live/anti-duplicado/handoff; `job_log` `respuesta_respaldo`, `model='fallback'`).
+- **Auditorías diarias (2026-06-19 y 06-23):** coexistencia perfecta (`bot_piso_a_humano=0`,
+  `ecos_falsos=0`), anti-interrupción impecable (pago/fiscal/reembolso → humanos), ITBMS/inventario/
+  visión funcionando. Los errores vistos eran **externos** (baches de Anthropic), no de nuestro código.
 - `store_facts` **aplicada** con los **17 datos reales** de QSP (envío, pagos,
   ubicación, horario, devoluciones, contacto). Secretos WATI configurados
   (`wati_send_configured:true`).
@@ -58,9 +79,10 @@ con certeza, y calla/deriva cuando es mejor que responda un humano. Tienda:
 WATI (WhatsApp) ──webhook POST?key=──► Supabase Edge Function `copilot-webhook`
                                           │  (Deno/TS, verify_jwt=false; ACK rápido,
                                           │   trabajo lento en EdgeRuntime.waitUntil)
-                                          ├─► Anthropic Messages API (Sonnet 4.6) + tool use + visión
+                                          ├─► Anthropic Messages API (Sonnet 4.6, maxRetries=3) + tool use + visión
                                           │      ├─ imágenes del cliente → descarga de WATI (campo data) → base64
-                                          │      ├─ tool buscar_producto → Shopify search/suggest.json
+                                          │      ├─ tool buscar_producto → Shopify search/suggest.json (+ ITBMS en código)
+                                          │      │                          + Shopify Admin GraphQL totalInventory (stock real)
                                           │      └─ tool info_tienda     → Postgres store_facts
                                           ├─► Postgres (conversations/messages/handoffs/job_log)
                                           └─► WATI sendSessionMessage (solo si liveAllowed:
@@ -90,7 +112,9 @@ WATI (WhatsApp) ──webhook POST?key=──► Supabase Edge Function `copilot
 - **handoffs** — `conversation_id`, `motivo`, `resuelto`.
 - **job_log** — `function_name`, `action`, `ok`, `detail` jsonb (telemetría;
   "nunca romper"). Acciones clave: `mensaje_humano`, `abstencion_interrupcion`,
-  `contacto_nuevo`, `tope_turnos`, `evento_sin_texto`, `error`.
+  `contacto_nuevo`, `tope_turnos`, `evento_sin_texto`, `error`, `descartado_superado` (v20
+  anti-duplicado), `descartado_handoff_tardio` (v20 anti-carrera), `imagen_procesada`/
+  `imagen_no_descargada` (v19), `respuesta_respaldo` (v23 fallback).
 - **store_facts** (Fase 1.5) — `key`/`value` (vacío = no disponible). Espejo
   (snapshot) del metaobjeto Shopify `store_facts/datos-tienda` (canónico, 17 campos:
   envío, pagos, ubicación, horario, devoluciones, contacto). Fuente única de `info_tienda`.
@@ -128,14 +152,16 @@ Migraciones (ver `supabase/migrations/`):
    10 user/assistant; los de asesor van etiquetados `[Asesor del equipo]:`) →
    `responderLLM` (Sonnet + loop de tool use, máx 4 iter). **Forzado de tool (v12):** si
    el texto matchea `NEEDS_TOOL_RE` (catálogo/tienda/reparación) se fuerza
-   `tool_choice:"any"` en la 1ª iteración → grounding garantizado.
+   `tool_choice:"any"` en la 1ª iteración → grounding garantizado. **(v22)** Fuera de horario
+   (Lun-Vie 9-5 Panamá) se inyecta un CONTEXTO HORARIO para que el bot aclare cuándo responde un asesor.
 8. **(v16)** Antes de enviar, `limpiarWhatsApp` convierte links markdown `[txt](url)` →
    URL pelada y `**` → `*` (WhatsApp los muestra literales). **(v20) Re-chequeos antes de
-   enviar:** si llegó un mensaje de cliente más nuevo → descarta (anti-duplicado en ráfaga,
-   `descartado_superado`); si la conversación pasó a `handoff` durante el LLM → no envía
-   (anti-carrera, `descartado_handoff_tardio`). Inserta respuesta del assistant con `mode`
+   enviar:** si llegó un mensaje de cliente más nuevo → descarta (`descartado_superado`); si
+   pasó a `handoff` durante el LLM → no envía (`descartado_handoff_tardio`). **(v21)** la respuesta
+   se INSERTA antes de enviarse por WATI (para que el eco no dispare un handoff falso), con `mode`
    shadow|live. Envía por WATI **solo si `liveAllowed(waId)`** (MODE=live Y el número en el
-   allowlist/`all`); si no, queda en sombra.
+   allowlist/`all`); si no, queda en sombra. **(v23)** si el LLM falla y no se alcanzó a responder
+   → respuesta de respaldo en vez de silencio (`respuesta_respaldo`, `model='fallback'`).
 
 ## System prompt (íntegro — es el corazón del comportamiento)
 Reglas clave (texto completo en `index.ts`, const `SYSTEM_PROMPT`):
@@ -161,6 +187,12 @@ Reglas clave (texto completo en `index.ts`, const `SYSTEM_PROMPT`):
 - **IMÁGENES (v19):** si llega una foto, mirarla: si es un PRODUCTO → identificar
   marca/modelo y buscar con `buscar_producto` (precio SOLO de la tool, nunca leído de la
   imagen); si es un COMPROBANTE/dato fiscal → abstenerse; si no se entiende → derivar.
+- **PRECIO + ITBMS (v21):** los precios son SIN ITBMS; mostrar precio + ITBMS (7%) + total con los
+  valores que devuelve la tool (`precio_usd`/`itbms_7pct`/`total_con_itbms`), NUNCA calcular de memoria.
+- **STOCK (v21):** usar el campo `stock` de la tool tal cual (">N unidades", o "un asesor verifica el
+  inventario físico" si ≤3); NUNCA inventar una cantidad.
+- **HORARIO (v22):** fuera de Lun-Vie 9-5 (Panamá) ayudar igual con lo automático pero aclarar cuándo
+  responde un asesor; no prometer humano inmediato (se inyecta como CONTEXTO HORARIO).
 - **CONTACTO NUEVO vs CONOCIDO:** bienvenida+presentación una sola vez al nuevo;
   al conocido ir al grano.
 - **REGLA ANTI-INTERRUPCIÓN:** si un humano está atendiendo (datos de trámite,
@@ -172,12 +204,14 @@ Reglas clave (texto completo en `index.ts`, const `SYSTEM_PROMPT`):
 
 ## Tools
 - **`buscar_producto(consulta)`** — `GET ${STORE}/search/suggest.json?q=...`
-  (`STORE=https://www.quickservicepanama.com`). Devuelve `{titulo, precio_usd,
-  disponible, marca, tipo, url}` (máx 5). v10: si la consulta libre no encuentra,
-  reintenta por número/código de modelo (G2170, 954…). **v18:** cada código de modelo se
-  prueba CON y SIN guion (`TN830XL` ↔ `TN-830XL`, `GI11` ↔ `GI-11`) porque Shopify no
-  matchea una forma contra la otra; las variantes se generan EN CÓDIGO (`variantesModelo`)
-  y se deduplican los intentos. El prompt maneja sinónimos/línea y preguntas de categoría.
+  (`STORE=https://www.quickservicepanama.com`). **v21:** devuelve `{titulo, precio_usd,
+  itbms_7pct, total_con_itbms, stock, marca, tipo, url}` (máx 5) — el **ITBMS (7%) se calcula en
+  código** (el precio de Shopify es sin impuesto) y el **`stock`** se resuelve con **Shopify Admin
+  GraphQL `totalInventory`** (>3 → "X unidades"; ≤3 → "un asesor verifica el inventario físico";
+  sin token/falla → "un asesor confirma"). v10: si la consulta libre no encuentra, reintenta por
+  número/código de modelo (G2170, 954…). **v18:** cada código de modelo se prueba CON y SIN guion
+  (`TN830XL` ↔ `TN-830XL`, `GI11` ↔ `GI-11`); variantes en CÓDIGO (`variantesModelo`), intentos
+  deduplicados. El prompt maneja sinónimos/línea y preguntas de categoría.
 - **`info_tienda(tema?)`** (Fase 1.5, desplegada) — lee `store_facts` y devuelve TODOS
   los pares `key→value` con valor (omite vacíos); si no hay datos, el bot deriva a un asesor.
 - **Visión (v19, desplegada — no es una tool, es entrada multimodal):** las imágenes del
@@ -191,7 +225,10 @@ Reglas clave (texto completo en `index.ts`, const `SYSTEM_PROMPT`):
 `WATI_API_BASE`, `COPILOT_MODE` (shadow|live, default **shadow**),
 `COPILOT_LIVE_ALLOWLIST` (`wa_id` permitidos en live; vacío = nadie, `all`/`*` = todos),
 `COPILOT_MODEL` (default del código `claude-haiku-4-5`; en producción `claude-sonnet-4-6`),
-`COPILOT_WEBHOOK_KEY` (guard del `?key=`).
+`COPILOT_WEBHOOK_KEY` (guard del `?key=`), **`SHOPIFY_ADMIN_TOKEN`** + **`SHOPIFY_ADMIN_API_BASE`**
+(v21 — inventario real vía Admin GraphQL; app de Shopify de **solo lectura** `read_products`+`read_inventory`;
+base `https://quick-service-supplies.myshopify.com/admin/api/2025-10`; si faltan, el `stock` cae a
+"un asesor confirma"). El healthcheck expone `inventario_configurado`.
 
 > ⚠️ **OJO — no cruzar `COPILOT_MODE` con `COPILOT_MODEL`** (pasó 3 veces): el ID del
 > modelo (`claude-…`) va SIEMPRE en `COPILOT_MODE**L**` (la L = modeLo). `COPILOT_MODE`
@@ -214,6 +251,8 @@ Reglas clave (texto completo en `index.ts`, const `SYSTEM_PROMPT`):
   (chequeo pre/post LLM de "¿hay uno más nuevo?") → no más respuestas dobles/triples.
 - **MODE a prueba de typos (v20):** `COPILOT_MODE` inválido → `shadow` (no rompe los inserts);
   `mode_raw` en el healthcheck delata el cruce.
+- **Resiliencia (v23):** ante fallo de la API (429/500/529), `maxRetries=3` + **respuesta de
+  respaldo** (nunca dejar al cliente en silencio); respeta live/anti-duplicado/handoff.
 - **Anti-eco (v13):** un `owner=true` que sea el eco de un envío propio del bot NO se
   trata como humano (evita que el bot se auto-abstenga / se ponga en handoff en live).
 - **Auto-expose OFF** en este proyecto → toda tabla nueva necesita `GRANT` manual a
@@ -251,13 +290,19 @@ Eventos WATI suscritos (necesarios): **Message Received**, **Session Message Sen
    cliente contesta (chequeo pre/post LLM) → mata las respuestas dobles/triples. Sin timers:
    si llega uno más nuevo, el viejo se descarta antes de enviar (`descartado_superado`).
 5. **Página web "Envíos al interior y recogida en sucursal"** (`web/envios-interior-sucursal.html`,
-   45 sucursales con data propia) → publicar en Shopify y poner su URL en el `store_facts`
-   `sucursales_interior`. Correr la SQL `soporte_reparaciones` (feature v17).
+   45 sucursales) → ✅ **publicada** en Shopify (`/pages/envios-al-interior`, limpiada vía API).
+   Pendiente: poner su URL en `store_facts.sucursales_interior` + correr la SQL `soporte_reparaciones` (v17).
 6. **Recall de productos:** ante combo agotado, ofrecer variantes/tintas individuales en
    stock en vez de derivar.
 7. **Reseñas por WhatsApp** (generar volumen; tie-in con Klaviyo/CDP).
 8. Omnichannel / cruce con identidad del CDP por `wa_id`. (Orquestador multi-modelo:
    evaluado y descartado por ahora — prematuro; un router por reglas solo si hace falta.)
+9. **Folletos/fichas de equipos** (solo equipos, NO consumibles): specs/compatibilidad como
+   descripción/metafield en Shopify (ya hay token Admin) → tool `ficha_producto`. **Medir primero**
+   la demanda (cuántas veces el bot deriva por specs/compatibilidad) antes de construir.
+10. **Captura de lead** (empresa/email) en campos de WATI para contactos nuevos — comportamiento
+    de contacto-nuevo DENTRO del agente actual (NO 2º agente), empezando **pasivo**.
+11. **Feriados** en la lógica de horario (v22 hoy solo maneja Lun-Vie 9-5 + fines de semana).
 
 ## Cómo leer el estado real (debugging)
 - Código en vivo: `get_edge_function` o healthcheck GET. Esquema: `list_tables`.

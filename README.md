@@ -12,31 +12,36 @@ sombra por seguridad.
 ## Stack
 - **Supabase** proyecto `jbigmlcalcwiphqeudxd` (qsp-wati-copilot) — separado del
   CDP. Edge function Deno/TS + Postgres.
-- **Anthropic** Claude Sonnet 4.6 (chat + tool use; evaluado contra Haiku 4.5 y Opus 4.8).
-- **WATI** (webhooks de WhatsApp).
+- **Anthropic** Claude Sonnet 4.6 (chat + tool use + visión; evaluado contra Haiku 4.5 y Opus 4.8).
+- **Shopify** — storefront `suggest.json` (búsqueda) + Admin GraphQL (`totalInventory` = stock real).
+- **WATI** (webhooks de WhatsApp; envío + descarga de imágenes).
 
 ## Estructura
 ```
 CLAUDE.md                                  # contexto autoritativo (leer primero)
 supabase/
-  functions/copilot-webhook/index.ts       # la edge function (v20, = lo desplegado)
+  functions/copilot-webhook/index.ts       # la edge function (v23, = lo desplegado)
+  migrations/*.sql                          # esquema reproducible (6 migraciones)
 web/
   envios-interior-sucursal.html            # página de envíos al interior (45 sucursales)
-  migrations/*.sql                          # esquema reproducible (6 migraciones)
 ```
 
 ## Estado
-- Edge function `copilot-webhook` **v20 (`v20-endurecimiento`), ACTIVE** — EN VIVO a todos,
-  en Sonnet 4.6. Coexistencia validada (v15) · visión validada (v19). **v20:** tras auditar
-  el 1er día live (101 convs, 0 clientes pisados), se endureció: anti-duplicado en ráfaga,
-  anti-carrera (no pisar al asesor), `MODE` a prueba de typos, guard de prefill.
-- `store_facts` aplicada (17 datos reales). Sonnet 4.6 ~$0.017/turno, ~8 s.
+- Edge function `copilot-webhook` **v23 (`v23-resiliencia`), ACTIVE** — EN VIVO a todos, en
+  Sonnet 4.6. Coexistencia validada (v15) · visión (v19) · endurecimiento anti-duplicado /
+  anti-carrera / MODE-seguro (v20).
+- **v21:** ITBMS (precio + 7% + total, calculado en código) + inventario real (Shopify Admin
+  `totalInventory`; ≤3 → "un asesor verifica") + anti-eco duro (se acabaron los handoffs falsos).
+- **v22:** conciencia de horario (atención Lun-Vie 9am-5pm, Panamá) — fuera de horario aclara
+  cuándo responde un asesor.
+- **v23:** resiliencia ante fallos de API (reintentos + respuesta de respaldo; no deja al cliente en silencio).
+- Auditorías diarias: coexistencia perfecta (0 clientes pisados, 0 ecos falsos). ~$0.02/turno, ~8 s.
 
 ## Desarrollo / deploy
 - Secretos van en **Supabase Edge Function secrets** (NO en el repo): `ANTHROPIC_API_KEY`,
   `WATI_API_TOKEN`, `WATI_API_BASE`, `COPILOT_MODE` (shadow|live),
-  `COPILOT_LIVE_ALLOWLIST` (piloto; vacío = nadie, `all` = todos), `COPILOT_MODEL`,
-  `COPILOT_WEBHOOK_KEY`.
+  `COPILOT_LIVE_ALLOWLIST` (vacío = nadie, `all` = todos), `COPILOT_MODEL`,
+  `COPILOT_WEBHOOK_KEY`, y (v21) `SHOPIFY_ADMIN_TOKEN` + `SHOPIFY_ADMIN_API_BASE` (inventario real).
 - Deploy: `supabase functions deploy copilot-webhook --no-verify-jwt` (o vía MCP
   de Supabase con `verify_jwt:false`; si está gated, copiar el `index.ts` desde el raw
   de GitHub al editor del dashboard con Verify JWT OFF).
