@@ -1,3 +1,10 @@
+// === copilot-webhook v29 — Copiloto AI de WATI — el link de producto sale con el tracking intacto ===
+// v29 (2026-06-24): el modelo a veces "limpiaba" el link de producto (le quitaba el ?utm…&ref_code=),
+//   rompiendo el stitch (el cliente clickeaba un link sin ref_code). El guardado de ref_codes (v28) ya
+//   funcionaba; esto arregla solo la EMISIÓN visible. Fix DETERMINISTA: buscar_producto registra
+//   {handle → URL con tracking} del turno y, post-LLM, reaplicarTracking() reemplaza en la respuesta
+//   cualquier URL de producto por su versión con tracking (no depende de que el LLM copie bien la URL).
+//   + refuerzo de prompt para no acortar el link.
 // === copilot-webhook v28 — Copiloto AI de WATI — stitching WhatsApp→web por ref_code ===
 // v28 (2026-06-24): los links de producto que emite buscar_producto ahora llevan tracking para
 //   atribución / identidad omnicanal en el CDP. (1) URL APEX (sin www) + UTMs (utm_source=whatsapp…).
@@ -208,7 +215,7 @@ REGLA DE ORO — precio, stock y promociones
 - NUNCA menciones un producto, modelo, precio o disponibilidad que no provenga de un resultado de buscar_producto EN ESTE MISMO TURNO. Si no llamaste a la tool, NO nombres modelos ni des precios/stock: búscalo primero. Aplica también a preguntas de categoría ("¿venden impresoras Epson?"): primero busca, luego responde con lo que devuelva.
 - NO NIEGUES DE MEMORIA: nunca digas que NO ofrecemos un producto o categoría sin haber buscado con buscar_producto en este turno. QSP vende MÁS que impresión (también monitores, escáneres, UPS, baterías, accesorios y tecnología en general). Ante CUALQUIER consulta de producto, BUSCA primero; solo di "no lo encontré" o "eso no lo manejamos" DESPUÉS de haber buscado.
 - NUNCA inventes precios, existencias, descuentos ni promociones.
-- Incluye el link del producto cuando lo tengas.
+- Incluye el link del producto cuando lo tengas, copiándolo EXACTO como viene en el campo "url" de buscar_producto — con TODO lo que esté después del "?" (parámetros utm/ref_code de seguimiento). NUNCA acortes el link ni le quites esos parámetros.
 - PRECIO + ITBMS: los precios son SIN ITBMS. Muestra SIEMPRE el precio, el ITBMS (7%) y el total usando EXACTAMENTE los valores que devuelve la tool (precio_usd, itbms_7pct, total_con_itbms). Formato: "*$116.00 + ITBMS (7%) = $124.12*". NUNCA calcules el impuesto de memoria.
 - STOCK / CANTIDAD: indica la disponibilidad usando el campo "stock" que devuelve la tool, TAL CUAL. Si dice "X unidades", dilo; si dice "stock bajo — un asesor verifica…", dilo así. NUNCA inventes ni adivines una cantidad: di solo lo que aparezca en ese campo "stock".
 - Si la tool no encuentra el producto, o piden algo fuera de catálogo: discúlpate breve e indica que un asesor confirmará disponibilidad y opciones.
@@ -438,7 +445,7 @@ async function urlsConRef(rawUrls: string[], waId: string): Promise<string[]> {
   });
 }
 
-async function buscarProducto(consulta: string, waId: string = ""): Promise<string> {
+async function buscarProducto(consulta: string, waId: string = "", linksTracked?: Record<string, string>): Promise<string> {
   // Consulta libre tal cual; si no encuentra, reintenta por código de modelo y sus variantes
   // con/sin guion. Deduplica para no repetir llamadas. (v18)
   const intentos = [consulta, ...modelosEn(consulta).flatMap(variantesModelo)];
@@ -456,6 +463,8 @@ async function buscarProducto(consulta: string, waId: string = ""): Promise<stri
         const inv = await inventarioShopify(top.map((p) => p.id).filter(Boolean));
         // v28: tracking — URL apex + UTMs + ref_code (guarda el mapeo para el stitch WhatsApp→web).
         const urls = await urlsConRef(top.map((p) => p.url), waId);
+        // v29: registra handle → URL con tracking, para re-aplicarla si el modelo "limpia" el link.
+        if (linksTracked) top.forEach((p, i) => { const h = handleDeUrl(p.url); if (h) linksTracked[h.toLowerCase()] = urls[i]; });
         const enriquecidos = top.map((p, i) => {
           const precio = conItbms(p.precio_usd);
           const cant = inv[String(p.id ?? "").replace(/\D/g, "")];
@@ -491,7 +500,7 @@ async function infoTienda(): Promise<string> {
   } catch (e) { return JSON.stringify({ error: String(e).slice(0, 200) }); }
 }
 
-async function responderLLM(history: { role: string; content: string; model?: string | null }[], forceTool: boolean, imagen?: { b64: string; mediaType: string } | null, imagenFallo?: boolean, waId: string = "", atributos: Record<string, string> = {}): Promise<{ text: string | null; toolCalls: unknown[]; tokensIn: number; tokensOut: number }> {
+async function responderLLM(history: { role: string; content: string; model?: string | null }[], forceTool: boolean, imagen?: { b64: string; mediaType: string } | null, imagenFallo?: boolean, waId: string = "", atributos: Record<string, string> = {}, linksTracked: Record<string, string> = {}): Promise<{ text: string | null; toolCalls: unknown[]; tokensIn: number; tokensOut: number }> {
   if (!anthropic) return { text: null, toolCalls: [], tokensIn: 0, tokensOut: 0 };
   // La API exige que el primer mensaje sea del usuario: descarta "assistant" al inicio
   // (puede pasar si un asesor escribió primero).
@@ -561,7 +570,7 @@ async function responderLLM(history: { role: string; content: string; model?: st
       if (block.type === "tool_use") {
         toolCalls.push({ name: block.name, input: block.input });
         const out = block.name === "buscar_producto"
-          ? await buscarProducto((block.input as any).consulta ?? "", waId)
+          ? await buscarProducto((block.input as any).consulta ?? "", waId, linksTracked)
           : block.name === "info_tienda"
           ? await infoTienda()
           : block.name === "guardar_lead"
@@ -581,6 +590,15 @@ function limpiarWhatsApp(t: string): string {
   return t
     .replace(new RegExp("\\[([^\\]]*)\\]\\((https?://[^)\\s]+)\\)", "g"), "$2")
     .replace(new RegExp("\\*\\*([^*\\n]+)\\*\\*", "g"), "*$1*");
+}
+
+// v29 — re-aplica el tracking a los links de producto que el modelo pudo "limpiar" (sacándole el
+// ?utm…&ref_code=). Reemplaza cada URL de producto por la versión con tracking generada este turno
+// (links: handle → URL apex+utm+ref_code). Determinista: no depende de que el LLM copie bien la URL.
+function reaplicarTracking(texto: string, links: Record<string, string>): string {
+  if (!texto || !links || !Object.keys(links).length) return texto;
+  return texto.replace(/https?:\/\/(?:www\.)?quickservicepanama\.com\/products\/([a-z0-9-]+)(?:[?#][^\s)]*)?/gi,
+    (m, handle) => links[String(handle).toLowerCase()] ?? m);
 }
 
 async function enviarWati(waId: string, texto: string): Promise<boolean> {
@@ -699,7 +717,7 @@ Deno.serve(async (req) => {
       if (!data) return Response.json({ error: "not_found" }, { status: 404 });
       return Response.json({ wa_id: data.wa_id, producto_handle: data.producto_handle, ts: data.created_at });
     }
-    return Response.json({ status: "ok", function: "copilot-webhook", version: "v28-ref-code", mode: MODE, mode_raw: MODE_RAW, model: MODEL, llm_configured: !!anthropic, wati_send_configured: !!(WATI_API_TOKEN && WATI_API_BASE), inventario_configurado: !!(SHOPIFY_ADMIN_TOKEN && SHOPIFY_ADMIN_API_BASE), resolve_configured: !!RESOLVE_SECRET, live_targets: MODE === "live" ? (LIVE_ALL ? "all" : LIVE_ALLOWLIST.length) : 0, ts: new Date().toISOString() });
+    return Response.json({ status: "ok", function: "copilot-webhook", version: "v29-link-tracking", mode: MODE, mode_raw: MODE_RAW, model: MODEL, llm_configured: !!anthropic, wati_send_configured: !!(WATI_API_TOKEN && WATI_API_BASE), inventario_configurado: !!(SHOPIFY_ADMIN_TOKEN && SHOPIFY_ADMIN_API_BASE), resolve_configured: !!RESOLVE_SECRET, live_targets: MODE === "live" ? (LIVE_ALL ? "all" : LIVE_ALLOWLIST.length) : 0, ts: new Date().toISOString() });
   }
   if (req.method !== "POST") return Response.json({ error: "method_not_allowed" }, { status: 405 });
   if (url.searchParams.get("key") !== WEBHOOK_KEY) return Response.json({ error: "forbidden" }, { status: 403 });
@@ -813,8 +831,9 @@ Deno.serve(async (req) => {
         const { data: hist } = await sb.from("messages").select("role,content,model").eq("conversation_id", conv.id).in("role", ["user", "assistant"]).order("created_at", { ascending: false }).limit(10);
         const history = (hist ?? []).reverse();
         const atributosWati = extraerCustomParams(p); // v25: datos que ya tenemos (best-effort, del payload)
-        const r = await responderLLM(history as any, imagen ? false : NEEDS_TOOL_RE.test(texto), imagen, esImagenCliente && !imagen, waId, atributosWati);
-        const salida = r.text ? limpiarWhatsApp(r.text) : null; // formato apto para WhatsApp (v16)
+        const linksTracked: Record<string, string> = {}; // v29 — handle → URL con tracking (lo llena buscar_producto)
+        const r = await responderLLM(history as any, imagen ? false : NEEDS_TOOL_RE.test(texto), imagen, esImagenCliente && !imagen, waId, atributosWati, linksTracked);
+        const salida = r.text ? reaplicarTracking(limpiarWhatsApp(r.text), linksTracked) : null; // v16 formato + v29 tracking
         // v20 (anti-duplicado, post-LLM): durante los ~8s del LLM pudo llegar otro mensaje → no enviar el viejo.
         if (await hayMensajeClienteMasNuevo(conv.id, userCreatedAt)) { await log("descartado_superado", true, { waId, fase: "post-llm" }); return; }
         // v20 (anti-carrera): si el negocio tomó la conversación mientras pensábamos, no la pisamos.
