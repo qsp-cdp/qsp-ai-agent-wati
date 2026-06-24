@@ -1,3 +1,12 @@
+// === copilot-webhook v28 — Copiloto AI de WATI — stitching WhatsApp→web por ref_code ===
+// v28 (2026-06-24): los links de producto que emite buscar_producto ahora llevan tracking para
+//   atribución / identidad omnicanal en el CDP. (1) URL APEX (sin www) + UTMs (utm_source=whatsapp…).
+//   (2) ref_code: 8 alfanuméricos opacos (crypto) por producto; se guarda {ref_code→wa_id,handle} en
+//   la tabla ref_codes (best-effort, batch); NUNCA se emite un code que no se haya guardado. (3)
+//   Endpoint de resolución GET ?ref_code=&key=RESOLVE_SECRET → {wa_id,producto_handle,ts} (404 si no),
+//   que el CDP lee para resolver ref_code→wa_id (riel wa_ref_codes). Privacidad: nunca wa_id/PII en la
+//   URL, solo el ref_code opaco. El copiloto solo EMITE/GUARDA/EXPONE; el stitch/enriquecimiento vive
+//   en el CDP. Tabla nueva: ref_codes. Secreto nuevo: RESOLVE_SECRET.
 // === copilot-webhook v27 — Copiloto AI de WATI — captura también nombre y apellido ===
 // v27 (2026-06-24): guardar_lead ahora también captura nombre y apellido (atributos `nombre` y
 //   `apellido` de WATI), además del correo y la empresa; el correo dejó de ser obligatorio (guarda
@@ -155,6 +164,9 @@ const STORE = "https://www.quickservicepanama.com";
 // SHOPIFY_ADMIN_API_BASE: https://<tienda>.myshopify.com/admin/api/2024-10 (sin / al final).
 const SHOPIFY_ADMIN_TOKEN = Deno.env.get("SHOPIFY_ADMIN_TOKEN") ?? "";
 const SHOPIFY_ADMIN_API_BASE = (Deno.env.get("SHOPIFY_ADMIN_API_BASE") ?? "").replace(/\/$/, "");
+// v28 — stitching WhatsApp→web por ref_code (atribución / identidad omnicanal en el CDP).
+const RESOLVE_SECRET = Deno.env.get("RESOLVE_SECRET") ?? "";   // guard del endpoint GET ?ref_code=
+const STORE_APEX = "https://quickservicepanama.com";          // apex (sin www; www mete redirect)
 
 // Piloto gradual: en live, SOLO se envía a estos wa_id. Vacío = no se envía a nadie (sigue
 // registrando en sombra); "all"/"*" = todos. Evita ir a live total por accidente.
@@ -384,7 +396,49 @@ function stockTexto(disponible: boolean, cantidad: number | undefined): string {
   return "sin stock — un asesor verifica el inventario físico";
 }
 
-async function buscarProducto(consulta: string): Promise<string> {
+// v28 — genera un ref_code (8 alfanuméricos, opaco, crypto) para el stitching WhatsApp→web. El PK de
+// ref_codes garantiza unicidad; nunca emitimos un code que no se haya guardado.
+function generarRefCode(): string {
+  const abc = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
+  const b = new Uint8Array(8); crypto.getRandomValues(b);
+  let s = ""; for (let i = 0; i < 8; i++) s += abc[b[i] % 62];
+  return s;
+}
+function handleDeUrl(u: string): string | null {
+  const m = String(u ?? "").match(/\/products\/([^/?#]+)/);
+  return m ? m[1] : null;
+}
+function apexize(u: string): string {
+  return String(u ?? "").replace(/^https?:\/\/(www\.)?quickservicepanama\.com/i, STORE_APEX);
+}
+
+// v28 — pasa las URLs de Shopify a apex y, si hay waId, les agrega UTMs + ref_code, guardando el
+// mapeo {ref_code → wa_id, handle} en ref_codes (best-effort, batch). Si no se puede guardar (o falta
+// waId/handle), devuelve la URL apex con UTMs pero SIN ref_code (nunca emitir un code sin mapeo).
+async function urlsConRef(rawUrls: string[], waId: string): Promise<string[]> {
+  const UTM = "utm_source=whatsapp&utm_medium=chatbot&utm_campaign=copilot-wati";
+  const filas = rawUrls.map((u) => {
+    const handle = handleDeUrl(u);
+    const apex = handle ? `${STORE_APEX}/products/${handle}` : apexize(u);
+    const ref = (waId && handle) ? generarRefCode() : null;
+    return { apex, handle, ref };
+  });
+  const aInsertar = filas.filter((f) => f.ref).map((f) => ({ ref_code: f.ref as string, wa_id: waId, producto_handle: f.handle }));
+  const guardados = new Set<string>();
+  if (aInsertar.length) {
+    try {
+      const { error } = await sb.from("ref_codes").insert(aInsertar);
+      if (error) await log("ref_code_insert_error", false, { waId, error: error.message });
+      else for (const r of aInsertar) guardados.add(r.ref_code);
+    } catch (e) { await log("ref_code_insert_error", false, { waId, error: String(e).slice(0, 120) }); }
+  }
+  return filas.map((f) => {
+    const sep = f.apex.includes("?") ? "&" : "?";
+    return (f.ref && guardados.has(f.ref)) ? `${f.apex}${sep}${UTM}&ref_code=${f.ref}` : `${f.apex}${sep}${UTM}`;
+  });
+}
+
+async function buscarProducto(consulta: string, waId: string = ""): Promise<string> {
   // Consulta libre tal cual; si no encuentra, reintenta por código de modelo y sus variantes
   // con/sin guion. Deduplica para no repetir llamadas. (v18)
   const intentos = [consulta, ...modelosEn(consulta).flatMap(variantesModelo)];
@@ -400,7 +454,9 @@ async function buscarProducto(consulta: string): Promise<string> {
         const top = prods.slice(0, 5);
         // v21: enriquece con ITBMS (cálculo en código) y stock real (Shopify Admin, best-effort).
         const inv = await inventarioShopify(top.map((p) => p.id).filter(Boolean));
-        const enriquecidos = top.map((p) => {
+        // v28: tracking — URL apex + UTMs + ref_code (guarda el mapeo para el stitch WhatsApp→web).
+        const urls = await urlsConRef(top.map((p) => p.url), waId);
+        const enriquecidos = top.map((p, i) => {
           const precio = conItbms(p.precio_usd);
           const cant = inv[String(p.id ?? "").replace(/\D/g, "")];
           return {
@@ -411,7 +467,7 @@ async function buscarProducto(consulta: string): Promise<string> {
             stock: stockTexto(p.disponible, cant),
             marca: p.marca,
             tipo: p.tipo,
-            url: p.url,
+            url: urls[i],
           };
         });
         return JSON.stringify(enriquecidos);
@@ -505,7 +561,7 @@ async function responderLLM(history: { role: string; content: string; model?: st
       if (block.type === "tool_use") {
         toolCalls.push({ name: block.name, input: block.input });
         const out = block.name === "buscar_producto"
-          ? await buscarProducto((block.input as any).consulta ?? "")
+          ? await buscarProducto((block.input as any).consulta ?? "", waId)
           : block.name === "info_tienda"
           ? await infoTienda()
           : block.name === "guardar_lead"
@@ -633,7 +689,17 @@ function correrEnSegundoPlano(p: Promise<unknown>): void {
 Deno.serve(async (req) => {
   const url = new URL(req.url);
   if (req.method === "GET") {
-    return Response.json({ status: "ok", function: "copilot-webhook", version: "v27-nombre-apellido", mode: MODE, mode_raw: MODE_RAW, model: MODEL, llm_configured: !!anthropic, wati_send_configured: !!(WATI_API_TOKEN && WATI_API_BASE), inventario_configurado: !!(SHOPIFY_ADMIN_TOKEN && SHOPIFY_ADMIN_API_BASE), live_targets: MODE === "live" ? (LIVE_ALL ? "all" : LIVE_ALLOWLIST.length) : 0, ts: new Date().toISOString() });
+    // v28 — resolución de ref_code para el CDP (stitching WhatsApp→web). Guard: RESOLVE_SECRET.
+    const refCode = url.searchParams.get("ref_code");
+    if (refCode) {
+      if (!RESOLVE_SECRET || url.searchParams.get("key") !== RESOLVE_SECRET) return Response.json({ error: "forbidden" }, { status: 403 });
+      if (!/^[A-Za-z0-9]{8}$/.test(refCode)) return Response.json({ error: "ref_code_invalido" }, { status: 400 });
+      const { data, error } = await sb.from("ref_codes").select("wa_id,producto_handle,created_at").eq("ref_code", refCode).maybeSingle();
+      if (error) return Response.json({ error: "db" }, { status: 500 });
+      if (!data) return Response.json({ error: "not_found" }, { status: 404 });
+      return Response.json({ wa_id: data.wa_id, producto_handle: data.producto_handle, ts: data.created_at });
+    }
+    return Response.json({ status: "ok", function: "copilot-webhook", version: "v28-ref-code", mode: MODE, mode_raw: MODE_RAW, model: MODEL, llm_configured: !!anthropic, wati_send_configured: !!(WATI_API_TOKEN && WATI_API_BASE), inventario_configurado: !!(SHOPIFY_ADMIN_TOKEN && SHOPIFY_ADMIN_API_BASE), resolve_configured: !!RESOLVE_SECRET, live_targets: MODE === "live" ? (LIVE_ALL ? "all" : LIVE_ALLOWLIST.length) : 0, ts: new Date().toISOString() });
   }
   if (req.method !== "POST") return Response.json({ error: "method_not_allowed" }, { status: 405 });
   if (url.searchParams.get("key") !== WEBHOOK_KEY) return Response.json({ error: "forbidden" }, { status: 403 });
