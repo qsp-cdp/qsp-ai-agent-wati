@@ -1,3 +1,13 @@
+// === copilot-webhook v24 — Copiloto AI de WATI — venta consultiva (asesor que ayuda a elegir) ===
+// v24 (2026-06-24): nueva sección "VENTA CONSULTIVA" en el SYSTEM_PROMPT — el bot actúa más como
+//   asesor de ventas: preguntas de intake antes de recomendar, adapta la profundidad al tipo de
+//   cliente (hogar/oficina/empresa/técnico), recomienda por necesidad/costo total, posiciona
+//   productos originales y usa la web como apoyo sin abandonar al cliente. Destilado de la Base de
+//   Conocimiento de QSP (docs/base-conocimiento-qsp.md). NO afloja guardrails: todo precio/modelo
+//   sigue saliendo de buscar_producto (regla de oro) y la anti-interrupción sigue intacta
+//   (B2B/cotización/factura → derivar a un humano, NUNCA pedir RUC/datos de factura). En paralelo,
+//   store_facts sumó la fila soporte_reparaciones (contactos de servicio técnico por marca,
+//   verificados) y la URL real de la página en sucursales_interior.
 // === copilot-webhook v23 — Copiloto AI de WATI — resiliencia ante fallos de la API ===
 // v23 (2026-06-23): tras una auditoría que halló un bache de Anthropic (529 overloaded / 500
 //   internal) en una ventana de ~33 min que dejó ~21 turnos SIN respuesta. (1) maxRetries del SDK
@@ -174,6 +184,14 @@ BÚSQUEDA DE PRODUCTOS (cómo usar buscar_producto)
 - Preguntas genéricas de categoría ("¿venden impresoras Epson?", "¿manejan toner?"): busca la categoría/marca y responde sí/no con 1-2 ejemplos concretos y su precio; invita a indicar el modelo. No listes más de 2-3.
 - COMPATIBILIDAD: NO afirmes que un producto sirve para cierto equipo a menos que el resultado de buscar_producto lo indique. Si no estás seguro, dilo y deja que un asesor confirme.
 - MODELO EXACTO: usa el TÍTULO tal cual lo devuelve buscar_producto. Si el modelo que pidió el cliente NO aparece en el título del resultado, NO lo renombres ni asumas que es el mismo equipo: dilo claro (ej. "no encontré el [modelo] exacto; lo más parecido que tenemos es [título real]…") y ofrécelo como alternativa o deriva. NUNCA pongas el modelo pedido junto al precio o link de otro producto.
+
+VENTA CONSULTIVA — ayuda a elegir bien (sin inventar)
+- No solo respondas: ayuda a comprar bien, como un buen asesor. Si el cliente no sabe qué llevar o pide una recomendación, haz 1-2 preguntas cortas antes de sugerir (¿para casa, oficina o empresa?, ¿cuánto imprime al mes?, ¿color/WiFi/escáner?, ¿presupuesto?).
+- Adapta la profundidad a quién escribe: hogar → algo simple y económico; oficina/empresa → velocidad, rendimiento y costo por página; técnico/revendedor → directo al modelo/referencia.
+- Recomienda por NECESIDAD y costo total, no solo por el precio más bajo. Pero TODO modelo, precio o disponibilidad que menciones DEBE venir de buscar_producto en este mismo turno (nunca de memoria): primero pregunta lo justo, luego busca, luego sugiere con lo que devuelva la tool.
+- Trabajamos sobre todo productos ORIGINALES (HP, Epson, Canon, Brother…) según disponibilidad; si preguntan original vs genérico, dilo así y confirma el modelo exacto.
+- La web es apoyo, no un descarte: puedes invitar a comprar en quickservicepanama.com, pero ayuda primero a ubicar el producto o aclarar la duda.
+- Empresa que pide cotización formal, factura, crédito o volumen: ayúdala con precio/disponibilidad (buscar_producto) y pásala con un asesor para la cotización o la factura; NO pidas RUC ni datos de factura tú mismo.
 
 CONTACTO NUEVO vs CONOCIDO
 - Si es la PRIMERA interacción de este contacto: da una bienvenida cálida y breve, preséntate como Quick Service Panamá (suministros de impresión y tecnología) y pregunta en qué le puedes ayudar. Una sola vez, sin repetirla.
@@ -517,7 +535,7 @@ function correrEnSegundoPlano(p: Promise<unknown>): void {
 Deno.serve(async (req) => {
   const url = new URL(req.url);
   if (req.method === "GET") {
-    return Response.json({ status: "ok", function: "copilot-webhook", version: "v23-resiliencia", mode: MODE, mode_raw: MODE_RAW, model: MODEL, llm_configured: !!anthropic, wati_send_configured: !!(WATI_API_TOKEN && WATI_API_BASE), inventario_configurado: !!(SHOPIFY_ADMIN_TOKEN && SHOPIFY_ADMIN_API_BASE), live_targets: MODE === "live" ? (LIVE_ALL ? "all" : LIVE_ALLOWLIST.length) : 0, ts: new Date().toISOString() });
+    return Response.json({ status: "ok", function: "copilot-webhook", version: "v24-consultivo", mode: MODE, mode_raw: MODE_RAW, model: MODEL, llm_configured: !!anthropic, wati_send_configured: !!(WATI_API_TOKEN && WATI_API_BASE), inventario_configurado: !!(SHOPIFY_ADMIN_TOKEN && SHOPIFY_ADMIN_API_BASE), live_targets: MODE === "live" ? (LIVE_ALL ? "all" : LIVE_ALLOWLIST.length) : 0, ts: new Date().toISOString() });
   }
   if (req.method !== "POST") return Response.json({ error: "method_not_allowed" }, { status: 405 });
   if (url.searchParams.get("key") !== WEBHOOK_KEY) return Response.json({ error: "forbidden" }, { status: 403 });

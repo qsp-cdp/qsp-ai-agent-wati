@@ -1,6 +1,6 @@
 # Base de Conocimiento — Quick Service Supplies
 
-> **Versión:** 1.0 · **Fecha:** 2026-06-24 · **Estado:** Fuente de verdad (KB humana)
+> **Versión:** 1.1 · **Fecha:** 2026-06-24 · **Estado:** Fuente de verdad (KB humana)
 > **Fuente:** Documento entregado por Gerencia de Quick Service Supplies (2026-06-24).
 > **Mantenedor:** Gerencia QSP.
 
@@ -28,6 +28,7 @@ para mantenerlo coherente con producción:
 
 ## Changelog
 
+- **v1.1 (2026-06-24):** se aplicaron los pasos 2 y 3. `store_facts`: fila `soporte_reparaciones` (contactos de servicio técnico por marca, verificados) + URL real en `sucursales_interior`. Prompt: sección "VENTA CONSULTIVA" (copilot v24; decisión de Gerencia = consultivo), sin aflojar la regla de oro ni la anti-interrupción. §12/13/14 ya estaban cubiertos por `store_facts` (sin cambios). Ver Apéndice B.
 - **v1.0 (2026-06-24):** versión inicial. 35 secciones, importadas de la base entregada por
   Gerencia. Se agrega el análisis de encaje con el prompt v23 y el mapeo de implementación
   (Apéndice A) y los pendientes/decisiones (Apéndice B). No se modificó aún el prompt ni
@@ -1090,25 +1091,19 @@ Cómo se traduce cada sección a lo que el bot realmente hace. Estados:
 
 # Apéndice B — Pendientes y decisiones
 
-### A verificar antes de cargar a `store_facts`
-- **Contactos de reparación (§20):** confirmar teléfonos y nombres de empresa (Epson→Logística S.A.;
-  Canon→Oficompu 279-0264; Servicios Tecnológicos de Panamá 221-8527; Serto 269-1051; HP 229-1090).
-- **Tienda física (§13/§31):** dirección y número de oficina exactos + horario (hoy `store_facts.ubicacion`).
-- **Pagos (§14):** reconciliar/confirmar `store_facts.pagos`.
-- **Entrega (§12):** zonas, tiempos y costos; URL de la página "Envíos al interior" (roadmap #5,
-  key `sucursales_interior`); Servientrega despacha sábados.
-
-### Decisión estratégica de Gerencia
-- **Nivel de proactividad del bot (§34/§35):** ¿más vendedor que cierra, o copiloto conservador
-  que deriva? Recomendación: más **consultivo** (mejores preguntas, adaptarse al tipo de cliente)
-  **sin** romper la anti-interrupción (nunca capturar datos fiscales/pago inline).
+### ✅ Resuelto en v1.1 (2026-06-24)
+- **Contactos de reparación (§20):** verificados y cargados en `store_facts.soporte_reparaciones`.
+  Epson: Logística, S.A. 271-7300 · Canon: Oficompu 279-0264 / Servicios Tecnológicos de Panamá
+  221-8527 / Serto 269-1051 · HP: Systex 229-1090. En vivo (lo lee `info_tienda`, sin redeploy).
+- **Tienda física / pagos / entrega (§12/§13/§14):** ya estaban en `store_facts` y más completos que
+  el doc (dirección con oficina 454, `metodos_pago`, plazos/tarifas/comarcas). No requirieron cambios.
+- **URL "Envíos al interior" (roadmap #5):** cargada en `sucursales_interior`
+  (`https://quickservicepanama.com/pages/envios-al-interior`); reemplazó el placeholder.
+- **Decisión de proactividad (§34/§35):** Gerencia eligió **consultivo**. Aplicado en el prompt
+  (sección "VENTA CONSULTIVA", copilot v24), sin tocar la anti-interrupción ni la regla de oro.
 
 ### Diferido a roadmap
-- **Captura de leads (empresa/email) pasiva** dentro del agente (roadmap #10) — habilita §15/§16/§28
-  de forma segura, sin violar anti-interrupción.
+- **Captura de leads (empresa/email) pasiva** dentro del agente (roadmap #10) — habilitaría
+  §15/§16/§28 de forma segura, sin violar la anti-interrupción. Hoy: B2B/factura → derivar.
 - **Recall / alternativa ante agotado** (roadmap #6) — §17/§25.
-
-### Próximos pasos (post-versionado)
-1. SQL para `store_facts` (reparaciones + huecos de §12/§13/§14), con datos "a verificar" marcados.
-2. Deltas del `SYSTEM_PROMPT`: tipos de cliente (§3), venta consultiva (§9/§22), posicionamiento
-   "originales" (§7/§26), "ayudar antes de mandar a la web" (§4/§30) — cortos, para aprobar.
+- **Feriados** en la lógica de horario (roadmap #11).
