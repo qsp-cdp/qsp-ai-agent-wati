@@ -1,3 +1,9 @@
+// === copilot-webhook v27 — Copiloto AI de WATI — captura también nombre y apellido ===
+// v27 (2026-06-24): guardar_lead ahora también captura nombre y apellido (atributos `nombre` y
+//   `apellido` de WATI), además del correo y la empresa; el correo dejó de ser obligatorio (guarda
+//   lo que el cliente dé, en cualquier orden, y puede llamarse varias veces). El prompt pide nombre y
+//   apellido junto al correo al cotizar. Sigue pasivo y respeta la anti-interrupción (nombre/apellido
+//   NO son datos fiscales; RUC/factura siguen yendo a un asesor).
 // === copilot-webhook v26 — Copiloto AI de WATI — conciencia de canal (no redirigir a WhatsApp) ===
 // v26 (2026-06-24): el bot ya NO le dice al cliente que "escriba por WhatsApp" ni le da el número de
 //   WhatsApp de la tienda — está atendiendo POR WhatsApp, así que sonaba absurdo/circular (pasaba al
@@ -211,12 +217,12 @@ VENTA CONSULTIVA — ayuda a elegir bien (sin inventar)
 - La web es apoyo, no un descarte: puedes invitar a comprar en quickservicepanama.com, pero ayuda primero a ubicar el producto o aclarar la duda.
 - Empresa que pide cotización formal, factura, crédito o volumen: ayúdala con precio/disponibilidad (buscar_producto) y pásala con un asesor para la cotización o la factura; NO pidas RUC ni datos de factura tú mismo.
 
-CAPTURA DE DATOS (correo y empresa) — pasiva, sin insistir
-- Cuando el cliente muestra intención de COTIZAR o comprar algo concreto (o en un momento natural, p.ej. "te mando la info por correo"), y NO tenemos su correo, pídelo con naturalidad: "Para enviarte la cotización, ¿a qué correo te la mandamos?".
+CAPTURA DE DATOS (nombre, apellido, correo y empresa) — pasiva, sin insistir
+- Cuando el cliente muestra intención de COTIZAR o comprar algo concreto (o en un momento natural), y no los tenemos, pide con naturalidad su correo y su nombre y apellido: p.ej. "Para enviarte la cotización, ¿a qué correo te la mandamos y cuál es tu nombre y apellido?".
 - Detecta o pregunta si es para uso PERSONAL o para una EMPRESA; si es empresa, pide el nombre de la empresa (informal).
-- Cuando tengas el correo (y la empresa si aplica), llama a la herramienta guardar_lead para registrarlo. Si guardar_lead responde que el correo es inválido, pide que lo confirme UNA sola vez.
-- Es PASIVO, no un formulario: si el cliente lo ignora, lo rechaza o sigue con otra cosa, NO insistas — seguí ayudando normal. Si ya lo pediste en esta conversación y no lo dio, no lo vuelvas a pedir. Si el CONTEXTO indica que ya tenemos el dato, no lo pidas.
-- NUNCA pidas RUC, cédula, DV ni datos de factura (eso lo maneja un asesor). Para una cotización formal de empresa, junta correo/empresa y deriva el resto a un asesor.
+- Cuando tengas CUALQUIERA de esos datos (correo, nombre, apellido, empresa), llama a guardar_lead con lo que tengas (puedes llamarla varias veces a medida que el cliente los da). Si guardar_lead dice que el correo es inválido, pide que lo confirme UNA sola vez.
+- Es PASIVO, no un formulario: si el cliente lo ignora, lo rechaza o sigue con otra cosa, NO insistas — seguí ayudando normal. Si ya lo pediste en esta conversación y no lo dio, no lo vuelvas a pedir. Si el CONTEXTO indica que ya tenemos un dato, no lo pidas de nuevo.
+- El nombre y apellido SÍ se pueden pedir (no son datos fiscales). Pero NUNCA pidas RUC, cédula, DV ni datos de factura (eso lo maneja un asesor). Para una cotización formal de empresa, junta lo liviano (nombre/correo/empresa) y deriva el resto a un asesor.
 
 CONTACTO NUEVO vs CONOCIDO
 - Si es la PRIMERA interacción de este contacto: da una bienvenida cálida y breve, preséntate como Quick Service Panamá (suministros de impresión y tecnología) y pregunta en qué le puedes ayudar. Una sola vez, sin repetirla.
@@ -261,8 +267,8 @@ const TOOLS: Anthropic.Tool[] = [{
   input_schema: { type: "object", properties: { tema: { type: "string", description: "Opcional e informativo: el tema preguntado (envío, pago, ubicación, horario…). La herramienta devuelve TODOS los datos de la tienda." } } },
 } as Anthropic.Tool, {
   name: "guardar_lead",
-  description: "Guarda los datos de contacto del cliente en WATI para que un asesor cotice más rápido y para enriquecer el CRM. Llámala SOLO cuando el cliente ya te dio su CORREO (y, si la compra es para una empresa, el nombre de la empresa), normalmente cuando hay intención de cotizar o comprar. NO la uses para RUC/cédula/datos de factura (eso lo maneja un asesor). El número de WhatsApp se toma solo; tú solo pasas el correo y, opcionalmente, la empresa.",
-  input_schema: { type: "object", properties: { email: { type: "string", description: "Correo electrónico del cliente, ej: juan@empresa.com" }, empresa: { type: "string", description: "Nombre de la empresa (solo si la compra es para una empresa)" } }, required: ["email"] },
+  description: "Guarda los datos de contacto del cliente en WATI para que un asesor cotice más rápido y para enriquecer el CRM. Llámala cuando el cliente te dé alguno de estos datos (correo, nombre, apellido y/o empresa), normalmente cuando hay intención de cotizar o comprar. Pasa SOLO los datos que el cliente realmente dio (puedes llamarla varias veces a medida que los da). NO la uses para RUC/cédula/datos de factura (eso lo maneja un asesor). El número de WhatsApp se toma solo.",
+  input_schema: { type: "object", properties: { email: { type: "string", description: "Correo electrónico del cliente, ej: juan@empresa.com" }, nombre: { type: "string", description: "Nombre (de pila) del cliente" }, apellido: { type: "string", description: "Apellido del cliente" }, empresa: { type: "string", description: "Nombre de la empresa (solo si la compra es para una empresa)" } } },
 } as Anthropic.Tool];
 
 const HANDOFF_RE = /\b(humano|persona|asesor|agente|reclamo|queja|devoluci[oó]n|garant[ií]a|hablar con alguien|supervisor)\b/i;
@@ -445,10 +451,15 @@ async function responderLLM(history: { role: string; content: string; model?: st
   const diasSem = ["domingo", "lunes", "martes", "miércoles", "jueves", "viernes", "sábado"];
   const ctxHorario = hh.dentro ? "" :
     `\n\nCONTEXTO HORARIO: Ahora es ${diasSem[hh.dia]} ~${hh.hora}:00 en Panamá, FUERA del horario de atención de QSP (atención por WhatsApp y tienda: Lun-Vie 9:00am–5:00pm; sábados y domingos cerrado). Seguí ayudando con lo automático (precio/ITBMS, stock, info de tienda). Pero si el cliente necesita un asesor, una cotización formal o coordinar pago/entrega, aclará con calma que un asesor le responde en el próximo horario hábil (deducí cuál según el día y la hora actuales) y NO prometas respuesta humana inmediata.`;
-  // v25 — qué datos ya tenemos del cliente (de los atributos de WATI) para no repreguntar.
-  const ctxDatos = atributos.email
-    ? `\n\nCONTEXTO DATOS: Ya tenemos el correo de este cliente${atributos.empresa ? ` y su empresa (${atributos.empresa})` : ""} en archivo. NO se lo pidas de nuevo; si acaso, confírmalo.`
-    : `\n\nCONTEXTO DATOS: No tenemos el correo de este cliente. Si hay intención de cotizar/comprar, puedes pedírselo (pasivo, sin insistir) y guardarlo con guardar_lead.`;
+  // v25/v27 — qué datos ya tenemos del cliente (de los atributos de WATI) para no repreguntar.
+  const datosTen = [
+    atributos.email ? "correo" : null,
+    (atributos.nombre || atributos.apellido) ? "nombre/apellido" : null,
+    atributos.empresa ? `empresa (${atributos.empresa})` : null,
+  ].filter(Boolean);
+  const ctxDatos = datosTen.length
+    ? `\n\nCONTEXTO DATOS: De este cliente ya tenemos: ${datosTen.join(", ")}. NO pidas de nuevo lo que ya tengamos (si acaso, confírmalo); pide solo lo que falte.`
+    : `\n\nCONTEXTO DATOS: No tenemos datos de contacto de este cliente. Si hay intención de cotizar/comprar, puedes pedir (pasivo, sin insistir) su correo y nombre/apellido y guardarlos con guardar_lead.`;
   const system = SYSTEM_PROMPT + ctx + ctxHorario + ctxDatos;
   // Los mensajes de un asesor humano se marcan para que el agente sepa que los dijo una persona.
   const messages: Anthropic.MessageParam[] = hist.map((m) => ({ role: m.role === "assistant" ? "assistant" as const : "user" as const, content: (m.model === "human-agent" ? "[Asesor del equipo]: " : "") + (m.content || "(vacío)") }));
@@ -498,7 +509,7 @@ async function responderLLM(history: { role: string; content: string; model?: st
           : block.name === "info_tienda"
           ? await infoTienda()
           : block.name === "guardar_lead"
-          ? await guardarLead(waId, (block.input as any).email ?? "", (block.input as any).empresa)
+          ? await guardarLead(waId, (block.input as any).email, (block.input as any).empresa, (block.input as any).nombre, (block.input as any).apellido)
           : JSON.stringify({ error: "tool desconocida" });
         results.push({ type: "tool_result", tool_use_id: block.id, content: out });
       }
@@ -527,18 +538,21 @@ async function enviarWati(waId: string, texto: string): Promise<boolean> {
 // updateContactAttributes (mismo endpoint que usamos para sincronizar emails). Valida el formato del
 // correo; NO acepta RUC/datos fiscales (la tool no tiene esos campos). El número se toma del contexto,
 // no del modelo (evita que invente uno). best-effort: si WATI falla, lo loggea y avisa al modelo.
-async function guardarLead(waId: string, email: string, empresa?: string): Promise<string> {
+async function guardarLead(waId: string, email?: string, empresa?: string, nombre?: string, apellido?: string): Promise<string> {
   const e = String(email ?? "").trim();
-  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(e)) {
+  if (e && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(e)) {
     return JSON.stringify({ ok: false, error: "correo_invalido", nota: "El correo no parece válido; pídele al cliente que lo confirme (una sola vez)." });
   }
+  const params: { name: string; value: string }[] = [];
+  if (e) params.push({ name: "email", value: e });
+  const emp = String(empresa ?? "").trim(); if (emp) params.push({ name: "empresa", value: emp.slice(0, 200) });
+  const nom = String(nombre ?? "").trim(); if (nom) params.push({ name: "nombre", value: nom.slice(0, 100) });
+  const ape = String(apellido ?? "").trim(); if (ape) params.push({ name: "apellido", value: ape.slice(0, 100) });
+  if (!params.length) return JSON.stringify({ ok: false, error: "sin_datos", nota: "No hay datos para guardar (pide al menos el correo o el nombre)." });
   if (!WATI_API_TOKEN || !WATI_API_BASE) {
     await log("lead_capturado", false, { waId, motivo: "wati_no_configurado" });
     return JSON.stringify({ ok: false, error: "wati_no_configurado" });
   }
-  const params: { name: string; value: string }[] = [{ name: "email", value: e }];
-  const emp = String(empresa ?? "").trim();
-  if (emp) params.push({ name: "empresa", value: emp.slice(0, 200) });
   try {
     const u = `${WATI_API_BASE}/api/v1/updateContactAttributes/${encodeURIComponent(waId)}`;
     const r = await fetch(u, {
@@ -547,8 +561,8 @@ async function guardarLead(waId: string, email: string, empresa?: string): Promi
       body: JSON.stringify({ customParams: params }),
       signal: AbortSignal.timeout(10000),
     });
-    await log("lead_capturado", r.ok, { waId, email: e, empresa: emp || null, wati_status: r.status });
-    return JSON.stringify(r.ok ? { ok: true, guardado: { email: e, empresa: emp || null } } : { ok: false, error: `wati_status_${r.status}` });
+    await log("lead_capturado", r.ok, { waId, campos: params.map((x) => x.name), email: e || null, wati_status: r.status });
+    return JSON.stringify(r.ok ? { ok: true, guardado: params.map((x) => x.name) } : { ok: false, error: `wati_status_${r.status}` });
   } catch (err) {
     await log("lead_capturado", false, { waId, error: String(err).slice(0, 200) });
     return JSON.stringify({ ok: false, error: "fallo_red" });
@@ -619,7 +633,7 @@ function correrEnSegundoPlano(p: Promise<unknown>): void {
 Deno.serve(async (req) => {
   const url = new URL(req.url);
   if (req.method === "GET") {
-    return Response.json({ status: "ok", function: "copilot-webhook", version: "v26-canal", mode: MODE, mode_raw: MODE_RAW, model: MODEL, llm_configured: !!anthropic, wati_send_configured: !!(WATI_API_TOKEN && WATI_API_BASE), inventario_configurado: !!(SHOPIFY_ADMIN_TOKEN && SHOPIFY_ADMIN_API_BASE), live_targets: MODE === "live" ? (LIVE_ALL ? "all" : LIVE_ALLOWLIST.length) : 0, ts: new Date().toISOString() });
+    return Response.json({ status: "ok", function: "copilot-webhook", version: "v27-nombre-apellido", mode: MODE, mode_raw: MODE_RAW, model: MODEL, llm_configured: !!anthropic, wati_send_configured: !!(WATI_API_TOKEN && WATI_API_BASE), inventario_configurado: !!(SHOPIFY_ADMIN_TOKEN && SHOPIFY_ADMIN_API_BASE), live_targets: MODE === "live" ? (LIVE_ALL ? "all" : LIVE_ALLOWLIST.length) : 0, ts: new Date().toISOString() });
   }
   if (req.method !== "POST") return Response.json({ error: "method_not_allowed" }, { status: 405 });
   if (url.searchParams.get("key") !== WEBHOOK_KEY) return Response.json({ error: "forbidden" }, { status: 403 });
