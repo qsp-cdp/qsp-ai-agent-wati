@@ -1,6 +1,6 @@
 # Base de Conocimiento — Quick Service Supplies
 
-> **Versión:** 1.1 · **Fecha:** 2026-06-24 · **Estado:** Fuente de verdad (KB humana)
+> **Versión:** 1.2 · **Fecha:** 2026-06-24 · **Estado:** Fuente de verdad (KB humana)
 > **Fuente:** Documento entregado por Gerencia de Quick Service Supplies (2026-06-24).
 > **Mantenedor:** Gerencia QSP.
 
@@ -28,6 +28,7 @@ para mantenerlo coherente con producción:
 
 ## Changelog
 
+- **v1.2 (2026-06-24):** captura de lead CONSTRUIDA (ya no solo diferida): el bot pide y guarda correo/nombre/apellido/empresa en atributos de WATI (`guardar_lead`, copilot v25/v27), pasiva y sin pedir datos fiscales. También "buscar antes de negar" (§2/§6/§8 — el bot ya no niega de memoria, v25) y conciencia de canal (no redirige a WhatsApp, v26). Ver Apéndice B.
 - **v1.1 (2026-06-24):** se aplicaron los pasos 2 y 3. `store_facts`: fila `soporte_reparaciones` (contactos de servicio técnico por marca, verificados) + URL real en `sucursales_interior`. Prompt: sección "VENTA CONSULTIVA" (copilot v24; decisión de Gerencia = consultivo), sin aflojar la regla de oro ni la anti-interrupción. §12/13/14 ya estaban cubiertos por `store_facts` (sin cambios). Ver Apéndice B.
 - **v1.0 (2026-06-24):** versión inicial. 35 secciones, importadas de la base entregada por
   Gerencia. Se agrega el análisis de encaje con el prompt v23 y el mapeo de implementación
@@ -1102,8 +1103,19 @@ Cómo se traduce cada sección a lo que el bot realmente hace. Estados:
 - **Decisión de proactividad (§34/§35):** Gerencia eligió **consultivo**. Aplicado en el prompt
   (sección "VENTA CONSULTIVA", copilot v24), sin tocar la anti-interrupción ni la regla de oro.
 
+### ✅ Resuelto en v1.2 (2026-06-24)
+- **Captura de lead (§15/§16/§28, la parte segura):** CONSTRUIDA — el bot pide y guarda
+  correo/nombre/apellido/empresa en atributos de WATI (`guardar_lead`, copilot v25/v27); pasiva, no
+  insiste, y NUNCA pide RUC/factura (eso sigue yendo a un asesor). Captura real validada en prod.
+- **"Buscar antes de negar" (§2/§6/§8):** el bot ya no dice "no lo tenemos" de memoria — busca primero
+  (catálogo completo, no solo impresión). copilot v25.
+- **Conciencia de canal:** el bot no redirige al cliente a WhatsApp (ya está ahí). copilot v26.
+
 ### Diferido a roadmap
-- **Captura de leads (empresa/email) pasiva** dentro del agente (roadmap #10) — habilitaría
-  §15/§16/§28 de forma segura, sin violar la anti-interrupción. Hoy: B2B/factura → derivar.
+- **Puente WATI→CDP** (evaluando **Make**) — para que el correo capturado enriquezca el CDP
+  automáticamente. Hoy el dato queda en WATI (los vendedores lo ven).
+- **Fichas de equipos (§8, specs/PDF)** — el bot respondería specs/compatibilidad desde Shopify
+  (`ficha_producto`). EN PAUSA (decidir descripción vs metafield + carga del contenido).
+- **Captura fiscal completa (RUC/factura)** — solo en una fase de lead más profunda; hoy → asesor.
 - **Recall / alternativa ante agotado** (roadmap #6) — §17/§25.
 - **Feriados** en la lógica de horario (roadmap #11).

@@ -1,7 +1,7 @@
 # CLAUDE.md — Copiloto AI de WhatsApp (WATI) · Quick Service Panamá
 
 > Contexto base para Claude Code trabajando en ESTE repo. Lee esto primero.
-> Generado 2026-06-15; actualizado 2026-06-23 al estado real (edge function v23 +
+> Generado 2026-06-15; actualizado 2026-06-24 al estado real (edge function v27 +
 > esquema del proyecto Supabase). Docs de diseño originales en el repo
 > `qsp-cdp/qsp-cdp-docs` (`docs/design/2026-06-12-proyecto-copilot-wati.md` y
 > `docs/design/2026-06-13-copilot-analisis-sombra-prompt-v2.md`).
@@ -12,9 +12,9 @@ equipo humano: contesta preguntas generales, indica disponibilidad/stock y da pr
 con certeza, y calla/deriva cuando es mejor que responda un humano. Tienda:
 **quickservicepanama.com** (suministros de impresión y tecnología en Panamá).
 
-## Estado actual (2026-06-23)
-- **EN VIVO: `copilot-webhook` v23 (`v23-resiliencia`), ACTIVE.** Desplegado el
-  2026-06-23 con `verify_jwt=false`. Healthcheck (GET, sin key) reporta
+## Estado actual (2026-06-24)
+- **EN VIVO: `copilot-webhook` v27 (`v27-nombre-apellido`), ACTIVE.** Desplegado el
+  2026-06-24 con `verify_jwt=false`. Healthcheck (GET, sin key) reporta
   `version/mode/mode_raw/model/llm_configured/wati_send_configured/inventario_configurado/live_targets`.
 - **MODO: LIVE A TODOS.** `COPILOT_MODE=live` + `COPILOT_LIVE_ALLOWLIST=all`
   (`live_targets:"all"`). El piloto por allowlist (sombra → número por número) ya se
@@ -62,11 +62,27 @@ con certeza, y calla/deriva cuando es mejor que responda un humano. Tienda:
   `maxRetries=3` en el SDK + **respuesta de respaldo** (si la API falla y no se alcanzó a responder,
   en vez de silencio se manda "estamos con alto volumen, un asesor te ayuda…", consciente del
   horario; respeta live/anti-duplicado/handoff; `job_log` `respuesta_respaldo`, `model='fallback'`).
+- **v24 (venta consultiva, 2026-06-24):** sección "VENTA CONSULTIVA" en el prompt — el bot asesora
+  (intake antes de recomendar, se adapta al tipo de cliente, recomienda por necesidad, posiciona
+  originales, usa la web como apoyo, B2B→deriva) sin aflojar la regla de oro ni la anti-interrupción.
+  Destilado de la nueva `docs/base-conocimiento-qsp.md` (KB de negocio versionada).
+- **v25 (captura de lead + buscar antes de negar, 2026-06-24):** (1) BUSCAR ANTES DE NEGAR: se amplió
+  `NEEDS_TOOL_RE` al catálogo completo (monitores, escáneres, UPS, accesorios, laptops, cables…, no
+  solo impresión) + regla "nunca niegues sin buscar" → se acabó el "no lo tenemos" de memoria que
+  luego se corregía (validado en prod: "¿venden monitores?" → sí + modelos reales). (2) CAPTURA DE
+  LEAD (pasiva): tool `guardar_lead` escribe en atributos de WATI; lee los que ya tenemos (del
+  payload) para no repreguntar; respeta anti-interrupción (nunca RUC/factura). Validado en prod.
+- **v26 (conciencia de canal, 2026-06-24):** el bot atiende POR WhatsApp → ya NO dice "escríbenos por
+  WhatsApp" ni da el número de la tienda; al derivar dice "un asesor te responde por aquí".
+- **v27 (nombre y apellido, 2026-06-24):** `guardar_lead` también captura `nombre` y `apellido`
+  (atributos de WATI), además de `email` y `empresa`; el correo ya no es obligatorio (guarda lo que el
+  cliente dé). Captura real validada en prod.
 - **Auditorías diarias (2026-06-19 y 06-23):** coexistencia perfecta (`bot_piso_a_humano=0`,
   `ecos_falsos=0`), anti-interrupción impecable (pago/fiscal/reembolso → humanos), ITBMS/inventario/
   visión funcionando. Los errores vistos eran **externos** (baches de Anthropic), no de nuestro código.
-- `store_facts` **aplicada** con los **17 datos reales** de QSP (envío, pagos,
-  ubicación, horario, devoluciones, contacto). Secretos WATI configurados
+- `store_facts` **aplicada** con los datos reales de QSP (envío, pagos, ubicación, horario,
+  devoluciones, contacto) + **`soporte_reparaciones`** (contactos de servicio técnico por marca,
+  verificados — 2026-06-24) y la **URL real** en `sucursales_interior`. Secretos WATI configurados
   (`wati_send_configured:true`).
 - **Evaluación de modelos sobre tráfico real:** Haiku ~$0.0036/turno (4.2 s, ~21%
   grounding) · Sonnet ~$0.017/turno (8 s, ~51% grounding) · Opus ~$0.034/turno (7.2 s,
@@ -114,10 +130,12 @@ WATI (WhatsApp) ──webhook POST?key=──► Supabase Edge Function `copilot
   "nunca romper"). Acciones clave: `mensaje_humano`, `abstencion_interrupcion`,
   `contacto_nuevo`, `tope_turnos`, `evento_sin_texto`, `error`, `descartado_superado` (v20
   anti-duplicado), `descartado_handoff_tardio` (v20 anti-carrera), `imagen_procesada`/
-  `imagen_no_descargada` (v19), `respuesta_respaldo` (v23 fallback).
+  `imagen_no_descargada` (v19), `respuesta_respaldo` (v23 fallback), `lead_capturado` (v25/v27 captura de lead).
 - **store_facts** (Fase 1.5) — `key`/`value` (vacío = no disponible). Espejo
-  (snapshot) del metaobjeto Shopify `store_facts/datos-tienda` (canónico, 17 campos:
-  envío, pagos, ubicación, horario, devoluciones, contacto). Fuente única de `info_tienda`.
+  (snapshot) del metaobjeto Shopify `store_facts/datos-tienda` (envío, pagos, ubicación, horario,
+  devoluciones, contacto, **soporte_reparaciones**, **sucursales_interior**…). Fuente única de
+  `info_tienda`. **v25/v27:** `guardar_lead` ESCRIBE en WATI (no en esta tabla) los atributos
+  `email`/`nombre`/`apellido`/`empresa` del cliente.
 - **RPC `upsert_conversation(p_wa_id, p_sender_name)`** — upsert atómico por
   `wa_id` + incremento del contador diario de turnos. `security definer`, solo
   `service_role`.
@@ -200,6 +218,16 @@ Reglas clave (texto completo en `index.ts`, const `SYSTEM_PROMPT`):
   interrumpir. Acks sueltos ("ok","gracias") no requieren respuesta.
 - **LOGÍSTICA/PAGOS (v11):** vía tool `info_tienda` (single source = `store_facts`);
   no inventar montos/horarios ni compartir números de cuenta; si falta el dato, derivar.
+- **VENTA CONSULTIVA (v24):** ante una recomendación, hace 1-2 preguntas de intake (uso, volumen,
+  color/WiFi, presupuesto), se adapta al tipo de cliente y recomienda por necesidad — pero TODO
+  modelo/precio sale de `buscar_producto` (regla de oro intacta); B2B/cotización formal → deriva.
+- **BUSCAR ANTES DE NEGAR (v25):** NUNCA decir "no lo tenemos" de memoria; QSP vende más que impresión
+  (monitores, escáneres, UPS, accesorios…). `NEEDS_TOOL_RE` ampliado + regla → siempre busca antes de negar.
+- **CAPTURA DE DATOS (v25/v27, pasiva):** ante intención de cotizar/comprar y si no los tenemos, pide
+  con naturalidad correo + nombre/apellido (y empresa si aplica) y los guarda con `guardar_lead`. No
+  insiste, respeta el "no", no repregunta lo que ya tenemos. NUNCA pide RUC/cédula/factura (→ asesor).
+- **CANAL (v26):** atiende POR WhatsApp → no manda al cliente a "escribir por WhatsApp" ni da el
+  número de la tienda; al derivar, "un asesor te responde por aquí".
 - **HANDOFF** y **LÍMITES** (no legal/médico, nada fuera de la tienda).
 
 ## Tools
@@ -214,6 +242,12 @@ Reglas clave (texto completo en `index.ts`, const `SYSTEM_PROMPT`):
   deduplicados. El prompt maneja sinónimos/línea y preguntas de categoría.
 - **`info_tienda(tema?)`** (Fase 1.5, desplegada) — lee `store_facts` y devuelve TODOS
   los pares `key→value` con valor (omite vacíos); si no hay datos, el bot deriva a un asesor.
+- **`guardar_lead(email?, nombre?, apellido?, empresa?)`** (v25/v27, desplegada) — captura de lead
+  PASIVA: escribe los atributos del cliente en WATI vía `updateContactAttributes` (reusa `email`,
+  `nombre`, `apellido`, `empresa`, que ya existen en WATI). Valida el formato del email; el número se
+  toma del contexto (no del modelo); NO acepta RUC/datos fiscales (anti-interrupción). El bot lee los
+  atributos existentes del payload de WATI para no repreguntar. Telemetría: `job_log` `lead_capturado`.
+  El email enriquece el CDP y ayuda a los vendedores a cotizar más rápido.
 - **Visión (v19, desplegada — no es una tool, es entrada multimodal):** las imágenes del
   cliente (`type:image`, `owner=false`) se descargan de WATI (`descargarMediaWati`: campo
   `data` + `Authorization: Bearer WATI_API_TOKEN`, base64, límite ~3.5 MB) y se adjuntan al
@@ -255,6 +289,9 @@ base `https://quick-service-supplies.myshopify.com/admin/api/2025-10`; si faltan
   respaldo** (nunca dejar al cliente en silencio); respeta live/anti-duplicado/handoff.
 - **Anti-eco (v13):** un `owner=true` que sea el eco de un envío propio del bot NO se
   trata como humano (evita que el bot se auto-abstenga / se ponga en handoff en live).
+- **Captura de lead dentro de los límites (v25/v27):** `guardar_lead` solo guarda datos livianos
+  (email/nombre/apellido/empresa); NUNCA RUC/factura (la tool ni los acepta como parámetros). Es
+  pasiva (no insiste). **Canal (v26):** el bot no redirige al cliente a WhatsApp (ya está ahí).
 - **Auto-expose OFF** en este proyecto → toda tabla nueva necesita `GRANT` manual a
   `service_role` (si no, la función da `permission denied`).
 - **RLS on sin policies** = solo `service_role`. El `?key=` es obligatorio.
@@ -290,8 +327,9 @@ Eventos WATI suscritos (necesarios): **Message Received**, **Session Message Sen
    cliente contesta (chequeo pre/post LLM) → mata las respuestas dobles/triples. Sin timers:
    si llega uno más nuevo, el viejo se descarta antes de enviar (`descartado_superado`).
 5. **Página web "Envíos al interior y recogida en sucursal"** (`web/envios-interior-sucursal.html`,
-   45 sucursales) → ✅ **publicada** en Shopify (`/pages/envios-al-interior`, limpiada vía API).
-   Pendiente: poner su URL en `store_facts.sucursales_interior` + correr la SQL `soporte_reparaciones` (v17).
+   45 sucursales) → ✅ **publicada** en Shopify (`/pages/envios-al-interior`). ✅ **2026-06-24:** URL
+   puesta en `store_facts.sucursales_interior` y `store_facts.soporte_reparaciones` cargada (contactos
+   de servicio técnico por marca, verificados). Ambos pendientes de este punto: hechos.
 6. **Recall de productos:** ante combo agotado, ofrecer variantes/tintas individuales en
    stock en vez de derivar.
 7. **Reseñas por WhatsApp** (generar volumen; tie-in con Klaviyo/CDP).
@@ -299,9 +337,12 @@ Eventos WATI suscritos (necesarios): **Message Received**, **Session Message Sen
    evaluado y descartado por ahora — prematuro; un router por reglas solo si hace falta.)
 9. **Folletos/fichas de equipos** (solo equipos, NO consumibles): specs/compatibilidad como
    descripción/metafield en Shopify (ya hay token Admin) → tool `ficha_producto`. **Medir primero**
-   la demanda (cuántas veces el bot deriva por specs/compatibilidad) antes de construir.
-10. **Captura de lead** (empresa/email) en campos de WATI para contactos nuevos — comportamiento
-    de contacto-nuevo DENTRO del agente actual (NO 2º agente), empezando **pasivo**.
+   la demanda (cuántas veces el bot deriva por specs/compatibilidad) antes de construir. (Discutido
+   2026-06-24: el usuario tiene PDFs de equipos; EN PAUSA hasta decidir descripción vs metafield y
+   cómo cargar el contenido.)
+10. **Captura de lead** (correo/nombre/apellido/empresa) en atributos de WATI → ✅ **HECHA en v25/v27**
+    (pasiva, dentro del agente actual, sin pedir datos fiscales; `guardar_lead`). Pendiente: el puente
+    **WATI→CDP** (evaluando **Make**) para que el dato capturado enriquezca el CDP automáticamente.
 11. **Feriados** en la lógica de horario (v22 hoy solo maneja Lun-Vie 9-5 + fines de semana).
 
 ## Cómo leer el estado real (debugging)

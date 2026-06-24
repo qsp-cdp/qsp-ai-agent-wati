@@ -19,15 +19,16 @@ sombra por seguridad.
 ## Estructura
 ```
 CLAUDE.md                                  # contexto autoritativo (leer primero)
+docs/base-conocimiento-qsp.md              # base de conocimiento del negocio (fuente → prompt + store_facts)
 supabase/
-  functions/copilot-webhook/index.ts       # la edge function (v23, = lo desplegado)
+  functions/copilot-webhook/index.ts       # la edge function (v27, = lo desplegado)
   migrations/*.sql                          # esquema reproducible (6 migraciones)
 web/
   envios-interior-sucursal.html            # página de envíos al interior (45 sucursales)
 ```
 
 ## Estado
-- Edge function `copilot-webhook` **v23 (`v23-resiliencia`), ACTIVE** — EN VIVO a todos, en
+- Edge function `copilot-webhook` **v27 (`v27-nombre-apellido`), ACTIVE** — EN VIVO a todos, en
   Sonnet 4.6. Coexistencia validada (v15) · visión (v19) · endurecimiento anti-duplicado /
   anti-carrera / MODE-seguro (v20).
 - **v21:** ITBMS (precio + 7% + total, calculado en código) + inventario real (Shopify Admin
@@ -35,6 +36,10 @@ web/
 - **v22:** conciencia de horario (atención Lun-Vie 9am-5pm, Panamá) — fuera de horario aclara
   cuándo responde un asesor.
 - **v23:** resiliencia ante fallos de API (reintentos + respuesta de respaldo; no deja al cliente en silencio).
+- **v24:** venta consultiva (asesora con preguntas de intake, sin aflojar la regla de oro).
+- **v25:** buscar antes de negar (catálogo completo, no solo impresión) + captura de lead pasiva (`guardar_lead` → atributos de WATI).
+- **v26:** conciencia de canal (no redirige al cliente a WhatsApp; ya está ahí).
+- **v27:** captura también nombre y apellido (atributos de WATI), además de correo y empresa.
 - Auditorías diarias: coexistencia perfecta (0 clientes pisados, 0 ecos falsos). ~$0.02/turno, ~8 s.
 
 ## Desarrollo / deploy
