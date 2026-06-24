@@ -1,3 +1,13 @@
+// === copilot-webhook v25 — Copiloto AI de WATI — captura de lead + buscar antes de negar ===
+// v25 (2026-06-24): (1) BUSCAR ANTES DE NEGAR: el bot ya no dice "no lo tenemos" de memoria — se
+//   amplió NEEDS_TOOL_RE al catálogo completo (monitores, escáneres, UPS, accesorios, laptops, cables…,
+//   no solo impresión) y se reforzó el prompt ("nunca niegues sin buscar; vendemos más que impresión").
+//   Corrige el caso en que negaba y luego se corregía. (2) CAPTURA DE LEAD (pasiva): ante intención de
+//   cotizar/comprar, si no tenemos el correo, el bot lo pide con naturalidad y lo guarda en el atributo
+//   `email` de WATI (+ `empresa` si aplica) vía la tool guardar_lead. Lee los atributos que ya tenemos
+//   (del payload de WATI) para no repreguntar; es pasivo (no insiste, respeta el "no"); y RESPETA la
+//   anti-interrupción: NUNCA pide RUC/cédula/factura (eso queda para un asesor). El email enriquece el
+//   CDP y ayuda a los vendedores a cotizar más rápido.
 // === copilot-webhook v24 — Copiloto AI de WATI — venta consultiva (asesor que ayuda a elegir) ===
 // v24 (2026-06-24): nueva sección "VENTA CONSULTIVA" en el SYSTEM_PROMPT — el bot actúa más como
 //   asesor de ventas: preguntas de intake antes de recomendar, adapta la profundidad al tipo de
@@ -171,6 +181,7 @@ ESTILO
 REGLA DE ORO — precio, stock y promociones
 - Para CUALQUIER precio o disponibilidad usa SIEMPRE la herramienta buscar_producto y responde SOLO con lo que ella devuelve.
 - NUNCA menciones un producto, modelo, precio o disponibilidad que no provenga de un resultado de buscar_producto EN ESTE MISMO TURNO. Si no llamaste a la tool, NO nombres modelos ni des precios/stock: búscalo primero. Aplica también a preguntas de categoría ("¿venden impresoras Epson?"): primero busca, luego responde con lo que devuelva.
+- NO NIEGUES DE MEMORIA: nunca digas que NO ofrecemos un producto o categoría sin haber buscado con buscar_producto en este turno. QSP vende MÁS que impresión (también monitores, escáneres, UPS, baterías, accesorios y tecnología en general). Ante CUALQUIER consulta de producto, BUSCA primero; solo di "no lo encontré" o "eso no lo manejamos" DESPUÉS de haber buscado.
 - NUNCA inventes precios, existencias, descuentos ni promociones.
 - Incluye el link del producto cuando lo tengas.
 - PRECIO + ITBMS: los precios son SIN ITBMS. Muestra SIEMPRE el precio, el ITBMS (7%) y el total usando EXACTAMENTE los valores que devuelve la tool (precio_usd, itbms_7pct, total_con_itbms). Formato: "*$116.00 + ITBMS (7%) = $124.12*". NUNCA calcules el impuesto de memoria.
@@ -192,6 +203,13 @@ VENTA CONSULTIVA — ayuda a elegir bien (sin inventar)
 - Trabajamos sobre todo productos ORIGINALES (HP, Epson, Canon, Brother…) según disponibilidad; si preguntan original vs genérico, dilo así y confirma el modelo exacto.
 - La web es apoyo, no un descarte: puedes invitar a comprar en quickservicepanama.com, pero ayuda primero a ubicar el producto o aclarar la duda.
 - Empresa que pide cotización formal, factura, crédito o volumen: ayúdala con precio/disponibilidad (buscar_producto) y pásala con un asesor para la cotización o la factura; NO pidas RUC ni datos de factura tú mismo.
+
+CAPTURA DE DATOS (correo y empresa) — pasiva, sin insistir
+- Cuando el cliente muestra intención de COTIZAR o comprar algo concreto (o en un momento natural, p.ej. "te mando la info por correo"), y NO tenemos su correo, pídelo con naturalidad: "Para enviarte la cotización, ¿a qué correo te la mandamos?".
+- Detecta o pregunta si es para uso PERSONAL o para una EMPRESA; si es empresa, pide el nombre de la empresa (informal).
+- Cuando tengas el correo (y la empresa si aplica), llama a la herramienta guardar_lead para registrarlo. Si guardar_lead responde que el correo es inválido, pide que lo confirme UNA sola vez.
+- Es PASIVO, no un formulario: si el cliente lo ignora, lo rechaza o sigue con otra cosa, NO insistas — seguí ayudando normal. Si ya lo pediste en esta conversación y no lo dio, no lo vuelvas a pedir. Si el CONTEXTO indica que ya tenemos el dato, no lo pidas.
+- NUNCA pidas RUC, cédula, DV ni datos de factura (eso lo maneja un asesor). Para una cotización formal de empresa, junta correo/empresa y deriva el resto a un asesor.
 
 CONTACTO NUEVO vs CONOCIDO
 - Si es la PRIMERA interacción de este contacto: da una bienvenida cálida y breve, preséntate como Quick Service Panamá (suministros de impresión y tecnología) y pregunta en qué le puedes ayudar. Una sola vez, sin repetirla.
@@ -234,6 +252,10 @@ const TOOLS: Anthropic.Tool[] = [{
   name: "info_tienda",
   description: "Devuelve los datos oficiales de la tienda QSP (envíos/entregas, métodos de pago, ubicación, horarios, devoluciones, contacto) como pares clave→valor. Llama esta herramienta SIEMPRE que pregunten por esos temas y responde SOLO con lo que devuelva; NUNCA inventes montos, direcciones, cuentas ni horarios, y NUNCA compartas números de cuenta.",
   input_schema: { type: "object", properties: { tema: { type: "string", description: "Opcional e informativo: el tema preguntado (envío, pago, ubicación, horario…). La herramienta devuelve TODOS los datos de la tienda." } } },
+} as Anthropic.Tool, {
+  name: "guardar_lead",
+  description: "Guarda los datos de contacto del cliente en WATI para que un asesor cotice más rápido y para enriquecer el CRM. Llámala SOLO cuando el cliente ya te dio su CORREO (y, si la compra es para una empresa, el nombre de la empresa), normalmente cuando hay intención de cotizar o comprar. NO la uses para RUC/cédula/datos de factura (eso lo maneja un asesor). El número de WhatsApp se toma solo; tú solo pasas el correo y, opcionalmente, la empresa.",
+  input_schema: { type: "object", properties: { email: { type: "string", description: "Correo electrónico del cliente, ej: juan@empresa.com" }, empresa: { type: "string", description: "Nombre de la empresa (solo si la compra es para una empresa)" } }, required: ["email"] },
 } as Anthropic.Tool];
 
 const HANDOFF_RE = /\b(humano|persona|asesor|agente|reclamo|queja|devoluci[oó]n|garant[ií]a|hablar con alguien|supervisor)\b/i;
@@ -262,6 +284,12 @@ const NEEDS_TOOL_RE = new RegExp([
   "epson", "canon", "\\bhp\\b", "brother", "pixma", "ecotank", "workforce", "laserjet", "deskjet", "officejet", "\\bg\\d{3,4}\\b", "\\bl\\d{3,4}\\b", "gi-?\\d",
   "env[ií]o", "entrega", "delivery", "horario", "ubicaci", "direcci", "\\bd[oó]nde\\b", "\\bpago", "pagar", "yappy", "\\bach\\b", "transferen", "tarjeta", "reembols",
   "repar", "soporte t[eé]cnico", "averi", "da[ñn]ad", "no enciende", "no prende", "no imprime", "sucursal", "recoger", "retir",
+  // v25: catálogo completo (no solo impresión) → fuerza la búsqueda antes de negar.
+  "monitor", "pantalla", "esc[aá]ner", "escaner", "scanner", "\\bups\\b", "bater[ií]a", "estabilizador", "regulador", "no.?break",
+  "laptop", "port[aá]til", "computador", "comput", "\\bpc\\b", "all.?in.?one", "mouse", "rat[oó]n", "teclado", "webcam", "c[aá]mara",
+  "\\bcable", "\\bhdmi\\b", "\\bvga\\b", "\\busb\\b", "adaptador", "disco", "\\bssd\\b", "\\bhdd\\b", "almacenamiento", "memoria", "\\bram\\b", "pendrive",
+  "router", "\\bswitch\\b", "access.?point", "\\bwifi\\b", "audifon", "auricular", "parlante", "bocina", "proyector", "accesori", "perif[eé]ric", "tecnolog", "suministr",
+  "dell", "lenovo", "\\bjbl\\b", "xtech", "alliance", "tablet",
 ].join("|"), "i");
 // resultados; lanza solo ante error de red/HTTP (lo maneja buscarProducto).
 async function suggestShopify(q: string): Promise<any[]> {
@@ -394,7 +422,7 @@ async function infoTienda(): Promise<string> {
   } catch (e) { return JSON.stringify({ error: String(e).slice(0, 200) }); }
 }
 
-async function responderLLM(history: { role: string; content: string; model?: string | null }[], forceTool: boolean, imagen?: { b64: string; mediaType: string } | null, imagenFallo?: boolean): Promise<{ text: string | null; toolCalls: unknown[]; tokensIn: number; tokensOut: number }> {
+async function responderLLM(history: { role: string; content: string; model?: string | null }[], forceTool: boolean, imagen?: { b64: string; mediaType: string } | null, imagenFallo?: boolean, waId: string = "", atributos: Record<string, string> = {}): Promise<{ text: string | null; toolCalls: unknown[]; tokensIn: number; tokensOut: number }> {
   if (!anthropic) return { text: null, toolCalls: [], tokensIn: 0, tokensOut: 0 };
   // La API exige que el primer mensaje sea del usuario: descarta "assistant" al inicio
   // (puede pasar si un asesor escribió primero).
@@ -410,7 +438,11 @@ async function responderLLM(history: { role: string; content: string; model?: st
   const diasSem = ["domingo", "lunes", "martes", "miércoles", "jueves", "viernes", "sábado"];
   const ctxHorario = hh.dentro ? "" :
     `\n\nCONTEXTO HORARIO: Ahora es ${diasSem[hh.dia]} ~${hh.hora}:00 en Panamá, FUERA del horario de atención de QSP (atención por WhatsApp y tienda: Lun-Vie 9:00am–5:00pm; sábados y domingos cerrado). Seguí ayudando con lo automático (precio/ITBMS, stock, info de tienda). Pero si el cliente necesita un asesor, una cotización formal o coordinar pago/entrega, aclará con calma que un asesor le responde en el próximo horario hábil (deducí cuál según el día y la hora actuales) y NO prometas respuesta humana inmediata.`;
-  const system = SYSTEM_PROMPT + ctx + ctxHorario;
+  // v25 — qué datos ya tenemos del cliente (de los atributos de WATI) para no repreguntar.
+  const ctxDatos = atributos.email
+    ? `\n\nCONTEXTO DATOS: Ya tenemos el correo de este cliente${atributos.empresa ? ` y su empresa (${atributos.empresa})` : ""} en archivo. NO se lo pidas de nuevo; si acaso, confírmalo.`
+    : `\n\nCONTEXTO DATOS: No tenemos el correo de este cliente. Si hay intención de cotizar/comprar, puedes pedírselo (pasivo, sin insistir) y guardarlo con guardar_lead.`;
+  const system = SYSTEM_PROMPT + ctx + ctxHorario + ctxDatos;
   // Los mensajes de un asesor humano se marcan para que el agente sepa que los dijo una persona.
   const messages: Anthropic.MessageParam[] = hist.map((m) => ({ role: m.role === "assistant" ? "assistant" as const : "user" as const, content: (m.model === "human-agent" ? "[Asesor del equipo]: " : "") + (m.content || "(vacío)") }));
   // v20: la API exige que el ÚLTIMO mensaje sea de usuario; varios modelos no aceptan "prefill"
@@ -458,6 +490,8 @@ async function responderLLM(history: { role: string; content: string; model?: st
           ? await buscarProducto((block.input as any).consulta ?? "")
           : block.name === "info_tienda"
           ? await infoTienda()
+          : block.name === "guardar_lead"
+          ? await guardarLead(waId, (block.input as any).email ?? "", (block.input as any).empresa)
           : JSON.stringify({ error: "tool desconocida" });
         results.push({ type: "tool_result", tool_use_id: block.id, content: out });
       }
@@ -480,6 +514,49 @@ async function enviarWati(waId: string, texto: string): Promise<boolean> {
   const u = `${WATI_API_BASE}/api/v1/sendSessionMessage/${encodeURIComponent(waId)}?messageText=${encodeURIComponent(texto)}`;
   const r = await fetch(u, { method: "POST", headers: { Authorization: `Bearer ${WATI_API_TOKEN}` }, signal: AbortSignal.timeout(10000) });
   return r.ok;
+}
+
+// v25 (captura de lead) — guarda el correo (y empresa) del cliente en los atributos de WATI vía
+// updateContactAttributes (mismo endpoint que usamos para sincronizar emails). Valida el formato del
+// correo; NO acepta RUC/datos fiscales (la tool no tiene esos campos). El número se toma del contexto,
+// no del modelo (evita que invente uno). best-effort: si WATI falla, lo loggea y avisa al modelo.
+async function guardarLead(waId: string, email: string, empresa?: string): Promise<string> {
+  const e = String(email ?? "").trim();
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(e)) {
+    return JSON.stringify({ ok: false, error: "correo_invalido", nota: "El correo no parece válido; pídele al cliente que lo confirme (una sola vez)." });
+  }
+  if (!WATI_API_TOKEN || !WATI_API_BASE) {
+    await log("lead_capturado", false, { waId, motivo: "wati_no_configurado" });
+    return JSON.stringify({ ok: false, error: "wati_no_configurado" });
+  }
+  const params: { name: string; value: string }[] = [{ name: "email", value: e }];
+  const emp = String(empresa ?? "").trim();
+  if (emp) params.push({ name: "empresa", value: emp.slice(0, 200) });
+  try {
+    const u = `${WATI_API_BASE}/api/v1/updateContactAttributes/${encodeURIComponent(waId)}`;
+    const r = await fetch(u, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${WATI_API_TOKEN}` },
+      body: JSON.stringify({ customParams: params }),
+      signal: AbortSignal.timeout(10000),
+    });
+    await log("lead_capturado", r.ok, { waId, email: e, empresa: emp || null, wati_status: r.status });
+    return JSON.stringify(r.ok ? { ok: true, guardado: { email: e, empresa: emp || null } } : { ok: false, error: `wati_status_${r.status}` });
+  } catch (err) {
+    await log("lead_capturado", false, { waId, error: String(err).slice(0, 200) });
+    return JSON.stringify({ ok: false, error: "fallo_red" });
+  }
+}
+
+// v25 — lee los atributos custom que ya vienen en el webhook de WATI (best-effort; el shape puede
+// variar entre versiones). Sirve para no repreguntar datos que ya tenemos (email/empresa).
+function extraerCustomParams(p: any): Record<string, string> {
+  const out: Record<string, string> = {};
+  const cp = p?.customParams ?? p?.contact?.customParams ?? p?.listMember?.customParams ?? p?.waCustomParams;
+  if (Array.isArray(cp)) {
+    for (const x of cp) { if (x && x.name != null) out[String(x.name)] = String(x.value ?? ""); }
+  }
+  return out;
 }
 
 // v20 (anti-duplicado): ¿hay un mensaje de cliente MÁS NUEVO que el que estamos respondiendo?
@@ -535,7 +612,7 @@ function correrEnSegundoPlano(p: Promise<unknown>): void {
 Deno.serve(async (req) => {
   const url = new URL(req.url);
   if (req.method === "GET") {
-    return Response.json({ status: "ok", function: "copilot-webhook", version: "v24-consultivo", mode: MODE, mode_raw: MODE_RAW, model: MODEL, llm_configured: !!anthropic, wati_send_configured: !!(WATI_API_TOKEN && WATI_API_BASE), inventario_configurado: !!(SHOPIFY_ADMIN_TOKEN && SHOPIFY_ADMIN_API_BASE), live_targets: MODE === "live" ? (LIVE_ALL ? "all" : LIVE_ALLOWLIST.length) : 0, ts: new Date().toISOString() });
+    return Response.json({ status: "ok", function: "copilot-webhook", version: "v25-captura-lead", mode: MODE, mode_raw: MODE_RAW, model: MODEL, llm_configured: !!anthropic, wati_send_configured: !!(WATI_API_TOKEN && WATI_API_BASE), inventario_configurado: !!(SHOPIFY_ADMIN_TOKEN && SHOPIFY_ADMIN_API_BASE), live_targets: MODE === "live" ? (LIVE_ALL ? "all" : LIVE_ALLOWLIST.length) : 0, ts: new Date().toISOString() });
   }
   if (req.method !== "POST") return Response.json({ error: "method_not_allowed" }, { status: 405 });
   if (url.searchParams.get("key") !== WEBHOOK_KEY) return Response.json({ error: "forbidden" }, { status: 403 });
@@ -648,7 +725,8 @@ Deno.serve(async (req) => {
         if (await hayMensajeClienteMasNuevo(conv.id, userCreatedAt)) { await log("descartado_superado", true, { waId, fase: "pre-llm" }); return; }
         const { data: hist } = await sb.from("messages").select("role,content,model").eq("conversation_id", conv.id).in("role", ["user", "assistant"]).order("created_at", { ascending: false }).limit(10);
         const history = (hist ?? []).reverse();
-        const r = await responderLLM(history as any, imagen ? false : NEEDS_TOOL_RE.test(texto), imagen, esImagenCliente && !imagen);
+        const atributosWati = extraerCustomParams(p); // v25: datos que ya tenemos (best-effort, del payload)
+        const r = await responderLLM(history as any, imagen ? false : NEEDS_TOOL_RE.test(texto), imagen, esImagenCliente && !imagen, waId, atributosWati);
         const salida = r.text ? limpiarWhatsApp(r.text) : null; // formato apto para WhatsApp (v16)
         // v20 (anti-duplicado, post-LLM): durante los ~8s del LLM pudo llegar otro mensaje → no enviar el viejo.
         if (await hayMensajeClienteMasNuevo(conv.id, userCreatedAt)) { await log("descartado_superado", true, { waId, fase: "post-llm" }); return; }
