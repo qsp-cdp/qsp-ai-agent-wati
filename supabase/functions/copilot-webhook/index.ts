@@ -1,3 +1,7 @@
+// === copilot-webhook v30 — Copiloto AI de WATI — el endpoint resolve acepta Bearer (contrato CDP) ===
+// v30 (2026-06-24): el endpoint de resolución (GET ?ref_code=) ahora acepta Authorization: Bearer
+//   <RESOLVE_SECRET> además de ?key= — el CDP lo lee por Bearer (no deja el secreto en la URL/logs);
+//   ?key= queda para probar rápido en el navegador. Cierra el contrato del puente ref_code con el CDP.
 // === copilot-webhook v29 — Copiloto AI de WATI — el link de producto sale con el tracking intacto ===
 // v29 (2026-06-24): el modelo a veces "limpiaba" el link de producto (le quitaba el ?utm…&ref_code=),
 //   rompiendo el stitch (el cliente clickeaba un link sin ref_code). El guardado de ref_codes (v28) ya
@@ -710,14 +714,18 @@ Deno.serve(async (req) => {
     // v28 — resolución de ref_code para el CDP (stitching WhatsApp→web). Guard: RESOLVE_SECRET.
     const refCode = url.searchParams.get("ref_code");
     if (refCode) {
-      if (!RESOLVE_SECRET || url.searchParams.get("key") !== RESOLVE_SECRET) return Response.json({ error: "forbidden" }, { status: 403 });
+      // v30 — auth: Authorization: Bearer <RESOLVE_SECRET> (preferido, no deja el secreto en URL/logs)
+      // o ?key= (cómodo para probar en el navegador). El CDP usa Bearer.
+      const auth = req.headers.get("authorization") ?? "";
+      const ok = !!RESOLVE_SECRET && (auth === `Bearer ${RESOLVE_SECRET}` || url.searchParams.get("key") === RESOLVE_SECRET);
+      if (!ok) return Response.json({ error: "forbidden" }, { status: 403 });
       if (!/^[A-Za-z0-9]{8}$/.test(refCode)) return Response.json({ error: "ref_code_invalido" }, { status: 400 });
       const { data, error } = await sb.from("ref_codes").select("wa_id,producto_handle,created_at").eq("ref_code", refCode).maybeSingle();
       if (error) return Response.json({ error: "db" }, { status: 500 });
       if (!data) return Response.json({ error: "not_found" }, { status: 404 });
       return Response.json({ wa_id: data.wa_id, producto_handle: data.producto_handle, ts: data.created_at });
     }
-    return Response.json({ status: "ok", function: "copilot-webhook", version: "v29-link-tracking", mode: MODE, mode_raw: MODE_RAW, model: MODEL, llm_configured: !!anthropic, wati_send_configured: !!(WATI_API_TOKEN && WATI_API_BASE), inventario_configurado: !!(SHOPIFY_ADMIN_TOKEN && SHOPIFY_ADMIN_API_BASE), resolve_configured: !!RESOLVE_SECRET, live_targets: MODE === "live" ? (LIVE_ALL ? "all" : LIVE_ALLOWLIST.length) : 0, ts: new Date().toISOString() });
+    return Response.json({ status: "ok", function: "copilot-webhook", version: "v30-resolve-bearer", mode: MODE, mode_raw: MODE_RAW, model: MODEL, llm_configured: !!anthropic, wati_send_configured: !!(WATI_API_TOKEN && WATI_API_BASE), inventario_configurado: !!(SHOPIFY_ADMIN_TOKEN && SHOPIFY_ADMIN_API_BASE), resolve_configured: !!RESOLVE_SECRET, live_targets: MODE === "live" ? (LIVE_ALL ? "all" : LIVE_ALLOWLIST.length) : 0, ts: new Date().toISOString() });
   }
   if (req.method !== "POST") return Response.json({ error: "method_not_allowed" }, { status: 405 });
   if (url.searchParams.get("key") !== WEBHOOK_KEY) return Response.json({ error: "forbidden" }, { status: 403 });
