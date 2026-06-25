@@ -115,3 +115,29 @@ https://quickservicepanama.com/products/<handle>?utm_source=whatsapp&utm_medium=
 - Versiones relevantes del copiloto: **v28** (ref_code: emit + store + resolve), **v29** (fix: el link
   sale con el tracking intacto), **v30** (el resolve acepta `Authorization: Bearer`).
 - No mezclar proyectos: CDP = `tuyheailysudfxiuppmg` · Copiloto = `jbigmlcalcwiphqeudxd`.
+
+---
+
+## 7. Aclaraciones del contrato (Q&A con el CDP, 2026-06-25)
+- **🔑 `RESOLVE_SECRET`:** la env var que lee el endpoint del copiloto se llama exactamente
+  **`RESOLVE_SECRET`** (pueden nombrar igual el secret del lado CDP). El valor se entrega por
+  **canal seguro** (ideal: cargarlo directo como secret del proyecto CDP), NUNCA por chat/repo/PR/logs.
+- **Estabilidad:** v30 es prod estable; la URL y el contrato del endpoint se mantienen (no se rompen
+  en versiones futuras).
+- **Sin ventana de `404` espurio:** la fila se inserta (`await`, commit) DENTRO de `buscar_producto`,
+  ANTES de devolver/enviar el link; el click ocurre segundos/minutos después → el `GET` da `200`
+  inmediato. Además, si el insert falla, el bot **NO emite** el `ref_code` (no existe un code sin
+  fila). ⇒ todo `ref_code` emitido está guardado.
+- **`404` = terminal:** el `ref_code` no existe (nunca se emitió, o fue purgado). Tratarlo como
+  no-match definitivo (no reintentar).
+- **`wa_id`:** siempre dígitos con código de país, sin `+` (ej. `50766746530`). El bot guarda el
+  `waId` de WATI tal cual (solo dígitos). Casos raros posibles: números internacionales o algún
+  malformado; el `+`-prefix para E.164 es correcto en el caso normal.
+- **Rate limit:** no hay límite explícito en el endpoint; el volumen descrito (1×/click sin resolver,
+  lotes ~cada 15 min) es bajo y está bien. ⚠️ El endpoint comparte la función con el webhook de
+  WhatsApp en vivo → evitar ráfagas grandes (concurrencia modesta, ≤~5-10).
+- **Limpieza `ref_codes`:** el pg_cron de purga está **PENDIENTE** (hoy no se purga nada; la tabla
+  crece). Cuando se aplique será a **≥90 días** (muy por encima del piso de 30d del CDP) ⇒ sin riesgo
+  de `404` por purga para clicks frescos.
+- **`producto_handle`:** siempre un handle válido de Shopify (sale del propio URL de producto; solo se
+  guarda la fila si hay handle).
