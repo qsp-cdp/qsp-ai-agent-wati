@@ -21,14 +21,14 @@ sombra por seguridad.
 CLAUDE.md                                  # contexto autoritativo (leer primero)
 docs/base-conocimiento-qsp.md              # base de conocimiento del negocio (fuente → prompt + store_facts)
 supabase/
-  functions/copilot-webhook/index.ts       # la edge function (v27, = lo desplegado)
-  migrations/*.sql                          # esquema reproducible (6 migraciones)
+  functions/copilot-webhook/index.ts       # la edge function (v31, = lo desplegado)
+  migrations/*.sql                          # esquema reproducible (7 migraciones)
 web/
   envios-interior-sucursal.html            # página de envíos al interior (45 sucursales)
 ```
 
 ## Estado
-- Edge function `copilot-webhook` **v27 (`v27-nombre-apellido`), ACTIVE** — EN VIVO a todos, en
+- Edge function `copilot-webhook` **v31 (`v31-handoff-lifecycle`), ACTIVE** — EN VIVO a todos, en
   Sonnet 4.6. Coexistencia validada (v15) · visión (v19) · endurecimiento anti-duplicado /
   anti-carrera / MODE-seguro (v20).
 - **v21:** ITBMS (precio + 7% + total, calculado en código) + inventario real (Shopify Admin
@@ -40,13 +40,20 @@ web/
 - **v25:** buscar antes de negar (catálogo completo, no solo impresión) + captura de lead pasiva (`guardar_lead` → atributos de WATI).
 - **v26:** conciencia de canal (no redirige al cliente a WhatsApp; ya está ahí).
 - **v27:** captura también nombre y apellido (atributos de WATI), además de correo y empresa.
+- **v28–v30:** puente WhatsApp→web por `ref_code` (link de producto con apex + UTMs + code opaco;
+  tabla `ref_codes` + endpoint de resolución por `Bearer` para el CDP). Ver `docs/handoff-cdp-ref-code-bridge.md`.
+- **v31:** ciclo de vida del handoff — el bot deja de quedarse mudo para siempre. Tras ≥15 min sin asesor
+  ASISTE con info básica de tienda (sigue en handoff); tras >24 h RETOMA la conversación (`status→bot`).
+  Reactivo, con la anti-interrupción intacta (pago/fiscal nunca lo dispara).
 - Auditorías diarias: coexistencia perfecta (0 clientes pisados, 0 ecos falsos). ~$0.02/turno, ~8 s.
 
 ## Desarrollo / deploy
 - Secretos van en **Supabase Edge Function secrets** (NO en el repo): `ANTHROPIC_API_KEY`,
   `WATI_API_TOKEN`, `WATI_API_BASE`, `COPILOT_MODE` (shadow|live),
   `COPILOT_LIVE_ALLOWLIST` (vacío = nadie, `all` = todos), `COPILOT_MODEL`,
-  `COPILOT_WEBHOOK_KEY`, y (v21) `SHOPIFY_ADMIN_TOKEN` + `SHOPIFY_ADMIN_API_BASE` (inventario real).
+  `COPILOT_WEBHOOK_KEY`, (v21) `SHOPIFY_ADMIN_TOKEN` + `SHOPIFY_ADMIN_API_BASE` (inventario real),
+  (v28) `RESOLVE_SECRET` (guard del endpoint `?ref_code=` para el CDP), y (v31, opcionales)
+  `COPILOT_HANDOFF_ASSIST_MIN` (15) + `COPILOT_HANDOFF_COLD_HOURS` (24).
 - Deploy: `supabase functions deploy copilot-webhook --no-verify-jwt` (o vía MCP
   de Supabase con `verify_jwt:false`; si está gated, copiar el `index.ts` desde el raw
   de GitHub al editor del dashboard con Verify JWT OFF).

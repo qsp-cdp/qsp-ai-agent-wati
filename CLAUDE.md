@@ -1,7 +1,7 @@
 # CLAUDE.md — Copiloto AI de WhatsApp (WATI) · Quick Service Panamá
 
 > Contexto base para Claude Code trabajando en ESTE repo. Lee esto primero.
-> Generado 2026-06-15; actualizado 2026-06-24 al estado real (edge function v27 +
+> Generado 2026-06-15; actualizado 2026-06-26 al estado real (edge function v31 +
 > esquema del proyecto Supabase). Docs de diseño originales en el repo
 > `qsp-cdp/qsp-cdp-docs` (`docs/design/2026-06-12-proyecto-copilot-wati.md` y
 > `docs/design/2026-06-13-copilot-analisis-sombra-prompt-v2.md`).
@@ -12,10 +12,11 @@ equipo humano: contesta preguntas generales, indica disponibilidad/stock y da pr
 con certeza, y calla/deriva cuando es mejor que responda un humano. Tienda:
 **quickservicepanama.com** (suministros de impresión y tecnología en Panamá).
 
-## Estado actual (2026-06-24)
-- **EN VIVO: `copilot-webhook` v27 (`v27-nombre-apellido`), ACTIVE.** Desplegado el
-  2026-06-24 con `verify_jwt=false`. Healthcheck (GET, sin key) reporta
-  `version/mode/mode_raw/model/llm_configured/wati_send_configured/inventario_configurado/live_targets`.
+## Estado actual (2026-06-26)
+- **EN VIVO: `copilot-webhook` v31 (`v31-handoff-lifecycle`), ACTIVE.** Desplegado con
+  `verify_jwt=false`. Healthcheck (GET, sin key) reporta `version/mode/mode_raw/model/
+  llm_configured/wati_send_configured/inventario_configurado/resolve_configured/
+  handoff_assist_min/handoff_cold_hours/live_targets`.
 - **MODO: LIVE A TODOS.** `COPILOT_MODE=live` + `COPILOT_LIVE_ALLOWLIST=all`
   (`live_targets:"all"`). El piloto por allowlist (sombra → número por número) ya se
   completó; hoy el bot responde a todos los clientes. El default del CÓDIGO sigue
@@ -77,6 +78,28 @@ con certeza, y calla/deriva cuando es mejor que responda un humano. Tienda:
 - **v27 (nombre y apellido, 2026-06-24):** `guardar_lead` también captura `nombre` y `apellido`
   (atributos de WATI), además de `email` y `empresa`; el correo ya no es obligatorio (guarda lo que el
   cliente dé). Captura real validada en prod.
+- **v28–v30 (puente WhatsApp→web por `ref_code`, 2026-06-24/25):** los links de producto que emite
+  `buscar_producto` llevan tracking para atribución / identidad omnicanal en el CDP. (v28) URL **apex**
+  (sin www) + UTMs + un `ref_code` opaco de 8 alfanuméricos (crypto) por producto; se guarda
+  `{ref_code→wa_id,handle}` en la tabla **`ref_codes`** (best-effort; NUNCA se emite un code sin guardar)
+  + endpoint **GET `?ref_code=`** que el CDP resuelve. (v29) fix DETERMINISTA: el LLM "limpiaba" el link
+  (le quitaba el `?utm…&ref_code=`) → `reaplicarTracking` reaplica el tracking post-LLM. (v30) el endpoint
+  acepta `Authorization: Bearer <RESOLVE_SECRET>` (el CDP lo lee por Bearer). Privacidad: nunca `wa_id`/PII
+  en la URL, solo el `ref_code`. Contrato y verificación: `docs/handoff-cdp-ref-code-bridge.md`. Verificado
+  end-to-end en prod.
+- **v31 (ciclo de vida del handoff, 2026-06-26):** el bot deja de quedarse MUDO para siempre en
+  `status='handoff'`. REACTIVO (lo gatilla un mensaje del cliente), midiendo el tiempo desde el **último
+  mensaje del asesor** (`model='human-agent'`): (1) **ASISTENCIA** (≥15 min sin asesor) — si el cliente
+  hace una pregunta BÁSICA de tienda (ubicación/horario/pago/envío/devolución; `BASIC_INFO_RE`), el bot
+  adelanta SOLO esa info vía `info_tienda` (única tool, `modoAsistencia`), breve y deferente, y la
+  conversación **SIGUE en handoff** (no le quita la venta al humano). (2) **COLD-RETURN** (>24 h sin asesor)
+  — la atención humana se considera fría → el bot **RETOMA todo** (`status→'bot'`) y procesa como cualquier
+  cliente. Umbrales configurables (`COPILOT_HANDOFF_ASSIST_MIN`/`COPILOT_HANDOFF_COLD_HOURS`). **Guardrails
+  intactos:** `INTERRUPT_RE` (pago/fiscal/trámite) bloquea AMBOS caminos; si el asesor vuelve a escribir,
+  `owner=true` regresa a handoff y el anti-carrera evita pisarlo; el anti-eco reconoce el envío propio
+  (`model='assist-handoff'`, no resetea el reloj). Si NUNCA escribió un humano (handoff por keyword), se
+  mantiene el comportamiento v30. Sin cambios de esquema. (Diseño acordado con Gerencia: 15 min / 24 h,
+  reactivo, solo conversaciones activas.)
 - **Auditorías diarias (2026-06-19 y 06-23):** coexistencia perfecta (`bot_piso_a_humano=0`,
   `ecos_falsos=0`), anti-interrupción impecable (pago/fiscal/reembolso → humanos), ITBMS/inventario/
   visión funcionando. Los errores vistos eran **externos** (baches de Anthropic), no de nuestro código.
@@ -119,7 +142,9 @@ WATI (WhatsApp) ──webhook POST?key=──► Supabase Edge Function `copilot
   `status` (`bot`/`handoff`/`cerrada`), `turns_today`/`turns_date` (tope
   anti-costos), `last_message_at`, `confirmed_new` (bool — del evento newContact),
   `first_contact_at`. **v15:** cuando un humano del negocio escribe, pasa a
-  `status='handoff'`; para devolverla al bot: `update … set status='bot'`.
+  `status='handoff'`; para devolverla al bot: `update … set status='bot'`. **v31:** el bot ya gestiona
+  el ciclo de vida del handoff solo (asiste a ≥15 min y retoma a >24 h sin asesor); el `update` manual
+  sigue funcionando si se quiere forzar.
 - **messages** — `conversation_id` FK, `role` (user/assistant/tool/system),
   `content`, `tool_calls` jsonb, `mode` (**shadow**/live), `model`, `tokens_in/out`,
   `latency_ms`, `wati_message_id` (dedup de webhooks reintentados, índice único).
@@ -130,12 +155,17 @@ WATI (WhatsApp) ──webhook POST?key=──► Supabase Edge Function `copilot
   "nunca romper"). Acciones clave: `mensaje_humano`, `abstencion_interrupcion`,
   `contacto_nuevo`, `tope_turnos`, `evento_sin_texto`, `error`, `descartado_superado` (v20
   anti-duplicado), `descartado_handoff_tardio` (v20 anti-carrera), `imagen_procesada`/
-  `imagen_no_descargada` (v19), `respuesta_respaldo` (v23 fallback), `lead_capturado` (v25/v27 captura de lead).
+  `imagen_no_descargada` (v19), `respuesta_respaldo` (v23 fallback), `lead_capturado` (v25/v27 captura de lead),
+  `ref_code_insert_error` (v28), `handoff_cold_return`/`asistencia_handoff` (v31 ciclo de vida del handoff).
 - **store_facts** (Fase 1.5) — `key`/`value` (vacío = no disponible). Espejo
   (snapshot) del metaobjeto Shopify `store_facts/datos-tienda` (envío, pagos, ubicación, horario,
   devoluciones, contacto, **soporte_reparaciones**, **sucursales_interior**…). Fuente única de
   `info_tienda`. **v25/v27:** `guardar_lead` ESCRIBE en WATI (no en esta tabla) los atributos
   `email`/`nombre`/`apellido`/`empresa` del cliente.
+- **ref_codes** (v28) — `ref_code` (PK, 8 alfanuméricos opacos), `wa_id`, `producto_handle`,
+  `created_at`. Mapeo para el stitching WhatsApp→web: `buscar_producto` inserta una fila por link de
+  producto emitido; el CDP resuelve `ref_code→wa_id` vía el endpoint GET `?ref_code=` (guard
+  `RESOLVE_SECRET`). El `wa_id` vive SOLO aquí, nunca en la URL. Contrato: `docs/handoff-cdp-ref-code-bridge.md`.
 - **RPC `upsert_conversation(p_wa_id, p_sender_name)`** — upsert atómico por
   `wa_id` + incremento del contador diario de turnos. `security definer`, solo
   `service_role`.
@@ -143,7 +173,8 @@ WATI (WhatsApp) ──webhook POST?key=──► Supabase Edge Function `copilot
 Migraciones (ver `supabase/migrations/`):
 `copilot_schema_inicial`, `rpc_upsert_conversation`, `fix_grant_service_role`,
 `grants_service_role_tablas`, `conversations_confirmed_new`,
-`store_facts` (Fase 1.5 — **aplicada**, 17 datos reales).
+`store_facts` (Fase 1.5 — **aplicada**, 17 datos reales),
+`20260624180000_ref_codes` (v28 — **aplicada**, stitching WhatsApp→web).
 
 ## Flujo del webhook (resumen de index.ts)
 1. **GET** = healthcheck (status/version/mode/model/live_targets).
@@ -160,11 +191,15 @@ Migraciones (ver `supabase/migrations/`):
    negocio) se registra (`evento_sin_texto.payload`, diagnóstico v18.1) y se salta.
    `upsert_conversation` → inserta msg de usuario (el caption o `[imagen]`; dedup por
    `wati_message_id`, síncrono).
-6. Cortes: si `status=handoff` → skip (cubre la atención humana de v15); si
-   `turns_today>40` → skip. **Anti-interrupción 2:** si el texto matchea `INTERRUPT_RE`
-   (RUC/cédula/razón social/pago/comprobante/mensajero…) → ABSTENERSE (no llama al LLM).
-   Si matchea `HANDOFF_RE` (humano|asesor|reclamo|…) → handoff. (La vieja regla de "humano
-   hace <45 min" vía job_log se RETIRÓ en v15; ahora la cubre `status='handoff'`.)
+6. **Ciclo de vida del handoff (v31):** si `status=handoff`, el bot ya NO se calla sin más. Lee el
+   tiempo desde el último mensaje del asesor (`model='human-agent'`): **>24 h** (y el mensaje NO es
+   INTERRUPT) → **cold-return** (`status→'bot'`, cae al flujo normal y retoma todo); **≥15 min** +
+   pregunta básica (`BASIC_INFO_RE`) + no INTERRUPT + bajo el tope → **asistencia** (responde SOLO esa
+   info vía `info_tienda` en una tarea aparte, sigue en handoff); si no, **skip** (como v30). Si nunca
+   escribió un humano (handoff por keyword) → skip (v30). Luego: si `turns_today>40` → skip.
+   **Anti-interrupción 2:** si el texto matchea `INTERRUPT_RE` (RUC/cédula/razón social/pago/comprobante/
+   mensajero…) → ABSTENERSE (no llama al LLM). Si matchea `HANDOFF_RE` (humano|asesor|reclamo|…) →
+   handoff. (La vieja regla de "humano hace <45 min" vía job_log se RETIRÓ en v15.)
 7. **(v14) Trabajo lento en SEGUNDO PLANO** (`EdgeRuntime.waitUntil`): el webhook ya
    respondió 200 a WATI (evita su timeout/`Err`). En background: trae historial (últimos
    10 user/assistant; los de asesor van etiquetados `[Asesor del equipo]:`) →
@@ -228,6 +263,11 @@ Reglas clave (texto completo en `index.ts`, const `SYSTEM_PROMPT`):
   insiste, respeta el "no", no repregunta lo que ya tenemos. NUNCA pide RUC/cédula/factura (→ asesor).
 - **CANAL (v26):** atiende POR WhatsApp → no manda al cliente a "escribir por WhatsApp" ni da el
   número de la tienda; al derivar, "un asesor te responde por aquí".
+- **MODO ASISTENCIA (v31, se ANEXA al prompt vía `ASSIST_SUFFIX`):** cuando un asesor tiene el chat pero
+  lleva rato sin responder y el cliente pregunta algo básico, el bot adelanta SOLO esa info de tienda
+  (ubicación/horario/pago/envío/devolución) vía `info_tienda`, breve y deferente ("un asesor sigue con tu
+  caso"); NO retoma la venta, NO da precios/productos, NO pide datos, NO toca pago/fiscal. La única tool
+  disponible en este modo es `info_tienda`.
 - **HANDOFF** y **LÍMITES** (no legal/médico, nada fuera de la tienda).
 
 ## Tools
@@ -262,7 +302,10 @@ Reglas clave (texto completo en `index.ts`, const `SYSTEM_PROMPT`):
 `COPILOT_WEBHOOK_KEY` (guard del `?key=`), **`SHOPIFY_ADMIN_TOKEN`** + **`SHOPIFY_ADMIN_API_BASE`**
 (v21 — inventario real vía Admin GraphQL; app de Shopify de **solo lectura** `read_products`+`read_inventory`;
 base `https://quick-service-supplies.myshopify.com/admin/api/2025-10`; si faltan, el `stock` cae a
-"un asesor confirma"). El healthcheck expone `inventario_configurado`.
+"un asesor confirma"). **`RESOLVE_SECRET`** (v28/v30 — guard del endpoint GET `?ref_code=`; el CDP lo lee
+por `Authorization: Bearer`; si falta, el endpoint da 403). **`COPILOT_HANDOFF_ASSIST_MIN`** (v31, default
+**15**) y **`COPILOT_HANDOFF_COLD_HOURS`** (v31, default **24**) — umbrales del ciclo de vida del handoff.
+El healthcheck expone `inventario_configurado`, `resolve_configured`, `handoff_assist_min`, `handoff_cold_hours`.
 
 > ⚠️ **OJO — no cruzar `COPILOT_MODE` con `COPILOT_MODEL`** (pasó 3 veces): el ID del
 > modelo (`claude-…`) va SIEMPRE en `COPILOT_MODE**L**` (la L = modeLo). `COPILOT_MODE`
@@ -281,6 +324,13 @@ base `https://quick-service-supplies.myshopify.com/admin/api/2025-10`; si faltan
   re-chequeo de `status='handoff'` JUSTO antes de enviar (anti-carrera: si un asesor entró
   durante los ~8s del LLM, el bot no la pisa). El bot NUNCA captura ni repite RUC/datos de
   factura/pago.
+- **Ciclo de vida del handoff dentro de los límites (v31):** el bot puede asistir/retomar conversaciones
+  en handoff, pero SIN romper la anti-interrupción. `INTERRUPT_RE` (pago/fiscal/trámite) bloquea TANTO la
+  asistencia COMO el cold-return (un mensaje de trámite en handoff sigue silencioso). La asistencia solo
+  responde info de tienda (única tool `info_tienda`), nunca retoma la venta ni saca de handoff. El reloj
+  mide desde el último mensaje del asesor (`model='human-agent'`); si el asesor vuelve a escribir,
+  `owner=true` regresa a handoff y el anti-carrera lo protege. La respuesta de asistencia se marca
+  `model='assist-handoff'` para que el anti-eco la reconozca (no resetea el reloj, no dispara handoff falso).
 - **Anti-duplicado (v20):** en ráfaga, solo el ÚLTIMO mensaje del cliente recibe respuesta
   (chequeo pre/post LLM de "¿hay uno más nuevo?") → no más respuestas dobles/triples.
 - **MODE a prueba de typos (v20):** `COPILOT_MODE` inválido → `shadow` (no rompe los inserts);
@@ -344,6 +394,14 @@ Eventos WATI suscritos (necesarios): **Message Received**, **Session Message Sen
     (pasiva, dentro del agente actual, sin pedir datos fiscales; `guardar_lead`). Pendiente: el puente
     **WATI→CDP** (evaluando **Make**) para que el dato capturado enriquezca el CDP automáticamente.
 11. **Feriados** en la lógica de horario (v22 hoy solo maneja Lun-Vie 9-5 + fines de semana).
+12. **Puente WhatsApp→web por `ref_code` (v28–v30): ✅ mitad del copiloto lista** (emite + guarda +
+    expone). Pendiente del lado **CDP**: el resolver inverso (leer el endpoint → enriquecer `contacts`) +
+    entregar `RESOLVE_SECRET` por canal seguro. Opcional copiloto: purga `pg_cron` de `ref_codes` ≥90 d.
+    Contrato: `docs/handoff-cdp-ref-code-bridge.md`.
+13. **Ciclo de vida del handoff (v31): ✅ hecho** (asistencia ≥15 min + cold-return >24 h, reactivo).
+    Pendiente/futuro: (a) medir en prod (cuántas asistencias/cold-returns, falsos positivos) y calibrar
+    umbrales; (b) extender cold-return a handoffs por keyword (hoy solo cuando hubo un asesor real);
+    (c) afinar `BASIC_INFO_RE` según lo que pregunten de verdad.
 
 ## Cómo leer el estado real (debugging)
 - Código en vivo: `get_edge_function` o healthcheck GET. Esquema: `list_tables`.
@@ -351,6 +409,9 @@ Eventos WATI suscritos (necesarios): **Message Received**, **Session Message Sen
   public.messages order by created_at desc` y `select * from public.job_log order
   by created_at desc`.
 - Devolver una conversación del humano al bot: `update public.conversations set
-  status='bot' where wa_id='<numero>';`.
+  status='bot' where wa_id='<numero>';` (v31: el bot ya lo hace solo tras 24 h sin asesor).
+- Ciclo de vida del handoff (v31): `select * from public.job_log where action in
+  ('handoff_cold_return','asistencia_handoff') order by created_at desc;` (el `detail` trae
+  `horas_sin_humano` / `mins_sin_humano` / `enviado` / `motivo`).
 - Análisis de sombra (categorías de mensajes, prompt v2): doc
   `2026-06-13-copilot-analisis-sombra-prompt-v2.md` en qsp-cdp-docs.

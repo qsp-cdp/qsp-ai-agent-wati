@@ -1,3 +1,16 @@
+// === copilot-webhook v31 — Copiloto AI de WATI — ciclo de vida del handoff (asistencia + cold-return) ===
+// v31 (2026-06-26): el bot deja de quedarse MUDO para siempre en status='handoff'. REACTIVO (lo gatilla
+//   un mensaje del cliente), midiendo el tiempo desde el último mensaje del asesor (model='human-agent'):
+//   (1) ASISTENCIA (>=15 min sin asesor) — si el cliente hace una pregunta BÁSICA de tienda (ubicación,
+//   horario, formas de pago, envíos/entregas, devoluciones; BASIC_INFO_RE), el bot adelanta SOLO esa info
+//   vía info_tienda (única tool, modoAsistencia), breve y deferente, y la conversación SIGUE en handoff
+//   (no le quita la venta al humano). (2) COLD-RETURN (>24 h sin asesor) — la atención humana se considera
+//   fría: el bot RETOMA todo (status→'bot') y procesa como cualquier cliente. Ambos umbrales son
+//   configurables (COPILOT_HANDOFF_ASSIST_MIN / COPILOT_HANDOFF_COLD_HOURS). Guardrails intactos:
+//   INTERRUPT_RE (pago/fiscal/trámite) bloquea AMBOS caminos; si el asesor vuelve a escribir, owner=true
+//   regresa a handoff y el anti-carrera evita pisarlo; el anti-eco reconoce el envío propio (no resetea el
+//   reloj). Si NUNCA escribió un humano (handoff por keyword), se mantiene el comportamiento v30. Sin
+//   cambios de esquema. Telemetría: job_log `handoff_cold_return`, `asistencia_handoff`.
 // === copilot-webhook v30 — Copiloto AI de WATI — el endpoint resolve acepta Bearer (contrato CDP) ===
 // v30 (2026-06-24): el endpoint de resolución (GET ?ref_code=) ahora acepta Authorization: Bearer
 //   <RESOLVE_SECRET> además de ?key= — el CDP lo lee por Bearer (no deja el secreto en la URL/logs);
@@ -170,6 +183,12 @@ const MODE = MODE_RAW === "live" ? "live" : "shadow";
 const MODEL = Deno.env.get("COPILOT_MODEL") ?? "claude-haiku-4-5";
 const WEBHOOK_KEY = Deno.env.get("COPILOT_WEBHOOK_KEY") ?? "cw-qsp-9f2e7b3a1c5d4806";
 const MAX_TURNS_DIA = 40;
+// v31 — ciclo de vida del handoff (umbrales configurables por secreto, defaults acordados con
+// Gerencia). ASSIST: si el asesor lleva >= N min sin escribir y el cliente hace una pregunta
+// BÁSICA de tienda, el bot adelanta SOLO esa info (sigue en handoff). COLD-RETURN: si el asesor
+// lleva > H horas sin escribir, la conversación se considera fría → el bot la RETOMA (status='bot').
+const HANDOFF_ASSIST_MIN = parseInt(Deno.env.get("COPILOT_HANDOFF_ASSIST_MIN") ?? "15", 10) || 15;
+const HANDOFF_COLD_HOURS = parseInt(Deno.env.get("COPILOT_HANDOFF_COLD_HOURS") ?? "24", 10) || 24;
 const STORE = "https://www.quickservicepanama.com";
 // v21 — Shopify Admin (solo lectura) para la CANTIDAD real de inventario (totalInventory).
 // SHOPIFY_ADMIN_API_BASE: https://<tienda>.myshopify.com/admin/api/2024-10 (sin / al final).
@@ -279,6 +298,18 @@ HANDOFF A HUMANO (deriva con calma y sin prometer de más)
 LÍMITES
 - No des asesoría legal ni médica. No hables de temas ajenos a la tienda.`;
 
+// v31 — MODO ASISTENCIA (handoff-assist): se ANEXA al SYSTEM_PROMPT cuando un asesor humano tiene la
+// conversación pero lleva un rato sin responder y el cliente preguntó algo básico. El bot adelanta SOLO
+// información general de la tienda (info_tienda) y NADA más — no retoma la venta ni pisa al asesor.
+const ASSIST_SUFFIX = `
+
+MODO ASISTENCIA — un asesor humano está atendiendo este chat
+Un compañero del equipo tiene esta conversación, pero lleva un rato sin responder y el cliente acaba de preguntar algo. Para no dejarlo esperando, adelanta ÚNICAMENTE información general de la tienda y nada más:
+- Responde SOLO si es una pregunta de: ubicación, horario, formas de pago que aceptamos, envíos/entregas o política de devoluciones/garantía. Usa info_tienda y responde breve (1-2 oraciones) con lo que devuelva.
+- Sé deferente: deja claro que un asesor sigue con su caso. Ej.: "Mientras tanto te confirmo: [dato]. Un asesor continúa con tu solicitud enseguida."
+- NO retomes la venta, NO des precios/stock ni busques productos, NO pidas ni guardes datos, NO confirmes pagos/pedidos, NO cierres nada: de eso se encarga el asesor.
+- Si la pregunta NO es de esa información general, o toca un pago/cotización/factura/reclamo o el caso puntual que lleva el asesor, NO escribas nada (deja la respuesta vacía): que lo siga el humano.`;
+
 const TOOLS: Anthropic.Tool[] = [{
   name: "buscar_producto",
   description: "Busca productos en el catálogo de Quick Service Panamá (Shopify). Llámala SIEMPRE que el cliente pregunte precio, disponibilidad/stock, compatibilidad, o mencione/insinúe un producto, marca o categoría (tinta, toner, impresora Epson/Canon/HP, etc.). Pasa términos CONCISOS: marca + MODELO (el número de modelo es la mejor señal); para 'tinta para [impresora]' busca por el modelo de la impresora. Puedes llamarla varias veces reformulando si no encuentras. Devuelve título, precio (precio_usd SIN ITBMS + itbms_7pct + total_con_itbms), stock (disponibilidad ya resuelta: muestra el número si hay >3, si no deriva a un asesor), marca, tipo y link (máx 5).",
@@ -326,6 +357,25 @@ const NEEDS_TOOL_RE = new RegExp([
   "\\bcable", "\\bhdmi\\b", "\\bvga\\b", "\\busb\\b", "adaptador", "disco", "\\bssd\\b", "\\bhdd\\b", "almacenamiento", "memoria", "\\bram\\b", "pendrive",
   "router", "\\bswitch\\b", "access.?point", "\\bwifi\\b", "audifon", "auricular", "parlante", "bocina", "proyector", "accesori", "perif[eé]ric", "tecnolog", "suministr",
   "dell", "lenovo", "\\bjbl\\b", "xtech", "alliance", "tablet",
+].join("|"), "i");
+
+// v31 — pregunta BÁSICA de tienda que el bot SÍ puede adelantar mientras un asesor está ausente
+// (handoff-assist): ubicación, horario, formas de pago que aceptamos, envíos/entregas y política de
+// devoluciones — todo lo que vive en store_facts (lo responde info_tienda). Deliberadamente NO incluye
+// precios/productos (eso es retomar la venta del humano) ni nada transaccional/fiscal (lo bloquea
+// INTERRUPT_RE, que se evalúa antes). "garantía/devolución" caen aquí a propósito (política general);
+// el caso puntual lo sigue el asesor.
+const BASIC_INFO_RE = new RegExp([
+  // ubicación / cómo llegar
+  "ubicaci", "direcci", "\\bd[oó]nde\\b", "\\bqueda", "ubicad", "c[oó]mo llego", "\\bmapa\\b", "\\bwaze\\b", "google maps", "local\\b", "tienda f[ií]sica",
+  // horario
+  "horario", "a qu[eé] hora", "\\bhasta qu[eé] hora", "\\babren\\b", "\\bcierran\\b", "abiert", "cerrad", "atienden", "\\bd[ií]as\\b",
+  // formas de pago (métodos que aceptamos; NO pago en curso — eso lo filtra INTERRUPT_RE)
+  "formas? de pago", "m[eé]todos? de pago", "c[oó]mo (puedo )?pago", "c[oó]mo pagar", "aceptan", "\\byappy\\b", "\\bach\\b", "tarjeta", "efectivo", "transferen", "cuotas?",
+  // envíos / entregas / recogida
+  "env[ií]o", "env[ií]an", "entrega", "delivery", "despach", "mandan", "\\bllega", "interior", "provincia", "recoger", "recojo", "\\bretir", "sucursal", "pickup", "domicilio", "uber\\b",
+  // devoluciones / garantía (política general)
+  "devoluci", "devolver", "garant[ií]a", "\\bcambio\\b", "cambiar", "reembols",
 ].join("|"), "i");
 // resultados; lanza solo ante error de red/HTTP (lo maneja buscarProducto).
 async function suggestShopify(q: string): Promise<any[]> {
@@ -504,7 +554,7 @@ async function infoTienda(): Promise<string> {
   } catch (e) { return JSON.stringify({ error: String(e).slice(0, 200) }); }
 }
 
-async function responderLLM(history: { role: string; content: string; model?: string | null }[], forceTool: boolean, imagen?: { b64: string; mediaType: string } | null, imagenFallo?: boolean, waId: string = "", atributos: Record<string, string> = {}, linksTracked: Record<string, string> = {}): Promise<{ text: string | null; toolCalls: unknown[]; tokensIn: number; tokensOut: number }> {
+async function responderLLM(history: { role: string; content: string; model?: string | null }[], forceTool: boolean, imagen?: { b64: string; mediaType: string } | null, imagenFallo?: boolean, waId: string = "", atributos: Record<string, string> = {}, linksTracked: Record<string, string> = {}, modoAsistencia: boolean = false): Promise<{ text: string | null; toolCalls: unknown[]; tokensIn: number; tokensOut: number }> {
   if (!anthropic) return { text: null, toolCalls: [], tokensIn: 0, tokensOut: 0 };
   // La API exige que el primer mensaje sea del usuario: descarta "assistant" al inicio
   // (puede pasar si un asesor escribió primero).
@@ -529,7 +579,12 @@ async function responderLLM(history: { role: string; content: string; model?: st
   const ctxDatos = datosTen.length
     ? `\n\nCONTEXTO DATOS: De este cliente ya tenemos: ${datosTen.join(", ")}. NO pidas de nuevo lo que ya tengamos (si acaso, confírmalo); pide solo lo que falte.`
     : `\n\nCONTEXTO DATOS: No tenemos datos de contacto de este cliente. Si hay intención de cotizar/comprar, puedes pedir (pasivo, sin insistir) su correo y nombre/apellido y guardarlos con guardar_lead.`;
-  const system = SYSTEM_PROMPT + ctx + ctxHorario + ctxDatos;
+  // v31 — en MODO ASISTENCIA se anexa ASSIST_SUFFIX (info general, no retomar la venta) en vez del
+  // contexto de captura de datos (que invita a pedir correo — no aplica si el humano está a cargo).
+  const system = SYSTEM_PROMPT + ctx + ctxHorario + (modoAsistencia ? ASSIST_SUFFIX : ctxDatos);
+  // v31 — en asistencia, la ÚNICA tool disponible es info_tienda (no buscar_producto/guardar_lead):
+  // el bot solo puede adelantar datos de tienda, nunca cotizar ni capturar datos del cliente.
+  const toolsActivas = modoAsistencia ? TOOLS.filter((t) => t.name === "info_tienda") : TOOLS;
   // Los mensajes de un asesor humano se marcan para que el agente sepa que los dijo una persona.
   const messages: Anthropic.MessageParam[] = hist.map((m) => ({ role: m.role === "assistant" ? "assistant" as const : "user" as const, content: (m.model === "human-agent" ? "[Asesor del equipo]: " : "") + (m.content || "(vacío)") }));
   // v20: la API exige que el ÚLTIMO mensaje sea de usuario; varios modelos no aceptan "prefill"
@@ -560,7 +615,7 @@ async function responderLLM(history: { role: string; content: string; model?: st
     while (messages.length && messages[messages.length - 1].role === "assistant") messages.pop();
     if (!messages.length) break;
     const resp = await anthropic.messages.create({
-      model: MODEL, max_tokens: 1024, system, tools: TOOLS, messages,
+      model: MODEL, max_tokens: 1024, system, tools: toolsActivas, messages,
       ...(i === 0 && forceTool ? { tool_choice: { type: "any" as const } } : {}),
     });
     tokensIn += resp.usage.input_tokens; tokensOut += resp.usage.output_tokens;
@@ -725,7 +780,7 @@ Deno.serve(async (req) => {
       if (!data) return Response.json({ error: "not_found" }, { status: 404 });
       return Response.json({ wa_id: data.wa_id, producto_handle: data.producto_handle, ts: data.created_at });
     }
-    return Response.json({ status: "ok", function: "copilot-webhook", version: "v30-resolve-bearer", mode: MODE, mode_raw: MODE_RAW, model: MODEL, llm_configured: !!anthropic, wati_send_configured: !!(WATI_API_TOKEN && WATI_API_BASE), inventario_configurado: !!(SHOPIFY_ADMIN_TOKEN && SHOPIFY_ADMIN_API_BASE), resolve_configured: !!RESOLVE_SECRET, live_targets: MODE === "live" ? (LIVE_ALL ? "all" : LIVE_ALLOWLIST.length) : 0, ts: new Date().toISOString() });
+    return Response.json({ status: "ok", function: "copilot-webhook", version: "v31-handoff-lifecycle", mode: MODE, mode_raw: MODE_RAW, model: MODEL, llm_configured: !!anthropic, wati_send_configured: !!(WATI_API_TOKEN && WATI_API_BASE), inventario_configurado: !!(SHOPIFY_ADMIN_TOKEN && SHOPIFY_ADMIN_API_BASE), resolve_configured: !!RESOLVE_SECRET, handoff_assist_min: HANDOFF_ASSIST_MIN, handoff_cold_hours: HANDOFF_COLD_HOURS, live_targets: MODE === "live" ? (LIVE_ALL ? "all" : LIVE_ALLOWLIST.length) : 0, ts: new Date().toISOString() });
   }
   if (req.method !== "POST") return Response.json({ error: "method_not_allowed" }, { status: 405 });
   if (url.searchParams.get("key") !== WEBHOOK_KEY) return Response.json({ error: "forbidden" }, { status: 403 });
@@ -801,12 +856,76 @@ Deno.serve(async (req) => {
     }
     const userCreatedAt = (ins.data?.[0] as any)?.created_at ?? new Date().toISOString(); // v20: ancla para anti-duplicado
 
-    if (conv.status === "handoff") return Response.json({ ok: true, skipped: "en_handoff" });
+    // v31 — CICLO DE VIDA DEL HANDOFF. Hasta v30, status='handoff' = el bot se callaba para siempre
+    // (hasta devolverlo a 'bot' a mano). Ahora, REACTIVO (lo gatilla ESTE mensaje del cliente), el bot
+    // puede ayudar sin pisar al humano. El reloj = último mensaje del asesor (model='human-agent'):
+    //  · COLD-RETURN (>HANDOFF_COLD_HOURS sin que el asesor escriba, y el mensaje NO es trámite/fiscal):
+    //    la atención humana quedó fría → el bot RETOMA todo (status→'bot') y cae al flujo normal.
+    //  · ASISTENCIA (>=HANDOFF_ASSIST_MIN min sin asesor) + pregunta BÁSICA de tienda (no INTERRUPT):
+    //    adelanta SOLO esa info (info_tienda), deferente; la conversación SIGUE en 'handoff'.
+    //  · si no aplica (asesor activo hace poco, o no es pregunta básica): se calla (como v30).
+    // Si NUNCA escribió un humano (handoff por keyword HANDOFF_RE), se mantiene el comportamiento v30
+    // (no se retoma solo): el bot solo gestiona el ciclo cuando de verdad hubo un asesor en el chat.
+    if (conv.status === "handoff") {
+      const { data: ha } = await sb.from("messages").select("created_at")
+        .eq("conversation_id", conv.id).eq("model", "human-agent")
+        .order("created_at", { ascending: false }).limit(1);
+      const ultHumano = (ha?.[0] as any)?.created_at as string | undefined;
+      const minsSinHumano = ultHumano ? (Date.now() - new Date(ultHumano).getTime()) / 60000 : -1;
+      const interrumpe = INTERRUPT_RE.test(texto); // trámite/pago/fiscal en curso → nunca tocar
+      const frio = !!ultHumano && minsSinHumano > HANDOFF_COLD_HOURS * 60 && !interrumpe;
+      const puedeAsistir = !!ultHumano && !frio && minsSinHumano >= HANDOFF_ASSIST_MIN
+        && conv.turns_today <= MAX_TURNS_DIA && !interrumpe && BASIC_INFO_RE.test(texto);
+
+      if (frio) {
+        // COLD-RETURN: el asesor lleva >umbral sin escribir → conversación fría. El bot la retoma por
+        // completo: la marcamos 'bot' y NO retornamos (cae al flujo normal de abajo: turnos/INTERRUPT/
+        // HANDOFF/LLM completo). Si el asesor vuelve durante el LLM, owner=true la regresa a handoff y
+        // el anti-carrera (justo antes de enviar) evita pisarlo.
+        await sb.from("conversations").update({ status: "bot" }).eq("id", conv.id);
+        conv.status = "bot";
+        await log("handoff_cold_return", true, { waId, horas_sin_humano: Math.round(minsSinHumano / 60) });
+      } else if (puedeAsistir) {
+        // ASISTENCIA: tarea aparte en segundo plano. El bot responde SOLO la info básica (info_tienda),
+        // no saca la conversación de handoff y no le quita la venta al asesor.
+        const asistir = (async () => {
+          try {
+            if (await hayMensajeClienteMasNuevo(conv.id, userCreatedAt)) { await log("descartado_superado", true, { waId, fase: "asist-pre" }); return; }
+            const { data: hist } = await sb.from("messages").select("role,content,model").eq("conversation_id", conv.id).in("role", ["user", "assistant"]).order("created_at", { ascending: false }).limit(10);
+            const history = (hist ?? []).reverse();
+            // forceTool=true + modoAsistencia=true → única tool info_tienda, forzada (grounding).
+            const r = await responderLLM(history as any, true, null, false, waId, {}, {}, true);
+            const salida = r.text ? limpiarWhatsApp(r.text) : null;
+            if (!salida) { await log("asistencia_handoff", true, { waId, enviado: false, motivo: "sin_respuesta" }); return; }
+            // anti-duplicado (llegó otro mensaje del cliente) + anti-carrera (el asesor volvió a escribir
+            // durante el LLM → reseteó el reloj → él sigue; o la conversación dejó de estar en handoff).
+            if (await hayMensajeClienteMasNuevo(conv.id, userCreatedAt)) { await log("descartado_superado", true, { waId, fase: "asist-post" }); return; }
+            const { data: hNuevo } = await sb.from("messages").select("id").eq("conversation_id", conv.id).eq("model", "human-agent").gt("created_at", ultHumano as string).limit(1);
+            if (hNuevo && hNuevo.length) { await log("asistencia_handoff", true, { waId, enviado: false, motivo: "asesor_volvio" }); return; }
+            const { data: cAhora } = await sb.from("conversations").select("status").eq("id", conv.id).maybeSingle();
+            if (cAhora?.status !== "handoff") { await log("asistencia_handoff", true, { waId, enviado: false, motivo: "status_cambio" }); return; }
+            // Anti-eco: model != 'human-agent' → cuando WATI rebote el eco (owner=true), se reconoce como
+            // envío propio y NO se guarda como asesor (no resetea el reloj ni dispara handoff falso).
+            const quiereEnviar = liveAllowed(waId);
+            const insA = await sb.from("messages").insert({ conversation_id: conv.id, role: "assistant", content: salida, tool_calls: r.toolCalls.length ? r.toolCalls : null, mode: quiereEnviar ? "live" : "shadow", model: "assist-handoff", tokens_in: r.tokensIn || null, tokens_out: r.tokensOut || null, latency_ms: Date.now() - t0 }).select("id");
+            let enviado = false;
+            if (quiereEnviar) { enviado = await enviarWati(waId, salida); if (!enviado) await sb.from("messages").update({ mode: "shadow" }).eq("id", (insA.data?.[0] as any)?.id); }
+            await log("asistencia_handoff", true, { waId, enviado, mins_sin_humano: Math.round(minsSinHumano) });
+          } catch (e) { await log("error", false, { waId, fase: "asistencia", error: String(e).slice(0, 300) }); }
+        })();
+        correrEnSegundoPlano(asistir);
+        return Response.json({ ok: true, asistencia: true });
+      } else {
+        // Asesor activo hace poco (<umbral), no es pregunta básica, o handoff sin asesor → callar (v30).
+        return Response.json({ ok: true, skipped: "en_handoff" });
+      }
+    }
     if (conv.turns_today > MAX_TURNS_DIA) { await log("tope_turnos", true, { waId }); return Response.json({ ok: true, skipped: "tope_diario" }); }
 
-    // Anti-interrupción 1 (v15): si el negocio ya atendió la conversación, quedó en status='handoff'
-    // (se marca cuando un owner=true escribe, arriba) y ya se saltó en el corte de status de arriba.
-    // El bot solo atiende contactos nuevos / sin asignar a un humano.
+    // Anti-interrupción 1 (v15 + v31): si el negocio atendió la conversación quedó en status='handoff'
+    // (se marca cuando un owner=true escribe, arriba). El bloque de arriba (v31) ya decidió: o se calló,
+    // o asistió con info básica (y retornó), o —si el asesor llevaba >24h— la retomó (status='bot') y
+    // cae aquí al flujo normal como cualquier cliente. El bot nunca pisa a un asesor activo.
 
     // Anti-interrupción 2: señales de trámite/pago/dato fiscal en curso → abstenerse.
     if (INTERRUPT_RE.test(texto)) { await log("abstencion_interrupcion", true, { waId }); return Response.json({ ok: true, skipped: "interrupcion_tramite" }); }
