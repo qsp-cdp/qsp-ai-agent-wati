@@ -1,7 +1,7 @@
 # CLAUDE.md — Copiloto AI de WhatsApp (WATI) · Quick Service Panamá
 
 > Contexto base para Claude Code trabajando en ESTE repo. Lee esto primero.
-> Generado 2026-06-15; actualizado 2026-06-26 al estado real (edge function v31 +
+> Generado 2026-06-15; actualizado 2026-06-26 al estado real (edge function v32 +
 > esquema del proyecto Supabase). Docs de diseño originales en el repo
 > `qsp-cdp/qsp-cdp-docs` (`docs/design/2026-06-12-proyecto-copilot-wati.md` y
 > `docs/design/2026-06-13-copilot-analisis-sombra-prompt-v2.md`).
@@ -13,7 +13,7 @@ con certeza, y calla/deriva cuando es mejor que responda un humano. Tienda:
 **quickservicepanama.com** (suministros de impresión y tecnología en Panamá).
 
 ## Estado actual (2026-06-26)
-- **EN VIVO: `copilot-webhook` v31 (`v31-handoff-lifecycle`), ACTIVE.** Desplegado con
+- **EN VIVO: `copilot-webhook` v32 (`v32-conciencia-temporal`), ACTIVE.** Desplegado con
   `verify_jwt=false`. Healthcheck (GET, sin key) reporta `version/mode/mode_raw/model/
   llm_configured/wati_send_configured/inventario_configurado/resolve_configured/
   handoff_assist_min/handoff_cold_hours/live_targets`.
@@ -100,6 +100,19 @@ con certeza, y calla/deriva cuando es mejor que responda un humano. Tienda:
   (`model='assist-handoff'`, no resetea el reloj). Si NUNCA escribió un humano (handoff por keyword), se
   mantiene el comportamiento v30. Sin cambios de esquema. (Diseño acordado con Gerencia: 15 min / 24 h,
   reactivo, solo conversaciones activas.)
+- **v32 (conciencia temporal, 2026-06-26):** el bot mezclaba el "ayer" con el "hoy" porque el historial
+  se le pasaba SIN marca de tiempo y, dentro de horario, ni sabía la fecha. Caso real: ayer el cliente
+  dijo *"mañana le paso"*; hoy escribió *"buenas tardes"* y el bot respondió *"le esperamos mañana"*
+  (cuando venía HOY). Fix, todo CONTEXTO (no toca guardrails): (1) `CONTEXTO TEMPORAL` fijo con la
+  fecha/hora actual de Panamá (antes solo se inyectaba fuera de horario); (2) cada mensaje ANTERIOR del
+  historial se marca con cuándo se dijo (`[hoy …]`/`[ayer …]`/`[fecha …]`, hora de Panamá) — el
+  último/actual va limpio (no interfiere con el caption de visión); (3) regla: los mensajes de días
+  previos son contexto PASADO, no arrastrar "mañana/hoy/ahora" viejos, y un saludo nuevo tras un corte
+  de día = visita nueva. Se agrega `created_at` al fetch del historial. Sin cambios de esquema.
+- **Despliegue por CLI (2026-06-26):** se agregó **`deploy.ps1`** (raíz del repo) — `git pull` + `.\deploy.ps1`
+  hace `supabase functions deploy … --no-verify-jwt` (byte-exacto desde disco, sin re-escribir contenido)
+  y verifica el healthcheck. Es la vía recomendada (ver Despliegue): evita el error de un agente que
+  trunca el archivo al pegarlo (rompió prod una vez con el MCP).
 - **Auditorías diarias (2026-06-19 y 06-23):** coexistencia perfecta (`bot_piso_a_humano=0`,
   `ecos_falsos=0`), anti-interrupción impecable (pago/fiscal/reembolso → humanos), ITBMS/inventario/
   visión funcionando. Los errores vistos eran **externos** (baches de Anthropic), no de nuestro código.
@@ -349,12 +362,17 @@ El healthcheck expone `inventario_configurado`, `resolve_configured`, `handoff_a
 - Deploy con `verify_jwt=false` (es un webhook público guardado por `?key=`).
 
 ## Despliegue
-`mcp__Supabase__deploy_edge_function(project_id=jbigmlcalcwiphqeudxd, ...)` con
-`verify_jwt:false`, o `supabase functions deploy copilot-webhook --no-verify-jwt`.
-(Nota: el MCP de Supabase está gated por aprobación en esta sesión; ruta usada en la
-práctica: copiar el `index.ts` desde el raw de GitHub → editor del dashboard →
-Verify JWT OFF → deploy → verificar healthcheck. El SQL lo corre el usuario en el SQL
-Editor; los deploys los hace el browse agent.)
+**Vía recomendada (CLI, byte-exacto desde disco):** desde la raíz del repo, en la máquina del usuario,
+`git pull` + **`.\deploy.ps1`** (Windows) — corre `npx supabase functions deploy copilot-webhook
+--project-ref jbigmlcalcwiphqeudxd --no-verify-jwt` y verifica el healthcheck. Requiere `npx supabase
+login` una sola vez (access token de https://supabase.com/dashboard/account/tokens). **Por qué CLI:** sube
+el archivo TAL CUAL; ni el MCP ni el dashboard hacen eso (ambos pasan el contenido por un agente/editor que
+puede truncarlo — pasó: un deploy por MCP con contenido inline truncado tumbó prod; el fix fue el CLI).
+Alternativas: `mcp__Supabase__deploy_edge_function(project_id=jbigmlcalcwiphqeudxd, …, verify_jwt:false)`
+desde el Claude LOCAL del usuario (el MCP de Supabase está bloqueado por la policy de red en la sesión
+remota — `mcp.supabase.com` da 403), o el dashboard (raw de GitHub → editor → Verify JWT OFF → deploy).
+⚠️ **`--no-verify-jwt`/Verify JWT OFF es obligatorio** (webhook público guardado por `?key=`; si queda en
+true, WATI recibe 401). El SQL lo corre el usuario en el SQL Editor.
 El webhook de WATI apunta a:
 `https://jbigmlcalcwiphqeudxd.functions.supabase.co/copilot-webhook?key=<COPILOT_WEBHOOK_KEY>`.
 Eventos WATI suscritos (necesarios): **Message Received**, **Session Message Sent**

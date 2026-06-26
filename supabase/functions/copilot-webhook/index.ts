@@ -1,3 +1,13 @@
+// === copilot-webhook v32 — Copiloto AI de WATI — conciencia temporal (separa ayer de hoy) ===
+// v32 (2026-06-26): el bot mezclaba el "ayer" con el "hoy" porque el historial se le pasaba SIN marca de
+//   tiempo y, dentro de horario, ni sabía la fecha. Caso real: ayer el cliente dijo "mañana le paso";
+//   hoy escribió "buenas tardes" y el bot respondió "le esperamos mañana" (cuando venía HOY). Fix, todo
+//   CONTEXTO (no toca guardrails): (1) CONTEXTO TEMPORAL fijo con la fecha/hora actual de Panamá (antes
+//   solo se inyectaba fuera de horario); (2) cada mensaje ANTERIOR del historial se marca con cuándo se
+//   dijo ([hoy …]/[ayer …]/[fecha …], hora de Panamá) — el último/actual va limpio; (3) regla: los
+//   mensajes de días previos son contexto PASADO, no arrastrar "mañana/hoy/ahora" viejos, y un saludo
+//   nuevo tras un corte de día = visita nueva. Se agrega created_at al fetch del historial. Sin cambios
+//   de esquema. Ediciones acotadas a responderLLM + helpers de tiempo.
 // === copilot-webhook v31 — Copiloto AI de WATI — ciclo de vida del handoff (asistencia + cold-return) ===
 // v31 (2026-06-26): el bot deja de quedarse MUDO para siempre en status='handoff'. REACTIVO (lo gatilla
 //   un mensaje del cliente), midiendo el tiempo desde el último mensaje del asesor (model='human-agent'):
@@ -216,6 +226,29 @@ function horarioPanama(now: Date = new Date()): { dentro: boolean; dia: number; 
   const hora = pa.getUTCHours(); // 0–23
   const dentro = dia >= 1 && dia <= 5 && hora >= 9 && hora < 17;
   return { dentro, dia, hora };
+}
+
+// v32 — conciencia temporal. Hora de Panamá en formato 12h y etiqueta relativa de un timestamp
+// (hoy/ayer/fecha) para marcar CADA mensaje del historial → el bot no mezcla lo de ayer con lo de hoy.
+const DIAS_SEM = ["domingo", "lunes", "martes", "miércoles", "jueves", "viernes", "sábado"];
+function horaPa12(h: number, min: number): string {
+  const ampm = h < 12 ? "am" : "pm";
+  const h12 = ((h + 11) % 12) + 1;
+  return `${h12}:${String(min).padStart(2, "0")}${ampm}`;
+}
+function etiquetaTiempo(iso: string, ahoraMs: number): string {
+  const t = new Date(iso).getTime();
+  if (!isFinite(t)) return "";
+  const m = new Date(t - 5 * 3600 * 1000);        // mensaje en hora de Panamá
+  const n = new Date(ahoraMs - 5 * 3600 * 1000);  // ahora en hora de Panamá
+  const dMsg = Date.UTC(m.getUTCFullYear(), m.getUTCMonth(), m.getUTCDate());
+  const dNow = Date.UTC(n.getUTCFullYear(), n.getUTCMonth(), n.getUTCDate());
+  const dias = Math.round((dNow - dMsg) / 86400000);
+  const hora = horaPa12(m.getUTCHours(), m.getUTCMinutes());
+  if (dias <= 0) return `hoy ${hora}`;
+  if (dias === 1) return `ayer ${hora}`;
+  if (dias < 7) return `hace ${dias} días, ${hora}`;
+  return `${m.getUTCDate()}/${m.getUTCMonth() + 1} ${hora}`;
 }
 
 const sb = createClient(SB_URL, SB_KEY, { auth: { persistSession: false } });
@@ -554,7 +587,7 @@ async function infoTienda(): Promise<string> {
   } catch (e) { return JSON.stringify({ error: String(e).slice(0, 200) }); }
 }
 
-async function responderLLM(history: { role: string; content: string; model?: string | null }[], forceTool: boolean, imagen?: { b64: string; mediaType: string } | null, imagenFallo?: boolean, waId: string = "", atributos: Record<string, string> = {}, linksTracked: Record<string, string> = {}, modoAsistencia: boolean = false): Promise<{ text: string | null; toolCalls: unknown[]; tokensIn: number; tokensOut: number }> {
+async function responderLLM(history: { role: string; content: string; model?: string | null; created_at?: string | null }[], forceTool: boolean, imagen?: { b64: string; mediaType: string } | null, imagenFallo?: boolean, waId: string = "", atributos: Record<string, string> = {}, linksTracked: Record<string, string> = {}, modoAsistencia: boolean = false): Promise<{ text: string | null; toolCalls: unknown[]; tokensIn: number; tokensOut: number }> {
   if (!anthropic) return { text: null, toolCalls: [], tokensIn: 0, tokensOut: 0 };
   // La API exige que el primer mensaje sea del usuario: descarta "assistant" al inicio
   // (puede pasar si un asesor escribió primero).
@@ -566,10 +599,14 @@ async function responderLLM(history: { role: string; content: string; model?: st
     : "\n\nCONTEXTO INTERNO: Contacto con conversación ya en curso (NO repitas bienvenida ni presentación; ve al grano).";
   // v22 — conciencia de horario: si estamos fuera del horario de atención, el bot sigue ayudando
   // con lo automático pero aclara cuándo responde un asesor (sin prometer respuesta humana inmediata).
+  const ahoraMs = Date.now();
   const hh = horarioPanama();
-  const diasSem = ["domingo", "lunes", "martes", "miércoles", "jueves", "viernes", "sábado"];
   const ctxHorario = hh.dentro ? "" :
-    `\n\nCONTEXTO HORARIO: Ahora es ${diasSem[hh.dia]} ~${hh.hora}:00 en Panamá, FUERA del horario de atención de QSP (atención por WhatsApp y tienda: Lun-Vie 9:00am–5:00pm; sábados y domingos cerrado). Seguí ayudando con lo automático (precio/ITBMS, stock, info de tienda). Pero si el cliente necesita un asesor, una cotización formal o coordinar pago/entrega, aclará con calma que un asesor le responde en el próximo horario hábil (deducí cuál según el día y la hora actuales) y NO prometas respuesta humana inmediata.`;
+    `\n\nCONTEXTO HORARIO: Ahora es ${DIAS_SEM[hh.dia]} ~${hh.hora}:00 en Panamá, FUERA del horario de atención de QSP (atención por WhatsApp y tienda: Lun-Vie 9:00am–5:00pm; sábados y domingos cerrado). Seguí ayudando con lo automático (precio/ITBMS, stock, info de tienda). Pero si el cliente necesita un asesor, una cotización formal o coordinar pago/entrega, aclará con calma que un asesor le responde en el próximo horario hábil (deducí cuál según el día y la hora actuales) y NO prometas respuesta humana inmediata.`;
+  // v32 — conciencia temporal SIEMPRE (no solo fuera de horario): el bot sabe la fecha/hora actual y que
+  // el historial viene marcado con cuándo se dijo cada cosa, para no arrastrar el "ayer" al "hoy".
+  const paNow = new Date(ahoraMs - 5 * 3600 * 1000);
+  const ctxAhora = `\n\nCONTEXTO TEMPORAL: Ahora es ${DIAS_SEM[paNow.getUTCDay()]} ${paNow.getUTCDate()}/${paNow.getUTCMonth() + 1}/${paNow.getUTCFullYear()}, ${horaPa12(paNow.getUTCHours(), paNow.getUTCMinutes())} (hora de Panamá). En el historial, cada mensaje anterior viene marcado entre corchetes con cuándo se envió ([hoy …], [ayer …], [fecha …]); es una marca INTERNA, NUNCA la copies en tu respuesta. Trata los mensajes de días anteriores como contexto PASADO: no continúes ni repitas planes o promesas relativos al tiempo de mensajes viejos. Si AYER el cliente dijo "mañana paso", ese "mañana" es HOY. Un saludo nuevo ("buenas") después de un corte de día es una visita nueva: ubícate en el momento actual, no en la conversación anterior.`;
   // v25/v27 — qué datos ya tenemos del cliente (de los atributos de WATI) para no repreguntar.
   const datosTen = [
     atributos.email ? "correo" : null,
@@ -581,12 +618,20 @@ async function responderLLM(history: { role: string; content: string; model?: st
     : `\n\nCONTEXTO DATOS: No tenemos datos de contacto de este cliente. Si hay intención de cotizar/comprar, puedes pedir (pasivo, sin insistir) su correo y nombre/apellido y guardarlos con guardar_lead.`;
   // v31 — en MODO ASISTENCIA se anexa ASSIST_SUFFIX (info general, no retomar la venta) en vez del
   // contexto de captura de datos (que invita a pedir correo — no aplica si el humano está a cargo).
-  const system = SYSTEM_PROMPT + ctx + ctxHorario + (modoAsistencia ? ASSIST_SUFFIX : ctxDatos);
+  const system = SYSTEM_PROMPT + ctx + ctxAhora + ctxHorario + (modoAsistencia ? ASSIST_SUFFIX : ctxDatos);
   // v31 — en asistencia, la ÚNICA tool disponible es info_tienda (no buscar_producto/guardar_lead):
   // el bot solo puede adelantar datos de tienda, nunca cotizar ni capturar datos del cliente.
   const toolsActivas = modoAsistencia ? TOOLS.filter((t) => t.name === "info_tienda") : TOOLS;
   // Los mensajes de un asesor humano se marcan para que el agente sepa que los dijo una persona.
-  const messages: Anthropic.MessageParam[] = hist.map((m) => ({ role: m.role === "assistant" ? "assistant" as const : "user" as const, content: (m.model === "human-agent" ? "[Asesor del equipo]: " : "") + (m.content || "(vacío)") }));
+  // v32: cada mensaje ANTERIOR (no el último/actual) se prefija con [hoy/ayer/fecha] para que el bot
+  // ubique el historial en el tiempo. El último (el que se responde ahora) va limpio (es "ahora", y así
+  // no interfiere con la extracción del caption de visión).
+  const ultIdx = hist.length - 1;
+  const messages: Anthropic.MessageParam[] = hist.map((m, idx) => {
+    const t = (idx < ultIdx && m.created_at) ? `[${etiquetaTiempo(m.created_at, ahoraMs)}] ` : "";
+    const a = m.model === "human-agent" ? "[Asesor del equipo]: " : "";
+    return { role: m.role === "assistant" ? "assistant" as const : "user" as const, content: t + a + (m.content || "(vacío)") };
+  });
   // v20: la API exige que el ÚLTIMO mensaje sea de usuario; varios modelos no aceptan "prefill"
   // (terminar en assistant). Si el historial termina en assistant (p.ej. un mensaje de asesor que
   // entró último), se descartan los assistant finales para no romper la llamada (error 400).
@@ -780,7 +825,7 @@ Deno.serve(async (req) => {
       if (!data) return Response.json({ error: "not_found" }, { status: 404 });
       return Response.json({ wa_id: data.wa_id, producto_handle: data.producto_handle, ts: data.created_at });
     }
-    return Response.json({ status: "ok", function: "copilot-webhook", version: "v31-handoff-lifecycle", mode: MODE, mode_raw: MODE_RAW, model: MODEL, llm_configured: !!anthropic, wati_send_configured: !!(WATI_API_TOKEN && WATI_API_BASE), inventario_configurado: !!(SHOPIFY_ADMIN_TOKEN && SHOPIFY_ADMIN_API_BASE), resolve_configured: !!RESOLVE_SECRET, handoff_assist_min: HANDOFF_ASSIST_MIN, handoff_cold_hours: HANDOFF_COLD_HOURS, live_targets: MODE === "live" ? (LIVE_ALL ? "all" : LIVE_ALLOWLIST.length) : 0, ts: new Date().toISOString() });
+    return Response.json({ status: "ok", function: "copilot-webhook", version: "v32-conciencia-temporal", mode: MODE, mode_raw: MODE_RAW, model: MODEL, llm_configured: !!anthropic, wati_send_configured: !!(WATI_API_TOKEN && WATI_API_BASE), inventario_configurado: !!(SHOPIFY_ADMIN_TOKEN && SHOPIFY_ADMIN_API_BASE), resolve_configured: !!RESOLVE_SECRET, handoff_assist_min: HANDOFF_ASSIST_MIN, handoff_cold_hours: HANDOFF_COLD_HOURS, live_targets: MODE === "live" ? (LIVE_ALL ? "all" : LIVE_ALLOWLIST.length) : 0, ts: new Date().toISOString() });
   }
   if (req.method !== "POST") return Response.json({ error: "method_not_allowed" }, { status: 405 });
   if (url.searchParams.get("key") !== WEBHOOK_KEY) return Response.json({ error: "forbidden" }, { status: 403 });
@@ -891,7 +936,7 @@ Deno.serve(async (req) => {
         const asistir = (async () => {
           try {
             if (await hayMensajeClienteMasNuevo(conv.id, userCreatedAt)) { await log("descartado_superado", true, { waId, fase: "asist-pre" }); return; }
-            const { data: hist } = await sb.from("messages").select("role,content,model").eq("conversation_id", conv.id).in("role", ["user", "assistant"]).order("created_at", { ascending: false }).limit(10);
+            const { data: hist } = await sb.from("messages").select("role,content,model,created_at").eq("conversation_id", conv.id).in("role", ["user", "assistant"]).order("created_at", { ascending: false }).limit(10);
             const history = (hist ?? []).reverse();
             // forceTool=true + modoAsistencia=true → única tool info_tienda, forzada (grounding).
             const r = await responderLLM(history as any, true, null, false, waId, {}, {}, true);
@@ -955,7 +1000,7 @@ Deno.serve(async (req) => {
         }
         // v20 (anti-duplicado, pre-LLM): si ya llegó un mensaje más nuevo, ni gastamos el LLM.
         if (await hayMensajeClienteMasNuevo(conv.id, userCreatedAt)) { await log("descartado_superado", true, { waId, fase: "pre-llm" }); return; }
-        const { data: hist } = await sb.from("messages").select("role,content,model").eq("conversation_id", conv.id).in("role", ["user", "assistant"]).order("created_at", { ascending: false }).limit(10);
+        const { data: hist } = await sb.from("messages").select("role,content,model,created_at").eq("conversation_id", conv.id).in("role", ["user", "assistant"]).order("created_at", { ascending: false }).limit(10);
         const history = (hist ?? []).reverse();
         const atributosWati = extraerCustomParams(p); // v25: datos que ya tenemos (best-effort, del payload)
         const linksTracked: Record<string, string> = {}; // v29 — handle → URL con tracking (lo llena buscar_producto)

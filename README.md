@@ -21,14 +21,15 @@ sombra por seguridad.
 CLAUDE.md                                  # contexto autoritativo (leer primero)
 docs/base-conocimiento-qsp.md              # base de conocimiento del negocio (fuente → prompt + store_facts)
 supabase/
-  functions/copilot-webhook/index.ts       # la edge function (v31, = lo desplegado)
+  functions/copilot-webhook/index.ts       # la edge function (v32, = lo desplegado)
   migrations/*.sql                          # esquema reproducible (7 migraciones)
+deploy.ps1                                  # deploy byte-exacto por CLI + verificación de healthcheck
 web/
   envios-interior-sucursal.html            # página de envíos al interior (45 sucursales)
 ```
 
 ## Estado
-- Edge function `copilot-webhook` **v31 (`v31-handoff-lifecycle`), ACTIVE** — EN VIVO a todos, en
+- Edge function `copilot-webhook` **v32 (`v32-conciencia-temporal`), ACTIVE** — EN VIVO a todos, en
   Sonnet 4.6. Coexistencia validada (v15) · visión (v19) · endurecimiento anti-duplicado /
   anti-carrera / MODE-seguro (v20).
 - **v21:** ITBMS (precio + 7% + total, calculado en código) + inventario real (Shopify Admin
@@ -45,6 +46,9 @@ web/
 - **v31:** ciclo de vida del handoff — el bot deja de quedarse mudo para siempre. Tras ≥15 min sin asesor
   ASISTE con info básica de tienda (sigue en handoff); tras >24 h RETOMA la conversación (`status→bot`).
   Reactivo, con la anti-interrupción intacta (pago/fiscal nunca lo dispara).
+- **v32:** conciencia temporal — el bot sabe la fecha/hora actual y cada mensaje del historial viene
+  marcado (`[hoy …]`/`[ayer …]`); ya no mezcla lo de ayer con lo de hoy (no más "le esperamos mañana"
+  cuando el cliente viene hoy).
 - Auditorías diarias: coexistencia perfecta (0 clientes pisados, 0 ecos falsos). ~$0.02/turno, ~8 s.
 
 ## Desarrollo / deploy
