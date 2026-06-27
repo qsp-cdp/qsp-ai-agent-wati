@@ -141,3 +141,50 @@ https://quickservicepanama.com/products/<handle>?utm_source=whatsapp&utm_medium=
   de `404` por purga para clicks frescos.
 - **`producto_handle`:** siempre un handle válido de Shopify (sale del propio URL de producto; solo se
   guarda la fila si hay handle).
+
+---
+
+## 8. Respuesta al spec consolidado del CDP (2026-06-26)
+
+> El CDP envió un spec consolidado (reemplaza las instrucciones parciales previas) pidiendo (A) que el
+> copiloto implemente el loop WhatsApp→web y (B) confirmar contratos. **La Parte A ya está LIVE (v28–v30,
+> hoy bajo v32).** Acá las confirmaciones, con un ajuste de ruta importante.
+
+### 8.1 Parte A — estado real (todo en vivo, verificado)
+- **A1 `ref_code` ✅** — 8 caracteres `[A-Za-z0-9]` case-sensitive, crypto-random (alfabeto de 62);
+  unicidad por PK. **Matiz:** ante colisión NO regeneramos — el insert falla y ese link sale SIN
+  `ref_code` (jamás se emite un code sin guardar). Con 62⁸ ≈ 2.18×10¹⁴ y RNG criptográfico la colisión
+  es despreciable; el fail-safe es "sin code antes que un code no guardado". (Si el CDP lo exige, se
+  agrega retry-on-collision, pero es innecesario.)
+- **A2 link ✅** — apex, determinista (post-LLM `reaplicarTracking`, no depende del LLM). ⚠️ **El link
+  emitido lleva UTMs además del `ref_code`** — URL real:
+  `https://quickservicepanama.com/products/<handle>?utm_source=whatsapp&utm_medium=chatbot&utm_campaign=copilot-wati&ref_code=XXXXXXXX`
+  El `ref_code` va al final y su valor es exactamente 8 `[A-Za-z0-9]` → pasa el `^[A-Za-z0-9]{8}$` del
+  Worker. Los UTMs son para reporte de canal nativo; no afectan la captura.
+- **A3 mapeo ✅** — tabla `ref_codes`: `{ ref_code (PK), wa_id, producto_handle, created_at }`, una fila
+  por link emitido.
+- **A4 endpoint ✅ — ⚠️ la RUTA NO es `/resolve-ref`.** Es el GET de la propia función `copilot-webhook`:
+  ```
+  GET https://jbigmlcalcwiphqeudxd.functions.supabase.co/copilot-webhook?ref_code=XXXXXXXX
+  Authorization: Bearer <RESOLVE_SECRET>
+  → 200 { "wa_id": "...", "producto_handle": "...", "ts": "<created_at ISO>" }
+  → 404 no existe · 403 auth inválida/ausente · 400 ref_code ≠ ^[A-Za-z0-9]{8}$ · 500 db
+  ```
+  (También acepta `&key=<RESOLVE_SECRET>` para probar en navegador.) `ts` = `created_at` (momento de
+  EMISIÓN). `RESOLVE_SECRET` ya configurado (`resolve_configured:true`); se entrega por canal seguro.
+- **A5 privacidad ✅** — nunca `wa_id`/email/PII en la URL; solo el `ref_code` opaco.
+
+### 8.2 Parte B — contratos confirmados (del código)
+**Resolver (WhatsApp→web):**
+- **`wa_id`:** dígitos PELADOS, con código de país, SIN `+` ni espacios (ej. `50761980416`). Se guarda
+  como `waId.replace(/\D/g,"")` del webhook → el `phone_e164 = '+' || <dígitos>` del CDP calza directo.
+- A1–A4 en vivo y verificados end-to-end.
+
+**Puente WATI→CDP (`wati-cdp-sync`):** segundo puente, independiente; lo construye el CDP. El copiloto
+solo confirma los datos que escribe `guardar_lead`:
+- **customParams (exactos, case-sensitive, todos en minúscula):** `email`, `nombre`, `apellido`,
+  `empresa`. Nunca datos fiscales (RUC/dv/factura) — la tool ni los acepta como parámetros.
+- **Teléfono:** el copiloto usa el `waId` del webhook (dígitos sin `+`). El `getContacts` lo llama el
+  CDP (su edge function); WATI devuelve el id en `wAid` (mismos dígitos) → normalizar igual
+  (`'+' || dígitos`) y verificar contra una respuesta real (esa llamada vive del lado CDP).
+- `guardar_lead` LIVE desde v25/v27, validado en prod (`job_log` `lead_capturado`).
