@@ -188,3 +188,24 @@ solo confirma los datos que escribe `guardar_lead`:
   CDP (su edge function); WATI devuelve el id en `wAid` (mismos dígitos) → normalizar igual
   (`'+' || dígitos`) y verificar contra una respuesta real (esa llamada vive del lado CDP).
 - `guardar_lead` LIVE desde v25/v27, validado en prod (`job_log` `lead_capturado`).
+
+---
+
+## 9. Lado CDP — resolución, enriquecimiento y cierre (cross-ref)
+
+El lado CDP del puente vive en el repo `qsp-cdp/qsp-cdp-docs`:
+
+- **Resolver inverso** `wa-ref-resolver` (WA→web): consume este `copilot-webhook`
+  (`GET ?ref_code=` con `Authorization: Bearer RESOLVE_SECRET`), teje edges
+  `bridge:ref_match` y enriquece contactos. Fuente:
+  `cdp/edge-functions/wa-ref-resolver/index.ts`.
+- **Bridge de atributos** `wati-cdp-sync` (WATI→CDP): enriquece `contacts` con los
+  lead attrs de `guardar_lead`. Fuente: `cdp/edge-functions/wati-cdp-sync/index.ts`.
+- Evidencia de cierre (CERRADO-VERIFICADO-EN-VIVO, 2026-06-27):
+  `docs/audit-evidence/2026-06-27-cierre-loop-wa-web.md` y
+  `docs/audit-evidence/2026-06-27-cierre-bridge-wati-cdp.md`.
+- Automatización: pg_cron job 40 (`wa-ref-resolver-sweep`, `*/30 * * * *`) y job 41
+  (`wati-cdp-sync-enrich`, `15,45 * * * *`) en el proyecto CDP `tuyheailysudfxiuppmg`.
+- Commit de referencia: `dab60a7` (qsp-cdp-docs, PR #5, branch `claude/jolly-gates-093yd4`).
+
+▸ Claude Code · Opus 4.8 · Ultracode
