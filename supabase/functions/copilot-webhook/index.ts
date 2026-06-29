@@ -1,3 +1,14 @@
+// === copilot-webhook v33 — Copiloto AI de WATI — búsqueda: extracción de modelo robusta ===
+// v33 (2026-06-29): la extracción del código de modelo (modelosEn) tenía dos huecos que hacían fallar
+//   búsquedas reales: (1) códigos que EMPIEZAN con dígito + sufijo de letras (140XL, 141XL, 3253ci) no
+//   se extraían → nunca se reintentaba por modelo; (2) códigos de varios segmentos con guion (PT-H110)
+//   se partían mal → agarraba solo "H110", nunca "PTH110"/"PT-H110". Caso real confirmado: la
+//   etiquetadora Brother existe indexada como handle …-brother-pth110, pero el bot buscaba "PT-H110" y
+//   no la hallaba. Fix: modelosEn ahora toma cualquier token alfanumérico (con guiones internos) con ≥1
+//   dígito y largo>=3; variantesModelo amplía las formas con/sin guion (incluye multi-segmento). Probado
+//   en los casos que fallaban + regresión (G2170, 954, TN-830XL, GI-11 intactos). NO toca el LLM ni los
+//   guardrails. NOTA: no resuelve el caso "modelo de IMPRESORA → consumible" (ej. Kyocera 3253ci → tóner
+//   TK-8337K): eso es una brecha de DATOS de compatibilidad en el catálogo (roadmap #3), no de extracción.
 // === copilot-webhook v32 — Copiloto AI de WATI — conciencia temporal (separa ayer de hoy) ===
 // v32 (2026-06-26): el bot mezclaba el "ayer" con el "hoy" porque el historial se le pasaba SIN marca de
 //   tiempo y, dentro de horario, ni sabía la fecha. Caso real: ayer el cliente dijo "mañana le paso";
@@ -427,23 +438,30 @@ async function suggestShopify(q: string): Promise<any[]> {
   }));
 }
 
-// Extrae códigos/números de modelo (la señal más fuerte para hallar el producto correcto
-// pese a sinónimos/alias): G2170, L3250, GI-11, TS3450, 954, 664...
+// Extrae códigos/números de modelo (la señal más fuerte para hallar el producto correcto pese a
+// sinónimos/alias): G2170, L3250, GI-11, TS3450, 954, 664, 140XL, 141XL, 3253ci, PT-H110...
+// v33: el regex viejo exigía que el código EMPEZARA con letras y que un número suelto no tuviera
+// sufijo → perdía los que empiezan con dígito + letras (140XL, 3253ci) y partía mal los de varios
+// segmentos con guion (PT-H110 → agarraba solo "H110"). Ahora: cualquier token alfanumérico (con
+// guiones internos) que tenga al menos un dígito y largo >=3 es candidato a código de modelo.
 function modelosEn(q: string): string[] {
   const t = new Set<string>();
-  for (const m of q.matchAll(/\b[a-z]{1,4}-?\d{2,5}[a-z]{0,3}\b/gi)) t.add(m[0]);
-  for (const m of q.matchAll(/\b\d{3,4}\b/g)) t.add(m[0]);
-  return [...t].slice(0, 3);
+  for (const m of q.matchAll(/[a-z0-9]+(?:-[a-z0-9]+)*/gi)) {
+    const tok = m[0];
+    if (/[0-9]/.test(tok) && tok.length >= 3) t.add(tok);
+  }
+  return [...t].slice(0, 4);
 }
 
 // Variantes de un código de modelo para tolerar el guion: Shopify no matchea "TN830XL" contra
-// "TN-830XL" (ni "GI11" contra "GI-11"). Probamos ambas formas — generadas en código, sin
-// depender de que el modelo adivine el guion. (v18)
+// "TN-830XL", ni "PT-H110" contra "PTH110" (caso real: la etiquetadora está indexada como "pth110").
+// Probamos la forma original, la SIN guiones y una con guion en la frontera letras→dígitos — en código,
+// sin depender de que el modelo adivine el guion. (v18, ampliado en v33 a códigos multi-segmento)
 function variantesModelo(m: string): string[] {
   const v = new Set<string>([m]);
-  const sin = m.replace(/-/g, "");                       // TN-830XL -> TN830XL
+  const sin = m.replace(/-/g, "");                       // PT-H110 -> PTH110 ; TN-830XL -> TN830XL
   v.add(sin);
-  v.add(sin.replace(/^([a-z]{1,4})(\d)/i, "$1-$2"));     // TN830XL  -> TN-830XL
+  v.add(sin.replace(/^([a-z]+)(\d)/i, "$1-$2"));         // TN830XL -> TN-830XL ; PTH110 -> PTH-110
   return [...v];
 }
 
@@ -825,7 +843,7 @@ Deno.serve(async (req) => {
       if (!data) return Response.json({ error: "not_found" }, { status: 404 });
       return Response.json({ wa_id: data.wa_id, producto_handle: data.producto_handle, ts: data.created_at });
     }
-    return Response.json({ status: "ok", function: "copilot-webhook", version: "v32-conciencia-temporal", mode: MODE, mode_raw: MODE_RAW, model: MODEL, llm_configured: !!anthropic, wati_send_configured: !!(WATI_API_TOKEN && WATI_API_BASE), inventario_configurado: !!(SHOPIFY_ADMIN_TOKEN && SHOPIFY_ADMIN_API_BASE), resolve_configured: !!RESOLVE_SECRET, handoff_assist_min: HANDOFF_ASSIST_MIN, handoff_cold_hours: HANDOFF_COLD_HOURS, live_targets: MODE === "live" ? (LIVE_ALL ? "all" : LIVE_ALLOWLIST.length) : 0, ts: new Date().toISOString() });
+    return Response.json({ status: "ok", function: "copilot-webhook", version: "v33-busqueda-modelo", mode: MODE, mode_raw: MODE_RAW, model: MODEL, llm_configured: !!anthropic, wati_send_configured: !!(WATI_API_TOKEN && WATI_API_BASE), inventario_configurado: !!(SHOPIFY_ADMIN_TOKEN && SHOPIFY_ADMIN_API_BASE), resolve_configured: !!RESOLVE_SECRET, handoff_assist_min: HANDOFF_ASSIST_MIN, handoff_cold_hours: HANDOFF_COLD_HOURS, live_targets: MODE === "live" ? (LIVE_ALL ? "all" : LIVE_ALLOWLIST.length) : 0, ts: new Date().toISOString() });
   }
   if (req.method !== "POST") return Response.json({ error: "method_not_allowed" }, { status: 405 });
   if (url.searchParams.get("key") !== WEBHOOK_KEY) return Response.json({ error: "forbidden" }, { status: 403 });

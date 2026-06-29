@@ -1,7 +1,7 @@
 # CLAUDE.md — Copiloto AI de WhatsApp (WATI) · Quick Service Panamá
 
 > Contexto base para Claude Code trabajando en ESTE repo. Lee esto primero.
-> Generado 2026-06-15; actualizado 2026-06-26 al estado real (edge function v32 +
+> Generado 2026-06-15; actualizado 2026-06-29 al estado real (edge function v33 +
 > esquema del proyecto Supabase). Docs de diseño originales en el repo
 > `qsp-cdp/qsp-cdp-docs` (`docs/design/2026-06-12-proyecto-copilot-wati.md` y
 > `docs/design/2026-06-13-copilot-analisis-sombra-prompt-v2.md`).
@@ -12,8 +12,8 @@ equipo humano: contesta preguntas generales, indica disponibilidad/stock y da pr
 con certeza, y calla/deriva cuando es mejor que responda un humano. Tienda:
 **quickservicepanama.com** (suministros de impresión y tecnología en Panamá).
 
-## Estado actual (2026-06-26)
-- **EN VIVO: `copilot-webhook` v32 (`v32-conciencia-temporal`), ACTIVE.** Desplegado con
+## Estado actual (2026-06-29)
+- **EN VIVO: `copilot-webhook` v33 (`v33-busqueda-modelo`), ACTIVE.** Desplegado con
   `verify_jwt=false`. Healthcheck (GET, sin key) reporta `version/mode/mode_raw/model/
   llm_configured/wati_send_configured/inventario_configurado/resolve_configured/
   handoff_assist_min/handoff_cold_hours/live_targets`.
@@ -109,6 +109,14 @@ con certeza, y calla/deriva cuando es mejor que responda un humano. Tienda:
   último/actual va limpio (no interfiere con el caption de visión); (3) regla: los mensajes de días
   previos son contexto PASADO, no arrastrar "mañana/hoy/ahora" viejos, y un saludo nuevo tras un corte
   de día = visita nueva. Se agrega `created_at` al fetch del historial. Sin cambios de esquema.
+- **v33 (extracción de modelo robusta, 2026-06-29):** `modelosEn` tenía 2 huecos que rompían búsquedas
+  reales: (1) códigos que empiezan con dígito + sufijo (140XL, 141XL, 3253ci) no se extraían; (2) códigos
+  de varios segmentos con guion (PT-H110) se partían mal (agarraba "H110"). Confirmado con tráfico real:
+  la etiquetadora Brother existe como handle `…-brother-pth110` pero el bot buscaba "PT-H110" y no la
+  hallaba. Fix: `modelosEn` toma cualquier token alfanumérico (con guiones) con ≥1 dígito y largo≥3;
+  `variantesModelo` amplía las formas con/sin guion (multi-segmento). Probado en los casos que fallaban +
+  regresión. NO resuelve "modelo de IMPRESORA → consumible" (Kyocera 3253ci → tóner TK-8337K): eso es
+  brecha de DATOS de compatibilidad (roadmap #3), no de extracción.
 - **Despliegue por CLI (2026-06-26):** se agregó **`deploy.ps1`** (raíz del repo) — `git pull` + `.\deploy.ps1`
   hace `supabase functions deploy … --no-verify-jwt` (byte-exacto desde disco, sin re-escribir contenido)
   y verifica el healthcheck. Es la vía recomendada (ver Despliegue): evita el error de un agente que
