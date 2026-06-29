@@ -1,7 +1,7 @@
 # CLAUDE.md — Copiloto AI de WhatsApp (WATI) · Quick Service Panamá
 
 > Contexto base para Claude Code trabajando en ESTE repo. Lee esto primero.
-> Generado 2026-06-15; actualizado 2026-06-29 al estado real (edge function v33 +
+> Generado 2026-06-15; actualizado 2026-06-29 al estado real (edge function v34 +
 > esquema del proyecto Supabase). Docs de diseño originales en el repo
 > `qsp-cdp/qsp-cdp-docs` (`docs/design/2026-06-12-proyecto-copilot-wati.md` y
 > `docs/design/2026-06-13-copilot-analisis-sombra-prompt-v2.md`).
@@ -13,7 +13,7 @@ con certeza, y calla/deriva cuando es mejor que responda un humano. Tienda:
 **quickservicepanama.com** (suministros de impresión y tecnología en Panamá).
 
 ## Estado actual (2026-06-29)
-- **EN VIVO: `copilot-webhook` v33 (`v33-busqueda-modelo`), ACTIVE.** Desplegado con
+- **EN VIVO: `copilot-webhook` v34 (`v34-busqueda-tags`), ACTIVE.** Desplegado con
   `verify_jwt=false`. Healthcheck (GET, sin key) reporta `version/mode/mode_raw/model/
   llm_configured/wati_send_configured/inventario_configurado/resolve_configured/
   handoff_assist_min/handoff_cold_hours/live_targets`.
@@ -117,6 +117,13 @@ con certeza, y calla/deriva cuando es mejor que responda un humano. Tienda:
   `variantesModelo` amplía las formas con/sin guion (multi-segmento). Probado en los casos que fallaban +
   regresión. NO resuelve "modelo de IMPRESORA → consumible" (Kyocera 3253ci → tóner TK-8337K): eso es
   brecha de DATOS de compatibilidad (roadmap #3), no de extracción.
+- **v34 (la búsqueda lee los tags de compatibilidad, 2026-06-29):** la compatibilidad impresora→consumible
+  YA está cargada en Shopify como **tags** del producto ("Canon PIXMA MG2110", "Kyocera TASKalfa 3253ci"…),
+  pero `suggest.json` por defecto NO busca en los tags (solo title/product_type/variants.title/vendor). Fix
+  de UNA línea: agregar `tag` a `resources[options][fields]`. **Probado contra la tienda real:** `q=3253ci`
+  SIN tag → 0 resultados; CON tag → los 4 TK-8337 (C/M/Y/K), limpio. Resuelve la brecha del v33 (3253ci →
+  TK-8337) reusando el dato que el equipo ya mantiene en tags. (Futuro opcional: sumar `body` para
+  compatibilidad escrita solo en la descripción.)
 - **Despliegue por CLI (2026-06-26):** se agregó **`deploy.ps1`** (raíz del repo) — `git pull` + `.\deploy.ps1`
   hace `supabase functions deploy … --no-verify-jwt` (byte-exacto desde disco, sin re-escribir contenido)
   y verifica el healthcheck. Es la vía recomendada (ver Despliegue): evita el error de un agente que
@@ -298,9 +305,12 @@ Reglas clave (texto completo en `index.ts`, const `SYSTEM_PROMPT`):
   código** (el precio de Shopify es sin impuesto) y el **`stock`** se resuelve con **Shopify Admin
   GraphQL `totalInventory`** (>3 → "X unidades"; ≤3 → "un asesor verifica el inventario físico";
   sin token/falla → "un asesor confirma"). v10: si la consulta libre no encuentra, reintenta por
-  número/código de modelo (G2170, 954…). **v18:** cada código de modelo se prueba CON y SIN guion
-  (`TN830XL` ↔ `TN-830XL`, `GI11` ↔ `GI-11`); variantes en CÓDIGO (`variantesModelo`), intentos
-  deduplicados. El prompt maneja sinónimos/línea y preguntas de categoría.
+  número/código de modelo (G2170, 954…). **v18/v33:** cada código de modelo se prueba CON y SIN guion
+  (`TN830XL` ↔ `TN-830XL`, `PT-H110` ↔ `PTH110`); `modelosEn` ahora capta también códigos que empiezan con
+  dígito (140XL, 3253ci) y multi-segmento; intentos deduplicados. **v34:** la búsqueda incluye `tag` en
+  `resources[options][fields]` → lee los **tags de compatibilidad** (impresora→consumible: "3253ci" →
+  TK-8337). El prompt maneja sinónimos/línea, preguntas de categoría y **no inventa la marca** si no se la
+  dieron (v33).
 - **`info_tienda(tema?)`** (Fase 1.5, desplegada) — lee `store_facts` y devuelve TODOS
   los pares `key→value` con valor (omite vacíos); si no hay datos, el bot deriva a un asesor.
 - **`guardar_lead(email?, nombre?, apellido?, empresa?)`** (v25/v27, desplegada) — captura de lead
@@ -395,10 +405,12 @@ Eventos WATI suscritos (necesarios): **Message Received**, **Session Message Sen
    (producto → buscar en catálogo; pago/dato fiscal → abstenerse), nunca cotiza precio
    desde la imagen. Pendiente menor: extender a `type:document` (PDF) si hace falta; hoy
    los documentos se registran y se saltan.
-3. **Enriquecer con descripción/tags/variantes** vía `products/{handle}.json` público
-   (en vivo, sin réplica ni token) para que el bot no adivine compatibilidad. Se decidió
-   NO hacer réplica completa de Shopify en Supabase (riesgo de datos viejos para un bot
-   "no inventar"; el precio/stock se mantienen en vivo; FTS/trigram antes que pgvector).
+3. **Compatibilidad impresora→consumible: ✅ resuelto el lado búsqueda en v34.** La compatibilidad ya
+   vive en los **tags** de Shopify ("Canon PIXMA MG2110", "Kyocera TASKalfa 3253ci"…); v34 hizo que
+   `suggest.json` los lea (`fields=…,tag`) → el bot encuentra el consumible por el modelo de la impresora.
+   Pendiente opcional: sumar `body` (compatibilidad escrita solo en la descripción) y/o enriquecer
+   `products/{handle}.json` para specs. NO se hace réplica completa de Shopify en Supabase (riesgo de datos
+   viejos para un bot "no inventar"; precio/stock se mantienen en vivo).
 4. **Debounce / anti-repetición: ✅ hecho en v20.** En ráfaga, solo el último mensaje del
    cliente contesta (chequeo pre/post LLM) → mata las respuestas dobles/triples. Sin timers:
    si llega uno más nuevo, el viejo se descarta antes de enviar (`descartado_superado`).

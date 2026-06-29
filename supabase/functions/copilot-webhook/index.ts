@@ -1,3 +1,12 @@
+// === copilot-webhook v34 — Copiloto AI de WATI — búsqueda lee los tags de compatibilidad ===
+// v34 (2026-06-29): la compatibilidad impresora→consumible YA está cargada en Shopify como TAGS del
+//   producto (ej. el tóner Kyocera TK-8337 tiene "…3253ci"; las tintas Canon tienen "Canon PIXMA MG2110"…),
+//   pero suggest.json por defecto NO busca en los tags (solo title/product_type/variants.title/vendor) →
+//   por eso "3253ci" no hallaba el tóner. Fix de UNA línea: agregar `tag` a resources[options][fields].
+//   Probado contra la tienda real: q="3253ci" SIN tag → 0 resultados; CON tag → los 4 TK-8337 (C/M/Y/K),
+//   limpio. Resuelve la brecha "modelo de impresora → consumible" reusando el dato que el equipo ya
+//   mantiene en los tags (no hace falta pase Admin ni tabla nueva). Posible extensión futura: sumar `body`
+//   para productos con la compatibilidad solo en la descripción.
 // === copilot-webhook v33 — Copiloto AI de WATI — búsqueda: extracción de modelo robusta ===
 // v33 (2026-06-29): la extracción del código de modelo (modelosEn) tenía dos huecos que hacían fallar
 //   búsquedas reales: (1) códigos que EMPIEZAN con dígito + sufijo de letras (140XL, 141XL, 3253ci) no
@@ -423,8 +432,12 @@ const BASIC_INFO_RE = new RegExp([
   "devoluci", "devolver", "garant[ií]a", "\\bcambio\\b", "cambiar", "reembols",
 ].join("|"), "i");
 // resultados; lanza solo ante error de red/HTTP (lo maneja buscarProducto).
+// v34: se agrega `tag` a resources[options][fields] para que la búsqueda predictiva ALCANCE los tags de
+// compatibilidad (las impresoras compatibles se guardan ahí como "Canon PIXMA MG2110", "Kyocera TASKalfa
+// 3253ci"…). El default solo busca title/product_type/variants.title/vendor → por eso "3253ci" no hallaba
+// el tóner TK-8337 aunque está tagueado. Probado contra la tienda: SIN tag → vacío; CON tag → los 4 TK-8337.
 async function suggestShopify(q: string): Promise<any[]> {
-  const u = `${STORE}/search/suggest.json?q=${encodeURIComponent(q)}&resources%5Btype%5D=product&resources%5Blimit%5D=5&resources%5Boptions%5D%5Bunavailable_products%5D=show`;
+  const u = `${STORE}/search/suggest.json?q=${encodeURIComponent(q)}&resources%5Btype%5D=product&resources%5Blimit%5D=5&resources%5Boptions%5D%5Bunavailable_products%5D=show&resources%5Boptions%5D%5Bfields%5D=title,product_type,variants.title,vendor,tag`;
   const r = await fetch(u, { signal: AbortSignal.timeout(8000) });
   if (!r.ok) throw new Error(`tienda respondió ${r.status}`);
   const j = await r.json();
@@ -844,7 +857,7 @@ Deno.serve(async (req) => {
       if (!data) return Response.json({ error: "not_found" }, { status: 404 });
       return Response.json({ wa_id: data.wa_id, producto_handle: data.producto_handle, ts: data.created_at });
     }
-    return Response.json({ status: "ok", function: "copilot-webhook", version: "v33-busqueda-modelo", mode: MODE, mode_raw: MODE_RAW, model: MODEL, llm_configured: !!anthropic, wati_send_configured: !!(WATI_API_TOKEN && WATI_API_BASE), inventario_configurado: !!(SHOPIFY_ADMIN_TOKEN && SHOPIFY_ADMIN_API_BASE), resolve_configured: !!RESOLVE_SECRET, handoff_assist_min: HANDOFF_ASSIST_MIN, handoff_cold_hours: HANDOFF_COLD_HOURS, live_targets: MODE === "live" ? (LIVE_ALL ? "all" : LIVE_ALLOWLIST.length) : 0, ts: new Date().toISOString() });
+    return Response.json({ status: "ok", function: "copilot-webhook", version: "v34-busqueda-tags", mode: MODE, mode_raw: MODE_RAW, model: MODEL, llm_configured: !!anthropic, wati_send_configured: !!(WATI_API_TOKEN && WATI_API_BASE), inventario_configurado: !!(SHOPIFY_ADMIN_TOKEN && SHOPIFY_ADMIN_API_BASE), resolve_configured: !!RESOLVE_SECRET, handoff_assist_min: HANDOFF_ASSIST_MIN, handoff_cold_hours: HANDOFF_COLD_HOURS, live_targets: MODE === "live" ? (LIVE_ALL ? "all" : LIVE_ALLOWLIST.length) : 0, ts: new Date().toISOString() });
   }
   if (req.method !== "POST") return Response.json({ error: "method_not_allowed" }, { status: 405 });
   if (url.searchParams.get("key") !== WEBHOOK_KEY) return Response.json({ error: "forbidden" }, { status: 403 });

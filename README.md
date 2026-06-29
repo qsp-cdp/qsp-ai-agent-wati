@@ -21,7 +21,7 @@ sombra por seguridad.
 CLAUDE.md                                  # contexto autoritativo (leer primero)
 docs/base-conocimiento-qsp.md              # base de conocimiento del negocio (fuente → prompt + store_facts)
 supabase/
-  functions/copilot-webhook/index.ts       # la edge function (v33, = lo desplegado)
+  functions/copilot-webhook/index.ts       # la edge function (v34, = lo desplegado)
   migrations/*.sql                          # esquema reproducible (7 migraciones)
 deploy.ps1                                  # deploy byte-exacto por CLI + verificación de healthcheck
 web/
@@ -29,7 +29,7 @@ web/
 ```
 
 ## Estado
-- Edge function `copilot-webhook` **v33 (`v33-busqueda-modelo`), ACTIVE** — EN VIVO a todos, en
+- Edge function `copilot-webhook` **v34 (`v34-busqueda-tags`), ACTIVE** — EN VIVO a todos, en
   Sonnet 4.6. Coexistencia validada (v15) · visión (v19) · endurecimiento anti-duplicado /
   anti-carrera / MODE-seguro (v20).
 - **v21:** ITBMS (precio + 7% + total, calculado en código) + inventario real (Shopify Admin
@@ -51,6 +51,8 @@ web/
   cuando el cliente viene hoy).
 - **v33:** extracción de modelo robusta — captura códigos que empiezan con dígito (140XL, 3253ci) y los
   multi-segmento con guion (PT-H110 → prueba PTH110); arregla búsquedas que fallaban por el guion.
+- **v34:** la búsqueda lee los **tags de compatibilidad** de Shopify (`fields=…,tag`) → el bot encuentra
+  el consumible por el modelo de la impresora (ej. "3253ci" → tóner TK-8337). Probado contra la tienda.
 - Auditorías diarias: coexistencia perfecta (0 clientes pisados, 0 ecos falsos). ~$0.02/turno, ~8 s.
 
 ## Desarrollo / deploy
