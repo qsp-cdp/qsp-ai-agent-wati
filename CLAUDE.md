@@ -1,8 +1,8 @@
 # CLAUDE.md — Copiloto AI de WhatsApp (WATI) · Quick Service Panamá
 
 > Contexto base para Claude Code trabajando en ESTE repo. Lee esto primero.
-> Generado 2026-06-15; actualizado 2026-06-30 (edge function v41 en el repo —incluye el fix de
-> inventario de v40—, listo para desplegar; v39 EN VIVO, probando Sonnet 5) + esquema del proyecto
+> Generado 2026-06-15; actualizado 2026-06-30 (edge function v42 en el repo, listo para desplegar;
+> v41 EN VIVO —incluye v40 inventario + trato de usted—, probando Sonnet 5) + esquema del proyecto
 > Supabase. Docs de diseño originales en el repo
 > `qsp-cdp/qsp-cdp-docs` (`docs/design/2026-06-12-proyecto-copilot-wati.md` y
 > `docs/design/2026-06-13-copilot-analisis-sombra-prompt-v2.md`).
@@ -14,18 +14,17 @@ con certeza, y calla/deriva cuando es mejor que responda un humano. Tienda:
 **quickservicepanama.com** (suministros de impresión y tecnología en Panamá).
 
 ## Estado actual (2026-06-30)
-- **EN VIVO: `copilot-webhook` v39 (`v39-thinking-off`), ACTIVE.** Desplegado con `verify_jwt=false`.
+- **EN VIVO: `copilot-webhook` v41 (`v41-trato-usted`), ACTIVE.** Desplegado con `verify_jwt=false`
+  (incluye v40: `.trim()` a secretos → inventario real arreglado; y v41: trato de usted, sin voseo).
   Migraciones aplicadas (`ref_codes`, `messages_cache_tokens`). **Prompt caching (v35/v38) confirmado:**
   `avg(tokens_in)` ~9.554 → ~2.337; ~−69% de costo de input real. v36/v37 (horario + feriados) en vivo.
-  **PROBANDO Sonnet 5:** `COPILOT_MODEL=claude-sonnet-5` (flipeado 2026-06-30 ~21:02Z; v39 dejó `thinking`
-  apagado para que el cambio sea seguro). A/B en curso: grounding + costo (tokenizer +30%, intro $2/$10 hasta
-  2026-08-31). Revertir = `COPILOT_MODEL=claude-sonnet-4-6`.
-- **EN EL REPO, LISTO PARA DESPLEGAR: v41 (`v41-trato-usted`) — incluye v40.** (1) **v40** (`.trim()` a
-  secretos): el inventario real (v21) dejó de mostrarse ("un asesor te confirma la cantidad" en vez de "X
-  unidades") porque `SHOPIFY_ADMIN_TOKEN` quedó con un espacio al pegarlo → Shopify 401 → inventario vacío;
-  `.trim()` a `SHOPIFY_ADMIN_TOKEN`/`SHOPIFY_ADMIN_API_BASE`/`COPILOT_MODEL` (el deploy además reinicia la
-  instancia → toma el token nuevo). (2) **v41** (trato de **usted**): estilo panameño, amable y profesional,
-  sin voseo. Un solo `git pull` + `.\deploy.ps1` aplica ambos.
+  **PROBANDO Sonnet 5:** `COPILOT_MODEL=claude-sonnet-5` (flipeado ~21:02Z; v39 dejó `thinking` apagado para
+  que sea seguro). A/B en curso (auditoría: grounding/coexistencia sólidos). Revertir = `claude-sonnet-4-6`.
+- **EN EL REPO, LISTO PARA DESPLEGAR: v42 (`v42-guardrails`).** Endurecimiento tras auditar tráfico real en
+  Sonnet 5: (1) no ofrecer genéricos/alternativas que `buscar_producto` no devolvió; (2) no inventar specs
+  (rendimiento/velocidad) que la tool no trae; (3) anti-interrupción ante intención de pagar/transferir/
+  coordinar entrega (no comprometerse con "puede pagar hoy/le llega mañana"). Solo prompt + `INTERRUPT_RE`.
+  Desplegar con `git pull` + `.\deploy.ps1`.
 - **MODO: LIVE A TODOS.** `COPILOT_MODE=live` + `COPILOT_LIVE_ALLOWLIST=all`
   (`live_targets:"all"`). El piloto por allowlist (sombra → número por número) ya se
   completó; hoy el bot responde a todos los clientes. El default del CÓDIGO sigue
@@ -206,6 +205,19 @@ con certeza, y calla/deriva cuando es mejor que responda un humano. Tienda:
   respaldo "Disculpá…te ayuda" → "Disculpe…le ayuda"; ejemplo de MODO ASISTENCIA "te confirmo/tu solicitud" →
   "le confirmo/su solicitud"). Cambia el SYSTEM_PROMPT → la 1ª respuesta tras desplegar reescribe el caché de
   v35 (re-warm puntual). Sin cambios de esquema.
+- **v42 (endurecimiento de guardrails — auditoría Sonnet 5, 2026-06-30 — listo para desplegar):** se auditó
+  tráfico real en Sonnet 5 (grounding y coexistencia sólidos: el bot hace preventa, los humanos cierran
+  cotización/pago/factura sin que el bot toque datos fiscales). 3 huecos hallados y cerrados: (1) **genéricos**
+  — el bot ofrecía "una alternativa genérica" que `buscar_producto` no devolvió (caso GI-190); regla en VENTA
+  CONSULTIVA: nunca ofrecer/insinuar genérico/compatible/sustituto que la tool no trajo (la regla de oro
+  aplica a TIPOS/OPCIONES, no solo a modelos). (2) **specs inventados** — daba rendimiento/velocidad (ej.
+  L3250 "4500/7500 págs") que la tool NO devuelve; regla en REGLA DE ORO: solo afirmar datos del resultado,
+  no adivinar specs. (3) **anti-interrupción en pago** — ante "puedo pagar ya / a dónde transfiero / programar
+  la entrega" se comprometía ("puede pagar hoy, le llega mañana") en vez de derivar; se amplió `INTERRUPT_RE`
+  (intención de pagar/transferir/coordinar entrega, sin pisar "¿cómo pago?"/"¿aceptan yappy?" — probado 22/22)
+  + regla que distingue MÉTODOS (ok vía info_tienda) de COORDINAR un pedido (asesor). Solo prompt + regex, no
+  toca lógica de envío/handoff ni esquema. Reescribe el caché de v35 (re-warm). (Estos huecos los amplificaba
+  la tendencia más consultiva de Sonnet 5.)
 - **Despliegue por CLI (2026-06-26):** se agregó **`deploy.ps1`** (raíz del repo) — `git pull` + `.\deploy.ps1`
   hace `supabase functions deploy … --no-verify-jwt` (byte-exacto desde disco, sin re-escribir contenido)
   y verifica el healthcheck. Es la vía recomendada (ver Despliegue): evita el error de un agente que
@@ -376,6 +388,11 @@ Reglas clave (texto completo en `index.ts`, const `SYSTEM_PROMPT`):
 - **VENTA CONSULTIVA (v24):** ante una recomendación, hace 1-2 preguntas de intake (uso, volumen,
   color/WiFi, presupuesto), se adapta al tipo de cliente y recomienda por necesidad — pero TODO
   modelo/precio sale de `buscar_producto` (regla de oro intacta); B2B/cotización formal → deriva.
+- **ORIGINALES / NO INVENTAR OPCIONES NI SPECS (v42):** QSP maneja originales; el bot NUNCA ofrece ni
+  insinúa un genérico/compatible/sustituto que `buscar_producto` no devolvió (la regla de oro aplica a
+  TIPOS/OPCIONES, no solo a modelos), y NO inventa specs que la tool no trae (rendimiento, velocidad…). Se
+  endureció tras auditar Sonnet 5 (su tendencia consultiva amplificaba ambos). + anti-interrupción ante
+  intención de pagar/transferir/coordinar entrega (no comprometerse con "pague hoy/le llega mañana").
 - **BUSCAR ANTES DE NEGAR (v25):** NUNCA decir "no lo tenemos" de memoria; QSP vende más que impresión
   (monitores, escáneres, UPS, accesorios…). `NEEDS_TOOL_RE` ampliado + regla → siempre busca antes de negar.
 - **CAPTURA DE DATOS (v25/v27, pasiva):** ante intención de cotizar/comprar y si no los tenemos, pide

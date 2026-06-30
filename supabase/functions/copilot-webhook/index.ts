@@ -1,3 +1,15 @@
+// === copilot-webhook v42 — Copiloto AI de WATI — endurecimiento de guardrails (auditoría Sonnet 5) ===
+// v42 (2026-06-30): auditoría de tráfico real en Sonnet 5 (grounding/coexistencia sólidos) destapó 3 huecos:
+//   (1) GENÉRICOS/ALTERNATIVAS: el bot ofrecía "una alternativa genérica" que buscar_producto no devolvió
+//   (caso GI-190) → regla en VENTA CONSULTIVA: nunca ofrecer/insinuar genérico/compatible/sustituto que la
+//   tool no trajo (la regla de oro aplica a TIPOS/OPCIONES, no solo a modelos). (2) SPECS INVENTADOS: daba
+//   rendimiento/velocidad (ej. L3250 "4500/7500 págs") que la tool NO devuelve → regla en REGLA DE ORO:
+//   solo afirmar datos que vienen del resultado; no adivinar specs. (3) ANTI-INTERRUPCIÓN EN PAGO: ante
+//   "puedo pagar ya / a dónde transfiero / programar la entrega" el bot se comprometía ("puede pagar hoy,
+//   le llega mañana") en vez de derivar → se amplió INTERRUPT_RE (intención de pagar/transferir/coordinar
+//   entrega, sin pisar "¿cómo pago?"/"¿aceptan yappy?") + regla que distingue MÉTODOS (ok vía info_tienda)
+//   de COORDINAR un pedido (asesor). Probado: INTERRUPT_RE 22/22 (matchea en-curso, respeta métodos/info).
+//   Solo prompt + regex, no toca lógica de envío/handoff ni esquema. Reescribe el caché de v35 (re-warm).
 // === copilot-webhook v41 — Copiloto AI de WATI — trato de USTED, español de Panamá (sin voseo) ===
 // v41 (2026-06-30): el bot salía con voseo ("vos", "tenés", "seguí"…) que NO es de Panamá (Panamá usa
 //   usted/tú, no voseo) — más notorio con Sonnet 5, que sigue el registro del prompt al pie de la letra.
@@ -423,6 +435,7 @@ REGLA DE ORO — precio, stock y promociones
 - NUNCA menciones un producto, modelo, precio o disponibilidad que no provenga de un resultado de buscar_producto EN ESTE MISMO TURNO. Si no llamaste a la tool, NO nombres modelos ni des precios/stock: búscalo primero. Aplica también a preguntas de categoría ("¿venden impresoras Epson?"): primero busca, luego responde con lo que devuelva.
 - NO NIEGUES DE MEMORIA: nunca digas que NO ofrecemos un producto o categoría sin haber buscado con buscar_producto en este turno. QSP vende MÁS que impresión (también monitores, escáneres, UPS, baterías, accesorios y tecnología en general). Ante CUALQUIER consulta de producto, BUSCA primero; solo di "no lo encontré" o "eso no lo manejamos" DESPUÉS de haber buscado.
 - NUNCA inventes precios, existencias, descuentos ni promociones.
+- SOLO afirma datos del producto que devuelva buscar_producto: título/modelo, precio, ITBMS, stock, el enlace y la compatibilidad que figure EN EL TÍTULO. NO inventes especificaciones que la tool NO trae (rendimiento en páginas, velocidad, resolución, conectividad u otras características técnicas): si el cliente las pide y no están en el resultado, dilo con honestidad o deja que un asesor las detalle — nunca las adivines de memoria.
 - Incluye el link del producto cuando lo tengas, copiándolo EXACTO como viene en el campo "url" de buscar_producto — con TODO lo que esté después del "?" (parámetros utm/ref_code de seguimiento). NUNCA acortes el link ni le quites esos parámetros.
 - PRECIO + ITBMS: los precios son SIN ITBMS. Muestra SIEMPRE el precio, el ITBMS (7%) y el total usando EXACTAMENTE los valores que devuelve la tool (precio_usd, itbms_7pct, total_con_itbms). Formato: "*$116.00 + ITBMS (7%) = $124.12*". NUNCA calcules el impuesto de memoria.
 - STOCK / CANTIDAD: indica la disponibilidad usando el campo "stock" que devuelve la tool, TAL CUAL. Si dice "X unidades", dilo; si dice "stock bajo — un asesor verifica…", dilo así. NUNCA inventes ni adivines una cantidad: di solo lo que aparezca en ese campo "stock".
@@ -441,7 +454,7 @@ VENTA CONSULTIVA — ayuda a elegir bien (sin inventar)
 - No solo respondas: ayuda a comprar bien, como un buen asesor. Si el cliente no sabe qué llevar o pide una recomendación, haz 1-2 preguntas cortas antes de sugerir (¿para casa, oficina o empresa?, ¿cuánto imprime al mes?, ¿color/WiFi/escáner?, ¿presupuesto?).
 - Adapta la profundidad a quién escribe: hogar → algo simple y económico; oficina/empresa → velocidad, rendimiento y costo por página; técnico/revendedor → directo al modelo/referencia.
 - Recomienda por NECESIDAD y costo total, no solo por el precio más bajo. Pero TODO modelo, precio o disponibilidad que menciones DEBE venir de buscar_producto en este mismo turno (nunca de memoria): primero pregunta lo justo, luego busca, luego sugiere con lo que devuelva la tool.
-- Trabajamos sobre todo productos ORIGINALES (HP, Epson, Canon, Brother…) según disponibilidad; si preguntan original vs genérico, dilo así y confirma el modelo exacto.
+- ORIGINALES — sin inventar alternativas: QSP maneja sobre todo productos ORIGINALES (HP, Epson, Canon, Brother…). NUNCA ofrezcas, insinúes ni des a entender por iniciativa propia un "genérico", "compatible", "remanufacturado" o un sustituto de otra marca: solo menciona un producto que buscar_producto haya devuelto EN ESTE TURNO (la regla de oro aplica también a TIPOS y OPCIONES, no solo a modelos). Si el cliente pregunta por genérico/compatible y la búsqueda no mostró uno, aclara con amabilidad que trabajamos con originales y, si desea ver opciones, que un asesor se las confirma — no lo ofrezcas tú ni des por hecho que existe en catálogo.
 - La web es apoyo, no un descarte: puedes invitar a comprar en quickservicepanama.com, pero ayuda primero a ubicar el producto o aclarar la duda.
 - Empresa que pide cotización formal, factura, crédito o volumen: ayúdala con precio/disponibilidad (buscar_producto) y pásala con un asesor para la cotización o la factura; NO pidas RUC ni datos de factura tú mismo.
 
@@ -467,6 +480,7 @@ REGLA ANTI-INTERRUPCIÓN — no te metas si hay un humano atendiendo
 LOGÍSTICA, PAGOS Y DATOS DE LA TIENDA (envíos, ubicación, horarios, métodos de pago)
 - Para envíos/entregas, ubicación, horarios o métodos de pago usa SIEMPRE la herramienta info_tienda y responde SOLO con lo que devuelva. No respondas estos temas de memoria.
 - NUNCA inventes montos, direcciones, horarios ni formas de pago, y NUNCA compartas números de cuenta (Yappy/ACH/transferencia). Para "cómo pago", responde con lo que devuelva info_tienda y deja la coordinación a un asesor.
+- DISTINGUE métodos vs trámite EN CURSO: explicar QUÉ formas de pago aceptamos o las tarifas de envío (vía info_tienda) está bien; pero COORDINAR el pago o la entrega de un pedido concreto (cuándo paga, a qué cuenta transfiere, cuándo le llega) es un trámite de un asesor. NUNCA te comprometas con "puede pagar hoy", "le llega mañana" ni des una cuenta para transferir: deriva esa coordinación a un asesor.
 - Si info_tienda no tiene el dato (devuelve "sin datos disponibles"): dilo con honestidad y deriva a un asesor para confirmarlo. No prometas plazos ni costos específicos.
 
 SOPORTE TÉCNICO Y REPARACIONES
@@ -522,10 +536,13 @@ const INTERRUPT_RE = new RegExp([
   // datos fiscales / facturación
   "\\bruc\\b", "\\bdv\\b", "c[eé]dula", "raz[oó]n social", "factura a nombre", "facturar a", "datos (de|para) (la )?factura", "a nombre de",
   "\\b\\d{1,4}-\\d{2,4}-\\d{4,7}\\b", // RUC/cédula PA (ej. 557-538-101617); no matchea fechas (último grupo >=4 dígitos)
-  // pago/comprobante EN CURSO (no "¿aceptan X?")
+  // pago/comprobante EN CURSO (no "¿aceptan X?" / "¿cómo pago?", que son métodos → info_tienda)
   "le adjunto", "adjunto (el|la|mi) ?(pago|comprobante|transferencia|recibo)", "comprobante", "ya (le |te )?(hice|mand[eé]|envi[eé]|pagu[eé])", "dep[oó]sit",
+  "pagar\\s+(ya|ahora|de una|hoy|mañana)", // intención de pagar YA (no "pagar con tarjeta/yappy" — eso no lleva ya/ahora/hoy)
+  "\\btransfiero\\b", "le transfiero", "a qu[eé] cuenta", "n[uú]mero de cuenta", "a d[oó]nde (le |te )?(pago|deposito|transfiero|consigno)", // a dónde pago/transfiero (el bot NUNCA da la cuenta)
   // entrega/retiro EN CURSO
   "mensajer[oa]", "el chico", "va en camino", "que retir", "va a retirar", "pas(o|a|ar[eé]) (el |la )?(lunes|martes|mi[eé]rcoles|jueves|viernes|s[aá]bado|domingo|mañana|hoy)",
+  "(programar|coordinar|agendar|cuadrar|coordinamos|programamos) (la |mi |el )?(entrega|env[ií]o|retiro)",
 ].join("|"), "i");
 
 // Mensajes que piden datos de catálogo o de la tienda → forzar uso de tool (tool_choice:"any").
@@ -1012,7 +1029,7 @@ Deno.serve(async (req) => {
       if (!data) return Response.json({ error: "not_found" }, { status: 404 });
       return Response.json({ wa_id: data.wa_id, producto_handle: data.producto_handle, ts: data.created_at });
     }
-    return Response.json({ status: "ok", function: "copilot-webhook", version: "v41-trato-usted", mode: MODE, mode_raw: MODE_RAW, model: MODEL, llm_configured: !!anthropic, wati_send_configured: !!(WATI_API_TOKEN && WATI_API_BASE), inventario_configurado: !!(SHOPIFY_ADMIN_TOKEN && SHOPIFY_ADMIN_API_BASE), resolve_configured: !!RESOLVE_SECRET, handoff_assist_min: HANDOFF_ASSIST_MIN, handoff_cold_hours: HANDOFF_COLD_HOURS, live_targets: MODE === "live" ? (LIVE_ALL ? "all" : LIVE_ALLOWLIST.length) : 0, ts: new Date().toISOString() });
+    return Response.json({ status: "ok", function: "copilot-webhook", version: "v42-guardrails", mode: MODE, mode_raw: MODE_RAW, model: MODEL, llm_configured: !!anthropic, wati_send_configured: !!(WATI_API_TOKEN && WATI_API_BASE), inventario_configurado: !!(SHOPIFY_ADMIN_TOKEN && SHOPIFY_ADMIN_API_BASE), resolve_configured: !!RESOLVE_SECRET, handoff_assist_min: HANDOFF_ASSIST_MIN, handoff_cold_hours: HANDOFF_COLD_HOURS, live_targets: MODE === "live" ? (LIVE_ALL ? "all" : LIVE_ALLOWLIST.length) : 0, ts: new Date().toISOString() });
   }
   if (req.method !== "POST") return Response.json({ error: "method_not_allowed" }, { status: 405 });
   if (url.searchParams.get("key") !== WEBHOOK_KEY) return Response.json({ error: "forbidden" }, { status: 403 });
