@@ -1,3 +1,16 @@
+// === copilot-webhook v35 — Copiloto AI de WATI — prompt caching (abarata el input) ===
+// v35 (2026-06-30): el consumo de input subió (el prompt creció v24→v34 y el volumen del lunes +
+//   reactivación) y es input-dominado (~10k in / ~155 out por turno). Fix sin cambiar comportamiento:
+//   PROMPT CACHING. El `system` pasa de un string concatenado a un arreglo de 2 bloques: (1) SYSTEM_PROMPT
+//   estático con cache_control:{type:"ephemeral"} (cachea tools + SYSTEM_PROMPT, que son el prefijo
+//   estable; render order de la API: tools → system → messages); (2) el contexto VOLÁTIL (CONTEXTO
+//   TEMPORAL con la hora actual de v32, nuevo/en curso, horario, datos del cliente o ASSIST_SUFFIX) en un
+//   2º bloque SIN cache_control, DESPUÉS del breakpoint, para no invalidar el caché cada turno. Lectura de
+//   caché 0.1× / escritura 1.25×, TTL 5 min; el prefijo (tools + system) supera de sobra el mínimo de 2048
+//   tokens de Sonnet 4.6, así que cachea. GA (sin header beta). Sin cambios de esquema, sin cambios de
+//   salida del modelo; se verifica con usage.cache_read_input_tokens>0 y avg(tokens_in) cayendo (input_tokens
+//   NO incluye lo leído de caché). NOTA: en MODO ASISTENCIA las tools difieren (solo info_tienda), así que
+//   ese camino mantiene su propia entrada de caché (es raro, no afecta el camino normal).
 // === copilot-webhook v34 — Copiloto AI de WATI — búsqueda lee los tags de compatibilidad ===
 // v34 (2026-06-29): la compatibilidad impresora→consumible YA está cargada en Shopify como TAGS del
 //   producto (ej. el tóner Kyocera TK-8337 tiene "…3253ci"; las tintas Canon tienen "Canon PIXMA MG2110"…),
@@ -650,7 +663,18 @@ async function responderLLM(history: { role: string; content: string; model?: st
     : `\n\nCONTEXTO DATOS: No tenemos datos de contacto de este cliente. Si hay intención de cotizar/comprar, puedes pedir (pasivo, sin insistir) su correo y nombre/apellido y guardarlos con guardar_lead.`;
   // v31 — en MODO ASISTENCIA se anexa ASSIST_SUFFIX (info general, no retomar la venta) en vez del
   // contexto de captura de datos (que invita a pedir correo — no aplica si el humano está a cargo).
-  const system = SYSTEM_PROMPT + ctx + ctxAhora + ctxHorario + (modoAsistencia ? ASSIST_SUFFIX : ctxDatos);
+  // v35 — prompt caching: el prefijo estable (tools + SYSTEM_PROMPT) se cachea con un solo
+  // cache_control al final del bloque grande; el contexto VOLÁTIL (que cambia cada turno: el
+  // CONTEXTO TEMPORAL con la hora actual, si es nuevo/en curso, horario, datos del cliente o el
+  // sufijo de asistencia) va en un 2º bloque SIN cache_control, DESPUÉS del breakpoint, para no
+  // invalidar el caché. Render order de la API: tools → system → messages; con el breakpoint al
+  // final de SYSTEM_PROMPT, tools + SYSTEM_PROMPT quedan cacheados (lectura 0.1×). Resultado: ~misma
+  // salida, input mucho más barato en turnos con cache-hit (verificar con usage.cache_read_input_tokens).
+  const systemDinamico = ctx + ctxAhora + ctxHorario + (modoAsistencia ? ASSIST_SUFFIX : ctxDatos);
+  const system: Anthropic.TextBlockParam[] = [
+    { type: "text", text: SYSTEM_PROMPT, cache_control: { type: "ephemeral" } },
+    { type: "text", text: systemDinamico },
+  ];
   // v31 — en asistencia, la ÚNICA tool disponible es info_tienda (no buscar_producto/guardar_lead):
   // el bot solo puede adelantar datos de tienda, nunca cotizar ni capturar datos del cliente.
   const toolsActivas = modoAsistencia ? TOOLS.filter((t) => t.name === "info_tienda") : TOOLS;
@@ -857,7 +881,7 @@ Deno.serve(async (req) => {
       if (!data) return Response.json({ error: "not_found" }, { status: 404 });
       return Response.json({ wa_id: data.wa_id, producto_handle: data.producto_handle, ts: data.created_at });
     }
-    return Response.json({ status: "ok", function: "copilot-webhook", version: "v34-busqueda-tags", mode: MODE, mode_raw: MODE_RAW, model: MODEL, llm_configured: !!anthropic, wati_send_configured: !!(WATI_API_TOKEN && WATI_API_BASE), inventario_configurado: !!(SHOPIFY_ADMIN_TOKEN && SHOPIFY_ADMIN_API_BASE), resolve_configured: !!RESOLVE_SECRET, handoff_assist_min: HANDOFF_ASSIST_MIN, handoff_cold_hours: HANDOFF_COLD_HOURS, live_targets: MODE === "live" ? (LIVE_ALL ? "all" : LIVE_ALLOWLIST.length) : 0, ts: new Date().toISOString() });
+    return Response.json({ status: "ok", function: "copilot-webhook", version: "v35-prompt-cache", mode: MODE, mode_raw: MODE_RAW, model: MODEL, llm_configured: !!anthropic, wati_send_configured: !!(WATI_API_TOKEN && WATI_API_BASE), inventario_configurado: !!(SHOPIFY_ADMIN_TOKEN && SHOPIFY_ADMIN_API_BASE), resolve_configured: !!RESOLVE_SECRET, handoff_assist_min: HANDOFF_ASSIST_MIN, handoff_cold_hours: HANDOFF_COLD_HOURS, live_targets: MODE === "live" ? (LIVE_ALL ? "all" : LIVE_ALLOWLIST.length) : 0, ts: new Date().toISOString() });
   }
   if (req.method !== "POST") return Response.json({ error: "method_not_allowed" }, { status: 405 });
   if (url.searchParams.get("key") !== WEBHOOK_KEY) return Response.json({ error: "forbidden" }, { status: 403 });

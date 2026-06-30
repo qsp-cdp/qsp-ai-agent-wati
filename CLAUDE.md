@@ -1,8 +1,8 @@
 # CLAUDE.md — Copiloto AI de WhatsApp (WATI) · Quick Service Panamá
 
 > Contexto base para Claude Code trabajando en ESTE repo. Lee esto primero.
-> Generado 2026-06-15; actualizado 2026-06-29 al estado real (edge function v34 +
-> esquema del proyecto Supabase). Docs de diseño originales en el repo
+> Generado 2026-06-15; actualizado 2026-06-30 (edge function v35 en el repo, listo para
+> desplegar; v34 es lo último EN VIVO) + esquema del proyecto Supabase. Docs de diseño originales en el repo
 > `qsp-cdp/qsp-cdp-docs` (`docs/design/2026-06-12-proyecto-copilot-wati.md` y
 > `docs/design/2026-06-13-copilot-analisis-sombra-prompt-v2.md`).
 
@@ -12,11 +12,14 @@ equipo humano: contesta preguntas generales, indica disponibilidad/stock y da pr
 con certeza, y calla/deriva cuando es mejor que responda un humano. Tienda:
 **quickservicepanama.com** (suministros de impresión y tecnología en Panamá).
 
-## Estado actual (2026-06-29)
+## Estado actual (2026-06-30)
 - **EN VIVO: `copilot-webhook` v34 (`v34-busqueda-tags`), ACTIVE.** Desplegado con
   `verify_jwt=false`. Healthcheck (GET, sin key) reporta `version/mode/mode_raw/model/
   llm_configured/wati_send_configured/inventario_configurado/resolve_configured/
   handoff_assist_min/handoff_cold_hours/live_targets`.
+- **EN EL REPO, LISTO PARA DESPLEGAR: v35 (`v35-prompt-cache`).** Prompt caching para abaratar el
+  input (no cambia comportamiento). Desplegar con `git pull` + `.\deploy.ps1`; verificar el healthcheck
+  (`version:"v35-prompt-cache"`) y que `usage.cache_read_input_tokens>0` (baja el `avg(tokens_in)`).
 - **MODO: LIVE A TODOS.** `COPILOT_MODE=live` + `COPILOT_LIVE_ALLOWLIST=all`
   (`live_targets:"all"`). El piloto por allowlist (sombra → número por número) ya se
   completó; hoy el bot responde a todos los clientes. El default del CÓDIGO sigue
@@ -124,6 +127,18 @@ con certeza, y calla/deriva cuando es mejor que responda un humano. Tienda:
   SIN tag → 0 resultados; CON tag → los 4 TK-8337 (C/M/Y/K), limpio. Resuelve la brecha del v33 (3253ci →
   TK-8337) reusando el dato que el equipo ya mantiene en tags. (Futuro opcional: sumar `body` para
   compatibilidad escrita solo en la descripción.)
+- **v35 (prompt caching, 2026-06-30 — listo para desplegar):** el input subió (el prompt creció
+  v24→v34 + el volumen del lunes/reactivación) y es **input-dominado** (~10k in / ~155 out por turno).
+  Fix **sin cambiar comportamiento**: el `system` pasa de un string concatenado a un arreglo de 2 bloques
+  → (1) `SYSTEM_PROMPT` estático con `cache_control:{type:"ephemeral"}` (cachea **tools + SYSTEM_PROMPT**,
+  el prefijo estable; render order de la API: tools → system → messages) y (2) el contexto **VOLÁTIL**
+  (el `CONTEXTO TEMPORAL` con la hora actual de v32, nuevo/en-curso, horario, datos del cliente o
+  `ASSIST_SUFFIX`) en un 2º bloque **SIN** `cache_control`, DESPUÉS del breakpoint, para no invalidar el
+  caché cada turno. Lectura de caché 0.1× / escritura 1.25×, TTL 5 min; el prefijo supera de sobra el
+  mínimo de 2048 tokens de Sonnet 4.6. GA (sin header beta). Verificar con `usage.cache_read_input_tokens>0`
+  y `avg(tokens_in)` cayendo (`input_tokens` NO incluye lo leído de caché). En MODO ASISTENCIA las tools
+  difieren (solo `info_tienda`) → ese camino mantiene su propia entrada de caché (raro, no afecta el normal).
+  Sin cambios de esquema. **Pendiente: desplegar (`deploy.ps1`) y confirmar el ahorro en prod.**
 - **Despliegue por CLI (2026-06-26):** se agregó **`deploy.ps1`** (raíz del repo) — `git pull` + `.\deploy.ps1`
   hace `supabase functions deploy … --no-verify-jwt` (byte-exacto desde disco, sin re-escribir contenido)
   y verifica el healthcheck. Es la vía recomendada (ver Despliegue): evita el error de un agente que
