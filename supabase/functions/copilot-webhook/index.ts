@@ -1,3 +1,13 @@
+// === copilot-webhook v38 — Copiloto AI de WATI — telemetría de prompt caching ===
+// v38 (2026-06-30): el prompt caching (v35) abarató el input (avg(tokens_in) ~9.554 → ~2.337), pero
+//   tokens_in (= usage.input_tokens) NO incluye lo leído/escrito al caché, así que el ahorro $ exacto y el
+//   hit-rate quedaban como proxy. Fix: persistir por turno usage.cache_read_input_tokens y
+//   usage.cache_creation_input_tokens (sumados a través de las iteraciones del loop de tool-use) en dos
+//   columnas nuevas de public.messages. Lectura de caché se factura 0.1×, escritura 1.25×, tokens_in 1×.
+//   SOLO telemetría: no cambia comportamiento, prompt, tools, ni el system. Migración:
+//   supabase/migrations/20260630160000_messages_cache_tokens.sql (ADD COLUMN, no requiere GRANT nuevo).
+//   Sin tocar guardrails. (Verás cache_creation>0 en el 1er turno de cada ventana de 5 min y
+//   cache_read>0 en los siguientes.)
 // === copilot-webhook v37 — Copiloto AI de WATI — feriados nacionales de Panamá ===
 // v37 (2026-06-30): el horario (v22/v36) solo conocía Lun-Vie 9-5 + fines de semana → un feriado entre
 //   semana se trataba como día hábil (el bot daría a entender que un asesor responde "hoy", y al derivar
@@ -709,8 +719,8 @@ async function infoTienda(): Promise<string> {
   } catch (e) { return JSON.stringify({ error: String(e).slice(0, 200) }); }
 }
 
-async function responderLLM(history: { role: string; content: string; model?: string | null; created_at?: string | null }[], forceTool: boolean, imagen?: { b64: string; mediaType: string } | null, imagenFallo?: boolean, waId: string = "", atributos: Record<string, string> = {}, linksTracked: Record<string, string> = {}, modoAsistencia: boolean = false): Promise<{ text: string | null; toolCalls: unknown[]; tokensIn: number; tokensOut: number }> {
-  if (!anthropic) return { text: null, toolCalls: [], tokensIn: 0, tokensOut: 0 };
+async function responderLLM(history: { role: string; content: string; model?: string | null; created_at?: string | null }[], forceTool: boolean, imagen?: { b64: string; mediaType: string } | null, imagenFallo?: boolean, waId: string = "", atributos: Record<string, string> = {}, linksTracked: Record<string, string> = {}, modoAsistencia: boolean = false): Promise<{ text: string | null; toolCalls: unknown[]; tokensIn: number; tokensOut: number; cacheRead: number; cacheWrite: number }> {
+  if (!anthropic) return { text: null, toolCalls: [], tokensIn: 0, tokensOut: 0, cacheRead: 0, cacheWrite: 0 };
   // La API exige que el primer mensaje sea del usuario: descarta "assistant" al inicio
   // (puede pasar si un asesor escribió primero).
   const hist = [...history];
@@ -773,7 +783,7 @@ async function responderLLM(history: { role: string; content: string; model?: st
   // (terminar en assistant). Si el historial termina en assistant (p.ej. un mensaje de asesor que
   // entró último), se descartan los assistant finales para no romper la llamada (error 400).
   while (messages.length && messages[messages.length - 1].role === "assistant") messages.pop();
-  if (!messages.length) return { text: null, toolCalls: [], tokensIn: 0, tokensOut: 0 };
+  if (!messages.length) return { text: null, toolCalls: [], tokensIn: 0, tokensOut: 0, cacheRead: 0, cacheWrite: 0 };
   // v19 (visión): adjunta la imagen del cliente al ÚLTIMO mensaje de usuario (el que la trae).
   if ((imagen || imagenFallo) && messages.length) {
     const last = messages[messages.length - 1];
@@ -791,6 +801,9 @@ async function responderLLM(history: { role: string; content: string; model?: st
   }
   const toolCalls: unknown[] = [];
   let tokensIn = 0, tokensOut = 0;
+  // v38 — telemetría de prompt caching: acumular tokens leídos/escritos al caché por turno (sumando
+  // las iteraciones del loop de tool-use). input_tokens NO los incluye; estos dan el ahorro $ exacto.
+  let cacheRead = 0, cacheWrite = 0;
   for (let i = 0; i < 4; i++) {
     // v21: garantía dura — la conversación SIEMPRE termina en mensaje de usuario antes de CADA
     // llamada al modelo (cierra el error 400 "does not support assistant message prefill").
@@ -801,9 +814,10 @@ async function responderLLM(history: { role: string; content: string; model?: st
       ...(i === 0 && forceTool ? { tool_choice: { type: "any" as const } } : {}),
     });
     tokensIn += resp.usage.input_tokens; tokensOut += resp.usage.output_tokens;
+    cacheRead += resp.usage.cache_read_input_tokens ?? 0; cacheWrite += resp.usage.cache_creation_input_tokens ?? 0;
     if (resp.stop_reason !== "tool_use") {
       const text = resp.content.filter((b) => b.type === "text").map((b: any) => b.text).join("\n").trim();
-      return { text: text || null, toolCalls, tokensIn, tokensOut };
+      return { text: text || null, toolCalls, tokensIn, tokensOut, cacheRead, cacheWrite };
     }
     messages.push({ role: "assistant", content: resp.content });
     const results: Anthropic.ToolResultBlockParam[] = [];
@@ -822,7 +836,7 @@ async function responderLLM(history: { role: string; content: string; model?: st
     }
     messages.push({ role: "user", content: results });
   }
-  return { text: null, toolCalls, tokensIn, tokensOut };
+  return { text: null, toolCalls, tokensIn, tokensOut, cacheRead, cacheWrite };
 }
 
 // Limpia formato que WhatsApp NO renderiza (si no, se ve literal): links markdown [texto](url) → URL
@@ -962,7 +976,7 @@ Deno.serve(async (req) => {
       if (!data) return Response.json({ error: "not_found" }, { status: 404 });
       return Response.json({ wa_id: data.wa_id, producto_handle: data.producto_handle, ts: data.created_at });
     }
-    return Response.json({ status: "ok", function: "copilot-webhook", version: "v37-feriados", mode: MODE, mode_raw: MODE_RAW, model: MODEL, llm_configured: !!anthropic, wati_send_configured: !!(WATI_API_TOKEN && WATI_API_BASE), inventario_configurado: !!(SHOPIFY_ADMIN_TOKEN && SHOPIFY_ADMIN_API_BASE), resolve_configured: !!RESOLVE_SECRET, handoff_assist_min: HANDOFF_ASSIST_MIN, handoff_cold_hours: HANDOFF_COLD_HOURS, live_targets: MODE === "live" ? (LIVE_ALL ? "all" : LIVE_ALLOWLIST.length) : 0, ts: new Date().toISOString() });
+    return Response.json({ status: "ok", function: "copilot-webhook", version: "v38-cache-metrics", mode: MODE, mode_raw: MODE_RAW, model: MODEL, llm_configured: !!anthropic, wati_send_configured: !!(WATI_API_TOKEN && WATI_API_BASE), inventario_configurado: !!(SHOPIFY_ADMIN_TOKEN && SHOPIFY_ADMIN_API_BASE), resolve_configured: !!RESOLVE_SECRET, handoff_assist_min: HANDOFF_ASSIST_MIN, handoff_cold_hours: HANDOFF_COLD_HOURS, live_targets: MODE === "live" ? (LIVE_ALL ? "all" : LIVE_ALLOWLIST.length) : 0, ts: new Date().toISOString() });
   }
   if (req.method !== "POST") return Response.json({ error: "method_not_allowed" }, { status: 405 });
   if (url.searchParams.get("key") !== WEBHOOK_KEY) return Response.json({ error: "forbidden" }, { status: 403 });
@@ -1089,7 +1103,7 @@ Deno.serve(async (req) => {
             // Anti-eco: model != 'human-agent' → cuando WATI rebote el eco (owner=true), se reconoce como
             // envío propio y NO se guarda como asesor (no resetea el reloj ni dispara handoff falso).
             const quiereEnviar = liveAllowed(waId);
-            const insA = await sb.from("messages").insert({ conversation_id: conv.id, role: "assistant", content: salida, tool_calls: r.toolCalls.length ? r.toolCalls : null, mode: quiereEnviar ? "live" : "shadow", model: "assist-handoff", tokens_in: r.tokensIn || null, tokens_out: r.tokensOut || null, latency_ms: Date.now() - t0 }).select("id");
+            const insA = await sb.from("messages").insert({ conversation_id: conv.id, role: "assistant", content: salida, tool_calls: r.toolCalls.length ? r.toolCalls : null, mode: quiereEnviar ? "live" : "shadow", model: "assist-handoff", tokens_in: r.tokensIn || null, tokens_out: r.tokensOut || null, cache_read_input_tokens: r.cacheRead || null, cache_creation_input_tokens: r.cacheWrite || null, latency_ms: Date.now() - t0 }).select("id");
             let enviado = false;
             if (quiereEnviar) { enviado = await enviarWati(waId, salida); if (!enviado) await sb.from("messages").update({ mode: "shadow" }).eq("id", (insA.data?.[0] as any)?.id); }
             await log("asistencia_handoff", true, { waId, enviado, mins_sin_humano: Math.round(minsSinHumano) });
@@ -1153,7 +1167,7 @@ Deno.serve(async (req) => {
         // asesor → se evita el handoff falso. El modo se registra optimista y se corrige si falla.
         const quiereEnviar = !!(salida && liveAllowed(waId));
         let modoFinal = quiereEnviar ? "live" : "shadow";
-        const insAsst = await sb.from("messages").insert({ conversation_id: conv.id, role: "assistant", content: salida, tool_calls: r.toolCalls.length ? r.toolCalls : null, mode: modoFinal, model: anthropic ? MODEL : null, tokens_in: r.tokensIn || null, tokens_out: r.tokensOut || null, latency_ms: Date.now() - t0 }).select("id");
+        const insAsst = await sb.from("messages").insert({ conversation_id: conv.id, role: "assistant", content: salida, tool_calls: r.toolCalls.length ? r.toolCalls : null, mode: modoFinal, model: anthropic ? MODEL : null, tokens_in: r.tokensIn || null, tokens_out: r.tokensOut || null, cache_read_input_tokens: r.cacheRead || null, cache_creation_input_tokens: r.cacheWrite || null, latency_ms: Date.now() - t0 }).select("id");
         let enviado = false;
         if (quiereEnviar) {
           enviado = await enviarWati(waId, salida);

@@ -1,8 +1,8 @@
 # CLAUDE.md — Copiloto AI de WhatsApp (WATI) · Quick Service Panamá
 
 > Contexto base para Claude Code trabajando en ESTE repo. Lee esto primero.
-> Generado 2026-06-15; actualizado 2026-06-30 (edge function v37 EN VIVO) + esquema del
-> proyecto Supabase. Docs de diseño originales en el repo
+> Generado 2026-06-15; actualizado 2026-06-30 (edge function v38 en el repo, listo para
+> desplegar; v37 EN VIVO) + esquema del proyecto Supabase. Docs de diseño originales en el repo
 > `qsp-cdp/qsp-cdp-docs` (`docs/design/2026-06-12-proyecto-copilot-wati.md` y
 > `docs/design/2026-06-13-copilot-analisis-sombra-prompt-v2.md`).
 
@@ -19,6 +19,10 @@ con certeza, y calla/deriva cuando es mejor que responda un humano. Tienda:
   handoff_assist_min/handoff_cold_hours/live_targets`. **Prompt caching (v35) confirmado en prod:** `avg(tokens_in)`
   cayó de ~9.554 a ~2.337 (−75% de input a 1×), sin cambio de comportamiento. v36 (horario hábil calculado)
   y v37 (feriados nacionales) también desplegados y verificados por healthcheck.
+- **EN EL REPO, LISTO PARA DESPLEGAR: v38 (`v38-cache-metrics`).** Telemetría de prompt caching: persiste
+  `cache_read_input_tokens`/`cache_creation_input_tokens` por turno en `messages` (solo medición, no cambia
+  comportamiento). Requiere la migración `20260630160000_messages_cache_tokens.sql` (ADD COLUMN). Desplegar
+  con `git pull` + `.\deploy.ps1` y correr el SQL; verificar `version:"v38-cache-metrics"`.
 - **MODO: LIVE A TODOS.** `COPILOT_MODE=live` + `COPILOT_LIVE_ALLOWLIST=all`
   (`live_targets:"all"`). El piloto por allowlist (sombra → número por número) ya se
   completó; hoy el bot responde a todos los clientes. El default del CÓDIGO sigue
@@ -160,6 +164,15 @@ con certeza, y calla/deriva cuando es mejor que responda un humano. Tienda:
   marca cerrado y `proximoHorarioHabil` salta al próximo día hábil no feriado (incluye feriados consecutivos
   como Carnaval lun+mar); el CONTEXTO HORARIO aclara "hoy es feriado". Probado contra la lista oficial 2026
   (14/14) + verificación de Pascua 2027. No toca guardrails ni el caché de v35. Sin cambios de esquema.
+- **v38 (telemetría de prompt caching, 2026-06-30 — listo para desplegar):** el caching de v35 abarató el
+  input (`avg(tokens_in)` ~9.554 → ~2.337) pero `tokens_in` (= `usage.input_tokens`) NO incluye lo
+  leído/escrito al caché → el ahorro $ exacto y el hit-rate quedaban como proxy. Fix: persistir por turno
+  `usage.cache_read_input_tokens` y `usage.cache_creation_input_tokens` (sumados a través de las iteraciones
+  del loop de tool-use) en dos columnas nuevas de `messages`. **SOLO telemetría** — no cambia comportamiento,
+  prompt, tools ni system. **CAMBIO DE ESQUEMA:** migración `20260630160000_messages_cache_tokens.sql`
+  (`ADD COLUMN`, idempotente, no requiere GRANT nuevo porque el grant a `service_role` es a nivel de tabla).
+  Lectura de caché se factura 0.1×, escritura 1.25×, `tokens_in` 1× → con estas columnas se calcula el $
+  real. Verás `cache_creation>0` en el 1er turno de cada ventana de 5 min y `cache_read>0` en los siguientes.
 - **Despliegue por CLI (2026-06-26):** se agregó **`deploy.ps1`** (raíz del repo) — `git pull` + `.\deploy.ps1`
   hace `supabase functions deploy … --no-verify-jwt` (byte-exacto desde disco, sin re-escribir contenido)
   y verifica el healthcheck. Es la vía recomendada (ver Despliegue): evita el error de un agente que
@@ -211,7 +224,8 @@ WATI (WhatsApp) ──webhook POST?key=──► Supabase Edge Function `copilot
   sigue funcionando si se quiere forzar.
 - **messages** — `conversation_id` FK, `role` (user/assistant/tool/system),
   `content`, `tool_calls` jsonb, `mode` (**shadow**/live), `model`, `tokens_in/out`,
-  `latency_ms`, `wati_message_id` (dedup de webhooks reintentados, índice único).
+  `cache_read_input_tokens`/`cache_creation_input_tokens` (v38 — telemetría de prompt caching; `tokens_in`
+  NO los incluye), `latency_ms`, `wati_message_id` (dedup de webhooks reintentados, índice único).
   Nota v13: los mensajes de un asesor humano se guardan con `role='assistant'` y
   `model='human-agent'` (contexto para el agente).
 - **handoffs** — `conversation_id`, `motivo`, `resuelto`.
@@ -238,7 +252,8 @@ Migraciones (ver `supabase/migrations/`):
 `copilot_schema_inicial`, `rpc_upsert_conversation`, `fix_grant_service_role`,
 `grants_service_role_tablas`, `conversations_confirmed_new`,
 `store_facts` (Fase 1.5 — **aplicada**, 17 datos reales),
-`20260624180000_ref_codes` (v28 — **aplicada**, stitching WhatsApp→web).
+`20260624180000_ref_codes` (v28 — **aplicada**, stitching WhatsApp→web),
+`20260630160000_messages_cache_tokens` (v38 — **pendiente de aplicar**, 2 columnas de telemetría de caché).
 
 ## Flujo del webhook (resumen de index.ts)
 1. **GET** = healthcheck (status/version/mode/model/live_targets).
@@ -483,6 +498,11 @@ Eventos WATI suscritos (necesarios): **Message Received**, **Session Message Sen
 - Calidad/telemetría: `select mode, model, tokens_in, tokens_out, latency_ms from
   public.messages order by created_at desc` y `select * from public.job_log order
   by created_at desc`.
+- Ahorro del prompt caching (v38): `select count(*) turnos, round(avg(tokens_in)) avg_in,
+  round(avg(cache_read_input_tokens)) avg_cread, round(avg(cache_creation_input_tokens)) avg_cwrite,
+  round(100.0*sum(cache_read_input_tokens)/nullif(sum(tokens_in+coalesce(cache_read_input_tokens,0)+coalesce(cache_creation_input_tokens,0)),0),1) pct_leido_de_cache
+  from public.messages where model='claude-sonnet-4-6' and created_at >= now() - interval '1 day';`
+  El **$ de input** ≈ `(tokens_in*1 + cache_read*0.1 + cache_creation*1.25)/1e6 * $3`.
 - Devolver una conversación del humano al bot: `update public.conversations set
   status='bot' where wa_id='<numero>';` (v31: el bot ya lo hace solo tras 24 h sin asesor).
 - Ciclo de vida del handoff (v31): `select * from public.job_log where action in

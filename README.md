@@ -21,8 +21,8 @@ sombra por seguridad.
 CLAUDE.md                                  # contexto autoritativo (leer primero)
 docs/base-conocimiento-qsp.md              # base de conocimiento del negocio (fuente → prompt + store_facts)
 supabase/
-  functions/copilot-webhook/index.ts       # la edge function (v37, = lo desplegado)
-  migrations/*.sql                          # esquema reproducible (7 migraciones)
+  functions/copilot-webhook/index.ts       # la edge function (v38 en repo; v37 = lo desplegado)
+  migrations/*.sql                          # esquema reproducible (8 migraciones)
 deploy.ps1                                  # deploy byte-exacto por CLI + verificación de healthcheck
 web/
   envios-interior-sucursal.html            # página de envíos al interior (45 sucursales)
@@ -31,7 +31,8 @@ web/
 ## Estado
 - Edge function `copilot-webhook` **v37 (`v37-feriados`), ACTIVE** — EN VIVO a todos, en
   Sonnet 4.6. Coexistencia validada (v15) · visión (v19) · endurecimiento anti-duplicado /
-  anti-carrera / MODE-seguro (v20).
+  anti-carrera / MODE-seguro (v20). **v38 (`v38-cache-metrics`) está en el repo, listo para `deploy.ps1`
+  + la migración `20260630160000_messages_cache_tokens.sql`.**
 - **v21:** ITBMS (precio + 7% + total, calculado en código) + inventario real (Shopify Admin
   `totalInventory`; ≤3 → "un asesor verifica") + anti-eco duro (se acabaron los handoffs falsos).
 - **v22:** conciencia de horario (atención Lun-Vie 9am-5pm, Panamá) — fuera de horario aclara
@@ -63,6 +64,9 @@ web/
   Carnaval/Viernes Santo calculados desde la Pascua (Meeus/Jones/Butcher) → correcto cualquier año, sin
   mantenimiento. En un feriado la tienda está cerrada y el "próximo horario hábil" salta al siguiente día
   laborable (incluye feriados consecutivos como Carnaval). Probado contra la lista oficial 2026 (14/14).
+- **v38 (listo para desplegar):** telemetría de prompt caching — persiste `cache_read_input_tokens` /
+  `cache_creation_input_tokens` por turno en `messages` (solo medición, no cambia comportamiento) para ver
+  el ahorro $ exacto y el hit-rate. Requiere la migración `20260630160000_messages_cache_tokens.sql`.
 - Auditorías diarias: coexistencia perfecta (0 clientes pisados, 0 ecos falsos). ~$0.02/turno, ~8 s.
 
 ## Desarrollo / deploy
