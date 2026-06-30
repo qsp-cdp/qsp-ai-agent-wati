@@ -1,3 +1,12 @@
+// === copilot-webhook v40 — Copiloto AI de WATI — .trim() defensivo a secretos (fix inventario) ===
+// v40 (2026-06-30): el inventario real (v21) dejó de mostrarse — el bot decía "un asesor te confirma la
+//   cantidad" en vez de "X unidades". Causa: el token Admin de Shopify estaba bien (el query devuelve
+//   totalInventory), pero el secreto `SHOPIFY_ADMIN_TOKEN` quedó guardado con un ESPACIO/salto de línea al
+//   pegarlo → Shopify lo rechaza (401) → inventarioShopify devuelve {} → stockTexto deriva. Fix: `.trim()`
+//   al leer los secretos que el operador pega/cambia a mano (SHOPIFY_ADMIN_TOKEN, SHOPIFY_ADMIN_API_BASE y
+//   COPILOT_MODEL — un espacio en este último también rompería el A/B de Sonnet 5). NO-OP si el secreto ya
+//   estaba limpio. No toca prompt/tools/system ni el caché de v35. Sin cambios de esquema. (El despliegue,
+//   además, reinicia la instancia → toma el token nuevo: dos pájaros de un tiro.)
 // === copilot-webhook v39 — Copiloto AI de WATI — thinking apagado explícito (prep Sonnet 5) ===
 // v39 (2026-06-30): prep para PROBAR Claude Sonnet 5 (claude-sonnet-5) cambiando solo COPILOT_MODEL.
 //   El código no mandaba el parámetro `thinking`. En Sonnet 4.6 omitirlo = "sin pensar" (lo actual);
@@ -265,7 +274,7 @@ const WATI_API_BASE = Deno.env.get("WATI_API_BASE") ?? "";
 // messages.mode solo acepta live|shadow. MODE_RAW se expone en el healthcheck para diagnóstico.
 const MODE_RAW = (Deno.env.get("COPILOT_MODE") ?? "shadow").toLowerCase();
 const MODE = MODE_RAW === "live" ? "live" : "shadow";
-const MODEL = Deno.env.get("COPILOT_MODEL") ?? "claude-haiku-4-5";
+const MODEL = (Deno.env.get("COPILOT_MODEL") ?? "claude-haiku-4-5").trim(); // v40: trim (un espacio rompía el A/B de Sonnet 5)
 const WEBHOOK_KEY = Deno.env.get("COPILOT_WEBHOOK_KEY") ?? "cw-qsp-9f2e7b3a1c5d4806";
 const MAX_TURNS_DIA = 40;
 // v31 — ciclo de vida del handoff (umbrales configurables por secreto, defaults acordados con
@@ -277,8 +286,10 @@ const HANDOFF_COLD_HOURS = parseInt(Deno.env.get("COPILOT_HANDOFF_COLD_HOURS") ?
 const STORE = "https://www.quickservicepanama.com";
 // v21 — Shopify Admin (solo lectura) para la CANTIDAD real de inventario (totalInventory).
 // SHOPIFY_ADMIN_API_BASE: https://<tienda>.myshopify.com/admin/api/2024-10 (sin / al final).
-const SHOPIFY_ADMIN_TOKEN = Deno.env.get("SHOPIFY_ADMIN_TOKEN") ?? "";
-const SHOPIFY_ADMIN_API_BASE = (Deno.env.get("SHOPIFY_ADMIN_API_BASE") ?? "").replace(/\/$/, "");
+// v40 — .trim() defensivo: un espacio o salto de línea pegado por accidente en el secreto hacía que
+//   Shopify rechazara el token (401) → inventario vacío → el bot derivaba en vez de dar la cantidad.
+const SHOPIFY_ADMIN_TOKEN = (Deno.env.get("SHOPIFY_ADMIN_TOKEN") ?? "").trim();
+const SHOPIFY_ADMIN_API_BASE = (Deno.env.get("SHOPIFY_ADMIN_API_BASE") ?? "").trim().replace(/\/$/, "");
 // v28 — stitching WhatsApp→web por ref_code (atribución / identidad omnicanal en el CDP).
 const RESOLVE_SECRET = Deno.env.get("RESOLVE_SECRET") ?? "";   // guard del endpoint GET ?ref_code=
 const STORE_APEX = "https://quickservicepanama.com";          // apex (sin www; www mete redirect)
@@ -989,7 +1000,7 @@ Deno.serve(async (req) => {
       if (!data) return Response.json({ error: "not_found" }, { status: 404 });
       return Response.json({ wa_id: data.wa_id, producto_handle: data.producto_handle, ts: data.created_at });
     }
-    return Response.json({ status: "ok", function: "copilot-webhook", version: "v39-thinking-off", mode: MODE, mode_raw: MODE_RAW, model: MODEL, llm_configured: !!anthropic, wati_send_configured: !!(WATI_API_TOKEN && WATI_API_BASE), inventario_configurado: !!(SHOPIFY_ADMIN_TOKEN && SHOPIFY_ADMIN_API_BASE), resolve_configured: !!RESOLVE_SECRET, handoff_assist_min: HANDOFF_ASSIST_MIN, handoff_cold_hours: HANDOFF_COLD_HOURS, live_targets: MODE === "live" ? (LIVE_ALL ? "all" : LIVE_ALLOWLIST.length) : 0, ts: new Date().toISOString() });
+    return Response.json({ status: "ok", function: "copilot-webhook", version: "v40-trim-secretos", mode: MODE, mode_raw: MODE_RAW, model: MODEL, llm_configured: !!anthropic, wati_send_configured: !!(WATI_API_TOKEN && WATI_API_BASE), inventario_configurado: !!(SHOPIFY_ADMIN_TOKEN && SHOPIFY_ADMIN_API_BASE), resolve_configured: !!RESOLVE_SECRET, handoff_assist_min: HANDOFF_ASSIST_MIN, handoff_cold_hours: HANDOFF_COLD_HOURS, live_targets: MODE === "live" ? (LIVE_ALL ? "all" : LIVE_ALLOWLIST.length) : 0, ts: new Date().toISOString() });
   }
   if (req.method !== "POST") return Response.json({ error: "method_not_allowed" }, { status: 405 });
   if (url.searchParams.get("key") !== WEBHOOK_KEY) return Response.json({ error: "forbidden" }, { status: 403 });

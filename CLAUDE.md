@@ -1,8 +1,8 @@
 # CLAUDE.md — Copiloto AI de WhatsApp (WATI) · Quick Service Panamá
 
 > Contexto base para Claude Code trabajando en ESTE repo. Lee esto primero.
-> Generado 2026-06-15; actualizado 2026-06-30 (edge function v39 en el repo, listo para
-> desplegar; v38 EN VIVO) + esquema del proyecto Supabase. Docs de diseño originales en el repo
+> Generado 2026-06-15; actualizado 2026-06-30 (edge function v40 en el repo, listo para
+> desplegar; v39 EN VIVO, probando Sonnet 5) + esquema del proyecto Supabase. Docs de diseño originales en el repo
 > `qsp-cdp/qsp-cdp-docs` (`docs/design/2026-06-12-proyecto-copilot-wati.md` y
 > `docs/design/2026-06-13-copilot-analisis-sombra-prompt-v2.md`).
 
@@ -13,18 +13,17 @@ con certeza, y calla/deriva cuando es mejor que responda un humano. Tienda:
 **quickservicepanama.com** (suministros de impresión y tecnología en Panamá).
 
 ## Estado actual (2026-06-30)
-- **EN VIVO: `copilot-webhook` v38 (`v38-cache-metrics`), ACTIVE.** Desplegado con
-  `verify_jwt=false` (2026-06-30), migración `20260630160000_messages_cache_tokens` aplicada. Healthcheck
-  (GET, sin key) reporta `version/mode/mode_raw/model/llm_configured/wati_send_configured/
-  inventario_configurado/resolve_configured/handoff_assist_min/handoff_cold_hours/live_targets`. **Prompt
-  caching (v35) confirmado en prod:** `avg(tokens_in)` ~9.554 → ~2.337 (−75% de input a 1×); con la telemetría
-  de v38, las lecturas de caché (~9.660 tokens/turno a 0.1×) dan ~−69% de costo de input real. v36/v37
-  (horario hábil + feriados) también en vivo.
-- **EN EL REPO, LISTO PARA DESPLEGAR: v39 (`v39-thinking-off`).** Prep para PROBAR **Claude Sonnet 5**
-  (`claude-sonnet-5`): fija `thinking:{type:"disabled"}` en el `messages.create` (NO-OP en la Sonnet 4.6 viva;
-  evita que Sonnet 5 encienda adaptive thinking solo). Desplegar con `git pull` + `.\deploy.ps1`; luego se
-  prueba Sonnet 5 cambiando **solo** `COPILOT_MODEL`. Ver "Evaluación de modelos" para el costo (tokenizer
-  +30%, intro $2/$10 hasta 2026-08-31).
+- **EN VIVO: `copilot-webhook` v39 (`v39-thinking-off`), ACTIVE.** Desplegado con `verify_jwt=false`.
+  Migraciones aplicadas (`ref_codes`, `messages_cache_tokens`). **Prompt caching (v35/v38) confirmado:**
+  `avg(tokens_in)` ~9.554 → ~2.337; ~−69% de costo de input real. v36/v37 (horario + feriados) en vivo.
+  **PROBANDO Sonnet 5:** `COPILOT_MODEL=claude-sonnet-5` (flipeado 2026-06-30 ~21:02Z; v39 dejó `thinking`
+  apagado para que el cambio sea seguro). A/B en curso: grounding + costo (tokenizer +30%, intro $2/$10 hasta
+  2026-08-31). Revertir = `COPILOT_MODEL=claude-sonnet-4-6`.
+- **EN EL REPO, LISTO PARA DESPLEGAR: v40 (`v40-trim-secretos`).** Fix: el inventario real (v21) dejó de
+  mostrarse ("un asesor te confirma la cantidad" en vez de "X unidades") porque el secreto
+  `SHOPIFY_ADMIN_TOKEN` quedó con un espacio al pegarlo → Shopify 401 → inventario vacío. `.trim()` defensivo
+  a `SHOPIFY_ADMIN_TOKEN`/`SHOPIFY_ADMIN_API_BASE`/`COPILOT_MODEL`. Desplegar con `git pull` + `.\deploy.ps1`
+  (el deploy además reinicia la instancia → toma el token nuevo).
 - **MODO: LIVE A TODOS.** `COPILOT_MODE=live` + `COPILOT_LIVE_ALLOWLIST=all`
   (`live_targets:"all"`). El piloto por allowlist (sombra → número por número) ya se
   completó; hoy el bot responde a todos los clientes. El default del CÓDIGO sigue
@@ -177,7 +176,7 @@ con certeza, y calla/deriva cuando es mejor que responda un humano. Tienda:
   real. Verás `cache_creation>0` en el 1er turno de cada ventana de 5 min y `cache_read>0` en los siguientes.
   **Confirmado en prod:** turnos con `cache_read≈9.660` a 0.1×, `cache_creation=null` (lecturas) → ~−69% de
   costo de input real (no solo proxy).
-- **v39 (thinking apagado explícito — prep Sonnet 5, 2026-06-30 — listo para desplegar):** prep para PROBAR
+- **v39 (thinking apagado explícito — prep Sonnet 5, 2026-06-30 — desplegado):** prep para PROBAR
   **Claude Sonnet 5** cambiando solo `COPILOT_MODEL`. El código no mandaba `thinking`; en Sonnet 4.6 eso es
   "sin pensar" (lo actual), pero en **Sonnet 5 omitirlo enciende adaptive thinking por defecto** → latencia y
   tokens extra y, con `max_tokens=1024`, riesgo de truncar la respuesta. Fix: `thinking:{type:"disabled"}`
@@ -187,6 +186,15 @@ con certeza, y calla/deriva cuando es mejor que responda un humano. Tienda:
   cambiar `COPILOT_MODEL=claude-sonnet-5` en un número de prueba → comparar grounding y costo (tokenizer +30%,
   intro $2/$10 hasta 2026-08-31) con la telemetría de v38 → decidir antes del 31/ago (volver a 4.6 = flipear
   el secreto).
+- **v40 (.trim() defensivo a secretos — fix inventario, 2026-06-30 — listo para desplegar):** el inventario
+  real (v21) dejó de mostrarse: el bot decía "un asesor te confirma la cantidad" en vez de "X unidades". El
+  token Admin de Shopify estaba bien (el query Admin devuelve `totalInventory`), pero el secreto
+  `SHOPIFY_ADMIN_TOKEN` quedó guardado **con un espacio/salto de línea** al pegarlo → Shopify 401 →
+  `inventarioShopify` devuelve `{}` → `stockTexto` deriva. Fix: `.trim()` al leer `SHOPIFY_ADMIN_TOKEN`,
+  `SHOPIFY_ADMIN_API_BASE` y `COPILOT_MODEL` (un espacio en este último también rompería el A/B de Sonnet 5).
+  NO-OP si el secreto ya estaba limpio. El deploy además reinicia la instancia → toma el token nuevo. No toca
+  prompt/tools/system ni el caché de v35. Sin cambios de esquema. (La regla de stock >3/≤3 ya existía: el
+  problema era de pipeline/secreto, no de lógica.)
 - **Despliegue por CLI (2026-06-26):** se agregó **`deploy.ps1`** (raíz del repo) — `git pull` + `.\deploy.ps1`
   hace `supabase functions deploy … --no-verify-jwt` (byte-exacto desde disco, sin re-escribir contenido)
   y verifica el healthcheck. Es la vía recomendada (ver Despliegue): evita el error de un agente que

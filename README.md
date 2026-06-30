@@ -21,7 +21,7 @@ sombra por seguridad.
 CLAUDE.md                                  # contexto autoritativo (leer primero)
 docs/base-conocimiento-qsp.md              # base de conocimiento del negocio (fuente → prompt + store_facts)
 supabase/
-  functions/copilot-webhook/index.ts       # la edge function (v39 en repo; v38 = lo desplegado)
+  functions/copilot-webhook/index.ts       # la edge function (v40 en repo; v39 = lo desplegado, probando Sonnet 5)
   migrations/*.sql                          # esquema reproducible (8 migraciones)
 deploy.ps1                                  # deploy byte-exacto por CLI + verificación de healthcheck
 web/
@@ -29,10 +29,11 @@ web/
 ```
 
 ## Estado
-- Edge function `copilot-webhook` **v38 (`v38-cache-metrics`), ACTIVE** — EN VIVO a todos, en
-  Sonnet 4.6. Coexistencia validada (v15) · visión (v19) · endurecimiento anti-duplicado /
-  anti-carrera / MODE-seguro (v20). **v39 (`v39-thinking-off`) está en el repo, listo para `deploy.ps1`
-  (prep para probar Sonnet 5).**
+- Edge function `copilot-webhook` **v39 (`v39-thinking-off`), ACTIVE** — EN VIVO a todos.
+  Coexistencia validada (v15) · visión (v19) · endurecimiento anti-duplicado / anti-carrera / MODE-seguro
+  (v20). **Probando Claude Sonnet 5** (`COPILOT_MODEL=claude-sonnet-5`; revertir = flipear a 4.6).
+  **v40 (`v40-trim-secretos`) está en el repo, listo para `deploy.ps1`** (fix del inventario: `.trim()` al
+  token de Shopify).
 - **v21:** ITBMS (precio + 7% + total, calculado en código) + inventario real (Shopify Admin
   `totalInventory`; ≤3 → "un asesor verifica") + anti-eco duro (se acabaron los handoffs falsos).
 - **v22:** conciencia de horario (atención Lun-Vie 9am-5pm, Panamá) — fuera de horario aclara
@@ -67,10 +68,12 @@ web/
 - **v38:** telemetría de prompt caching — persiste `cache_read_input_tokens` / `cache_creation_input_tokens`
   por turno en `messages` (solo medición). **Confirmado en prod: ~−69% de costo de input real** (lecturas de
   caché a 0.1×).
-- **v39 (listo para desplegar):** prep para probar **Claude Sonnet 5** — fija `thinking:{type:"disabled"}`
-  (no-op en la Sonnet 4.6 viva; evita que Sonnet 5 encienda adaptive thinking solo). Luego se prueba
-  cambiando solo `COPILOT_MODEL=claude-sonnet-5`. Sonnet 5 trae intro $2/$10 hasta 2026-08-31 y tokenizer
-  +30%; A/B con la telemetría de v38 antes de decidir.
+- **v39:** prep para probar **Claude Sonnet 5** — fija `thinking:{type:"disabled"}` (no-op en 4.6; evita que
+  Sonnet 5 encienda adaptive thinking solo). Se prueba cambiando solo `COPILOT_MODEL=claude-sonnet-5` (intro
+  $2/$10 hasta 2026-08-31, tokenizer +30%; A/B con la telemetría de v38).
+- **v40 (listo para desplegar):** `.trim()` defensivo a los secretos que se pegan a mano
+  (`SHOPIFY_ADMIN_TOKEN`/`SHOPIFY_ADMIN_API_BASE`/`COPILOT_MODEL`). Fix del inventario: un espacio en el token
+  de Shopify lo hacía rechazar (401) → el bot derivaba en vez de dar la cantidad real.
 - Auditorías diarias: coexistencia perfecta (0 clientes pisados, 0 ecos falsos). ~$0.02/turno, ~8 s.
 
 ## Desarrollo / deploy
