@@ -21,7 +21,7 @@ sombra por seguridad.
 CLAUDE.md                                  # contexto autoritativo (leer primero)
 docs/base-conocimiento-qsp.md              # base de conocimiento del negocio (fuente → prompt + store_facts)
 supabase/
-  functions/copilot-webhook/index.ts       # la edge function (v40 en repo; v39 = lo desplegado, probando Sonnet 5)
+  functions/copilot-webhook/index.ts       # la edge function (v41 en repo, incluye v40; v39 = lo desplegado, probando Sonnet 5)
   migrations/*.sql                          # esquema reproducible (8 migraciones)
 deploy.ps1                                  # deploy byte-exacto por CLI + verificación de healthcheck
 web/
@@ -32,8 +32,8 @@ web/
 - Edge function `copilot-webhook` **v39 (`v39-thinking-off`), ACTIVE** — EN VIVO a todos.
   Coexistencia validada (v15) · visión (v19) · endurecimiento anti-duplicado / anti-carrera / MODE-seguro
   (v20). **Probando Claude Sonnet 5** (`COPILOT_MODEL=claude-sonnet-5`; revertir = flipear a 4.6).
-  **v40 (`v40-trim-secretos`) está en el repo, listo para `deploy.ps1`** (fix del inventario: `.trim()` al
-  token de Shopify).
+  **v41 (`v41-trato-usted`) está en el repo, listo para `deploy.ps1`** — incluye el fix de inventario de v40
+  (`.trim()` al token de Shopify) + trato de usted (sin voseo). Un solo deploy aplica ambos.
 - **v21:** ITBMS (precio + 7% + total, calculado en código) + inventario real (Shopify Admin
   `totalInventory`; ≤3 → "un asesor verifica") + anti-eco duro (se acabaron los handoffs falsos).
 - **v22:** conciencia de horario (atención Lun-Vie 9am-5pm, Panamá) — fuera de horario aclara
@@ -71,9 +71,12 @@ web/
 - **v39:** prep para probar **Claude Sonnet 5** — fija `thinking:{type:"disabled"}` (no-op en 4.6; evita que
   Sonnet 5 encienda adaptive thinking solo). Se prueba cambiando solo `COPILOT_MODEL=claude-sonnet-5` (intro
   $2/$10 hasta 2026-08-31, tokenizer +30%; A/B con la telemetría de v38).
-- **v40 (listo para desplegar):** `.trim()` defensivo a los secretos que se pegan a mano
+- **v40 (en v41):** `.trim()` defensivo a los secretos que se pegan a mano
   (`SHOPIFY_ADMIN_TOKEN`/`SHOPIFY_ADMIN_API_BASE`/`COPILOT_MODEL`). Fix del inventario: un espacio en el token
   de Shopify lo hacía rechazar (401) → el bot derivaba en vez de dar la cantidad real.
+- **v41 (listo para desplegar):** trato de **usted**, español de Panamá amable y profesional, **sin voseo**
+  (el bot salía con "vos/tenés/seguí", que no es de Panamá — más notorio con Sonnet 5). Regla de estilo
+  explícita + limpieza del voseo en las instrucciones y textos fijos. Solo registro, no toca guardrails.
 - Auditorías diarias: coexistencia perfecta (0 clientes pisados, 0 ecos falsos). ~$0.02/turno, ~8 s.
 
 ## Desarrollo / deploy

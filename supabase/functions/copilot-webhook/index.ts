@@ -1,3 +1,14 @@
+// === copilot-webhook v41 — Copiloto AI de WATI — trato de USTED, español de Panamá (sin voseo) ===
+// v41 (2026-06-30): el bot salía con voseo ("vos", "tenés", "seguí"…) que NO es de Panamá (Panamá usa
+//   usted/tú, no voseo) — más notorio con Sonnet 5, que sigue el registro del prompt al pie de la letra.
+//   Pedido de Gerencia: que chatee como panameño, amable y PROFESIONAL, tratando de USTED. Fix (solo
+//   ESTILO/registro, no toca guardrails ni la lógica): (1) regla explícita en ESTILO — trato de usted,
+//   español de Panamá, NUNCA voseo, con ejemplos correctos en usted; (2) se limpia el voseo de las
+//   instrucciones inyectadas (CONTEXTO HORARIO "Seguí/aclará/usá" → "Sigue/aclara/usa") y de los textos
+//   fijos al cliente (respuesta de respaldo "Disculpá…te ayuda" → "Disculpe…le ayuda"; ejemplo de MODO
+//   ASISTENCIA "te confirmo/tu solicitud" → "le confirmo/su solicitud"). Cambia el SYSTEM_PROMPT → la
+//   primera respuesta tras desplegar reescribe el caché de v35 (re-warm puntual, sin efecto en
+//   comportamiento). Sin cambios de esquema.
 // === copilot-webhook v40 — Copiloto AI de WATI — .trim() defensivo a secretos (fix inventario) ===
 // v40 (2026-06-30): el inventario real (v21) dejó de mostrarse — el bot decía "un asesor te confirma la
 //   cantidad" en vez de "X unidades". Causa: el token Admin de Shopify estaba bien (el query devuelve
@@ -401,7 +412,8 @@ MISIÓN
 - Tu trabajo es APOYAR al equipo humano de QSP: adelanta lo que puedas responder con certeza (precio, disponibilidad, información general y de la tienda) y, cuando no estés seguro o una respuesta pueda comprometer a la empresa con una promesa, NO respondas: deja que un asesor humano siga. Mejor no responder que responder mal. Nunca inventes ni prometas de más.
 
 ESTILO
-- Mensajes CORTOS: 1 a 3 oraciones. Tono cordial panameño, en español, cercano.
+- Mensajes CORTOS: 1 a 3 oraciones. Español de Panamá: cordial, cercano y PROFESIONAL, como un buen asesor de tienda — amable y servicial, nunca robótico ni acartonado.
+- TRATO DE USTED, siempre. Es lo natural, respetuoso y profesional en Panamá. NUNCA uses voseo: nada de "vos", "tenés", "podés", "querés", "mirá", "dale", "fijate". Tampoco tutees ("tú", "te", "tienes"): el trato es de usted, y el usted también puede ser cálido. Ejemplos correctos: "Con gusto le ayudo", "¿Para qué impresora la necesita?", "Le confirmo el precio y la disponibilidad", "Quedamos atentos a cualquier consulta".
 - Negrita SOLO con UN asterisco: *así*. NUNCA uses dobles asteriscos (**texto**), porque en WhatsApp se ven literales y se ve mal. Tampoco uses otra sintaxis de Markdown (#, listas con guion, tablas). Para enlaces, escribe la URL completa tal cual (https://...); NUNCA uses el formato [texto](url) — en WhatsApp se ve literal.
 - Emojis con moderación (uno o dos por mensaje, no más).
 - CANAL: estás atendiendo POR WhatsApp, en este mismo chat. NUNCA le digas al cliente que te escriba o te contacte "por WhatsApp", ni le des el número de WhatsApp de la tienda (el que info_tienda trae como whatsapp/seguimiento) — ya está hablando con nosotros aquí; sonaría absurdo. Aunque info_tienda incluya ese número o un texto de "escríbenos por WhatsApp", NO lo repitas. Cuando derives a un asesor, di que un asesor le responde por aquí mismo / en este chat. Menciona el correo SOLO si de verdad hace falta enviar o recibir algo por esa vía.
@@ -437,7 +449,7 @@ CAPTURA DE DATOS (nombre, apellido, correo y empresa) — pasiva, sin insistir
 - Cuando el cliente muestra intención de COTIZAR o comprar algo concreto (o en un momento natural), y no los tenemos, pide con naturalidad su correo y su nombre y apellido: p.ej. "Para enviarte la cotización, ¿a qué correo te la mandamos y cuál es tu nombre y apellido?".
 - Detecta o pregunta si es para uso PERSONAL o para una EMPRESA; si es empresa, pide el nombre de la empresa (informal).
 - Cuando tengas CUALQUIERA de esos datos (correo, nombre, apellido, empresa), llama a guardar_lead con lo que tengas (puedes llamarla varias veces a medida que el cliente los da). Si guardar_lead dice que el correo es inválido, pide que lo confirme UNA sola vez.
-- Es PASIVO, no un formulario: si el cliente lo ignora, lo rechaza o sigue con otra cosa, NO insistas — seguí ayudando normal. Si ya lo pediste en esta conversación y no lo dio, no lo vuelvas a pedir. Si el CONTEXTO indica que ya tenemos un dato, no lo pidas de nuevo.
+- Es PASIVO, no un formulario: si el cliente lo ignora, lo rechaza o sigue con otra cosa, NO insistas — sigue ayudando normal. Si ya lo pediste en esta conversación y no lo dio, no lo vuelvas a pedir. Si el CONTEXTO indica que ya tenemos un dato, no lo pidas de nuevo.
 - El nombre y apellido SÍ se pueden pedir (no son datos fiscales). Pero NUNCA pidas RUC, cédula, DV ni datos de factura (eso lo maneja un asesor). Para una cotización formal de empresa, junta lo liviano (nombre/correo/empresa) y deriva el resto a un asesor.
 
 CONTACTO NUEVO vs CONOCIDO
@@ -480,7 +492,7 @@ const ASSIST_SUFFIX = `
 MODO ASISTENCIA — un asesor humano está atendiendo este chat
 Un compañero del equipo tiene esta conversación, pero lleva un rato sin responder y el cliente acaba de preguntar algo. Para no dejarlo esperando, adelanta ÚNICAMENTE información general de la tienda y nada más:
 - Responde SOLO si es una pregunta de: ubicación, horario, formas de pago que aceptamos, envíos/entregas o política de devoluciones/garantía. Usa info_tienda y responde breve (1-2 oraciones) con lo que devuelva.
-- Sé deferente: deja claro que un asesor sigue con su caso. Ej.: "Mientras tanto te confirmo: [dato]. Un asesor continúa con tu solicitud enseguida."
+- Sé deferente: deja claro que un asesor sigue con su caso. Ej.: "Mientras tanto le confirmo: [dato]. Un asesor continúa con su solicitud enseguida."
 - NO retomes la venta, NO des precios/stock ni busques productos, NO pidas ni guardes datos, NO confirmes pagos/pedidos, NO cierres nada: de eso se encarga el asesor.
 - Si la pregunta NO es de esa información general, o toca un pago/cotización/factura/reclamo o el caso puntual que lleva el asesor, NO escribas nada (deja la respuesta vacía): que lo siga el humano.`;
 
@@ -758,7 +770,7 @@ async function responderLLM(history: { role: string; content: string; model?: st
   // v37 — si hoy es feriado, se aclara (la tienda está cerrada) y el próximo hábil ya salta el feriado.
   const feriadoHoy = esFeriado(new Date(ahoraMs - 5 * 3600 * 1000));
   const ctxHorario = hh.dentro ? "" :
-    `\n\nCONTEXTO HORARIO: Ahora es ${DIAS_SEM[hh.dia]} ~${hh.hora}:00 en Panamá${feriadoHoy ? " y hoy es FERIADO nacional en Panamá (la tienda está cerrada)" : ""}, FUERA del horario de atención de QSP (atención por WhatsApp y tienda: Lun-Vie 9:00am–5:00pm; sábados, domingos y feriados cerrado). Seguí ayudando con lo automático (precio/ITBMS, stock, info de tienda). Pero si el cliente necesita un asesor, una cotización formal o coordinar pago/entrega, aclará con calma que un asesor le responde en el próximo horario hábil, que es ${proximoHorarioHabil(ahoraMs)} (usá esa fecha/hora TAL CUAL, NO la recalcules), y NO prometas respuesta humana inmediata.`;
+    `\n\nCONTEXTO HORARIO: Ahora es ${DIAS_SEM[hh.dia]} ~${hh.hora}:00 en Panamá${feriadoHoy ? " y hoy es FERIADO nacional en Panamá (la tienda está cerrada)" : ""}, FUERA del horario de atención de QSP (atención por WhatsApp y tienda: Lun-Vie 9:00am–5:00pm; sábados, domingos y feriados cerrado). Sigue ayudando con lo automático (precio/ITBMS, stock, info de tienda). Pero si el cliente necesita un asesor, una cotización formal o coordinar pago/entrega, aclara con calma que un asesor le responderá en el próximo horario hábil, que es ${proximoHorarioHabil(ahoraMs)} (usa esa fecha/hora TAL CUAL, NO la recalcules), y NO prometas respuesta humana inmediata.`;
   // v32 — conciencia temporal SIEMPRE (no solo fuera de horario): el bot sabe la fecha/hora actual y que
   // el historial viene marcado con cuándo se dijo cada cosa, para no arrastrar el "ayer" al "hoy".
   const paNow = new Date(ahoraMs - 5 * 3600 * 1000);
@@ -1000,7 +1012,7 @@ Deno.serve(async (req) => {
       if (!data) return Response.json({ error: "not_found" }, { status: 404 });
       return Response.json({ wa_id: data.wa_id, producto_handle: data.producto_handle, ts: data.created_at });
     }
-    return Response.json({ status: "ok", function: "copilot-webhook", version: "v40-trim-secretos", mode: MODE, mode_raw: MODE_RAW, model: MODEL, llm_configured: !!anthropic, wati_send_configured: !!(WATI_API_TOKEN && WATI_API_BASE), inventario_configurado: !!(SHOPIFY_ADMIN_TOKEN && SHOPIFY_ADMIN_API_BASE), resolve_configured: !!RESOLVE_SECRET, handoff_assist_min: HANDOFF_ASSIST_MIN, handoff_cold_hours: HANDOFF_COLD_HOURS, live_targets: MODE === "live" ? (LIVE_ALL ? "all" : LIVE_ALLOWLIST.length) : 0, ts: new Date().toISOString() });
+    return Response.json({ status: "ok", function: "copilot-webhook", version: "v41-trato-usted", mode: MODE, mode_raw: MODE_RAW, model: MODEL, llm_configured: !!anthropic, wati_send_configured: !!(WATI_API_TOKEN && WATI_API_BASE), inventario_configurado: !!(SHOPIFY_ADMIN_TOKEN && SHOPIFY_ADMIN_API_BASE), resolve_configured: !!RESOLVE_SECRET, handoff_assist_min: HANDOFF_ASSIST_MIN, handoff_cold_hours: HANDOFF_COLD_HOURS, live_targets: MODE === "live" ? (LIVE_ALL ? "all" : LIVE_ALLOWLIST.length) : 0, ts: new Date().toISOString() });
   }
   if (req.method !== "POST") return Response.json({ error: "method_not_allowed" }, { status: 405 });
   if (url.searchParams.get("key") !== WEBHOOK_KEY) return Response.json({ error: "forbidden" }, { status: 403 });
@@ -1210,8 +1222,8 @@ Deno.serve(async (req) => {
             const { data: cf } = await sb.from("conversations").select("status").eq("id", conv.id).maybeSingle();
             if (cf?.status !== "handoff") {
               const fb = horarioPanama().dentro
-                ? "Disculpá, estamos con alto volumen en este momento 🙏. Un asesor te ayuda en breve."
-                : "Disculpá, estamos con alto volumen en este momento 🙏. Un asesor te ayuda apenas estemos en horario (Lun-Vie 9:00am–5:00pm).";
+                ? "Disculpe, estamos con alto volumen en este momento 🙏. Un asesor le ayuda en breve."
+                : "Disculpe, estamos con alto volumen en este momento 🙏. Un asesor le ayuda apenas estemos en horario (Lun-Vie 9:00am–5:00pm).";
               const okfb = await enviarWati(waId, fb);
               await sb.from("messages").insert({ conversation_id: conv.id, role: "assistant", content: fb, mode: okfb ? "live" : "shadow", model: "fallback", latency_ms: Date.now() - t0 });
               await log("respuesta_respaldo", true, { waId, enviado: okfb });

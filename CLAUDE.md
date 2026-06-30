@@ -1,8 +1,9 @@
 # CLAUDE.md — Copiloto AI de WhatsApp (WATI) · Quick Service Panamá
 
 > Contexto base para Claude Code trabajando en ESTE repo. Lee esto primero.
-> Generado 2026-06-15; actualizado 2026-06-30 (edge function v40 en el repo, listo para
-> desplegar; v39 EN VIVO, probando Sonnet 5) + esquema del proyecto Supabase. Docs de diseño originales en el repo
+> Generado 2026-06-15; actualizado 2026-06-30 (edge function v41 en el repo —incluye el fix de
+> inventario de v40—, listo para desplegar; v39 EN VIVO, probando Sonnet 5) + esquema del proyecto
+> Supabase. Docs de diseño originales en el repo
 > `qsp-cdp/qsp-cdp-docs` (`docs/design/2026-06-12-proyecto-copilot-wati.md` y
 > `docs/design/2026-06-13-copilot-analisis-sombra-prompt-v2.md`).
 
@@ -19,11 +20,12 @@ con certeza, y calla/deriva cuando es mejor que responda un humano. Tienda:
   **PROBANDO Sonnet 5:** `COPILOT_MODEL=claude-sonnet-5` (flipeado 2026-06-30 ~21:02Z; v39 dejó `thinking`
   apagado para que el cambio sea seguro). A/B en curso: grounding + costo (tokenizer +30%, intro $2/$10 hasta
   2026-08-31). Revertir = `COPILOT_MODEL=claude-sonnet-4-6`.
-- **EN EL REPO, LISTO PARA DESPLEGAR: v40 (`v40-trim-secretos`).** Fix: el inventario real (v21) dejó de
-  mostrarse ("un asesor te confirma la cantidad" en vez de "X unidades") porque el secreto
-  `SHOPIFY_ADMIN_TOKEN` quedó con un espacio al pegarlo → Shopify 401 → inventario vacío. `.trim()` defensivo
-  a `SHOPIFY_ADMIN_TOKEN`/`SHOPIFY_ADMIN_API_BASE`/`COPILOT_MODEL`. Desplegar con `git pull` + `.\deploy.ps1`
-  (el deploy además reinicia la instancia → toma el token nuevo).
+- **EN EL REPO, LISTO PARA DESPLEGAR: v41 (`v41-trato-usted`) — incluye v40.** (1) **v40** (`.trim()` a
+  secretos): el inventario real (v21) dejó de mostrarse ("un asesor te confirma la cantidad" en vez de "X
+  unidades") porque `SHOPIFY_ADMIN_TOKEN` quedó con un espacio al pegarlo → Shopify 401 → inventario vacío;
+  `.trim()` a `SHOPIFY_ADMIN_TOKEN`/`SHOPIFY_ADMIN_API_BASE`/`COPILOT_MODEL` (el deploy además reinicia la
+  instancia → toma el token nuevo). (2) **v41** (trato de **usted**): estilo panameño, amable y profesional,
+  sin voseo. Un solo `git pull` + `.\deploy.ps1` aplica ambos.
 - **MODO: LIVE A TODOS.** `COPILOT_MODE=live` + `COPILOT_LIVE_ALLOWLIST=all`
   (`live_targets:"all"`). El piloto por allowlist (sombra → número por número) ya se
   completó; hoy el bot responde a todos los clientes. El default del CÓDIGO sigue
@@ -195,6 +197,15 @@ con certeza, y calla/deriva cuando es mejor que responda un humano. Tienda:
   NO-OP si el secreto ya estaba limpio. El deploy además reinicia la instancia → toma el token nuevo. No toca
   prompt/tools/system ni el caché de v35. Sin cambios de esquema. (La regla de stock >3/≤3 ya existía: el
   problema era de pipeline/secreto, no de lógica.)
+- **v41 (trato de usted, español de Panamá — sin voseo, 2026-06-30 — listo para desplegar):** el bot salía
+  con voseo ("vos", "tenés", "seguí"…) que no es de Panamá (Panamá usa usted/tú), más notorio con Sonnet 5
+  (sigue el registro al pie de la letra). Pedido de Gerencia: chatear como panameño, amable y PROFESIONAL,
+  de **usted**. Fix de ESTILO (no toca guardrails ni lógica): (1) regla explícita en `ESTILO` — trato de
+  usted, NUNCA voseo, con ejemplos correctos; (2) se limpió el voseo de las instrucciones inyectadas
+  (`CONTEXTO HORARIO` "Seguí/aclará/usá" → "Sigue/aclara/usa") y de los textos fijos al cliente (respuesta de
+  respaldo "Disculpá…te ayuda" → "Disculpe…le ayuda"; ejemplo de MODO ASISTENCIA "te confirmo/tu solicitud" →
+  "le confirmo/su solicitud"). Cambia el SYSTEM_PROMPT → la 1ª respuesta tras desplegar reescribe el caché de
+  v35 (re-warm puntual). Sin cambios de esquema.
 - **Despliegue por CLI (2026-06-26):** se agregó **`deploy.ps1`** (raíz del repo) — `git pull` + `.\deploy.ps1`
   hace `supabase functions deploy … --no-verify-jwt` (byte-exacto desde disco, sin re-escribir contenido)
   y verifica el healthcheck. Es la vía recomendada (ver Despliegue): evita el error de un agente que
@@ -329,7 +340,8 @@ Reglas clave (texto completo en `index.ts`, const `SYSTEM_PROMPT`):
 - **MISIÓN (v10):** apoyar al equipo humano; responder con certeza lo que se pueda y
   callar/derivar ante la duda o si puede comprometer a la empresa. Mejor no responder
   que responder mal.
-- **ESTILO:** mensajes cortos (1-3 oraciones), tono panameño, **negrita con UN
+- **ESTILO:** mensajes cortos (1-3 oraciones), español de Panamá amable y profesional,
+  **trato de USTED (v41 — sin voseo: nada de "vos/tenés/seguí")**, **negrita con UN
   solo asterisco** `*así*` (NUNCA `**` — en WhatsApp se ve literal), sin Markdown, URLs
   peladas (NUNCA `[texto](url)`).
 - **REGLA DE ORO (v11/v12):** precio/stock/promos SOLO vía `buscar_producto` EN EL
