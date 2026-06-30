@@ -1,3 +1,13 @@
+// === copilot-webhook v43 — Copiloto AI de WATI — sucursales de recogida del interior (grounded) ===
+// v43 (2026-06-30): el bot solo tenía la URL de la página de envíos al interior, así que al preguntar
+//   "¿hay sucursal en David?" ADIVINABA ("sí hay sucursal en David") sin el dato real. Fix grounded: nueva
+//   tool `sucursales_interior(lugar)` con las 45 sucursales Servientrega (provincia, nombre, teléfono,
+//   horario) extraídas del listado oficial (web/envios-interior-sucursal.html). Match por substring sin
+//   acentos contra provincia/nombre; el MODELO aporta la geografía (qué provincia es cada ciudad) para
+//   enrutar y los DATOS salen de la lista (no inventa). Disponible también en MODO ASISTENCIA (es info de
+//   logística). NEEDS_TOOL_RE ya forzaba tool en "sucursal/recoger/retir". Sin cambios de esquema; la lista
+//   vive en código (estática, fácil de refrescar; futuro: metaobjeto Shopify si cambia seguido). Reescribe
+//   el caché de v35 (re-warm, por tools+prompt). Probado el matcheo (David→2 puntos, Chiriquí→8, etc.).
 // === copilot-webhook v42 — Copiloto AI de WATI — endurecimiento de guardrails (auditoría Sonnet 5) ===
 // v42 (2026-06-30): auditoría de tráfico real en Sonnet 5 (grounding/coexistencia sólidos) destapó 3 huecos:
 //   (1) GENÉRICOS/ALTERNATIVAS: el bot ofrecía "una alternativa genérica" que buscar_producto no devolvió
@@ -482,6 +492,7 @@ LOGÍSTICA, PAGOS Y DATOS DE LA TIENDA (envíos, ubicación, horarios, métodos 
 - NUNCA inventes montos, direcciones, horarios ni formas de pago, y NUNCA compartas números de cuenta (Yappy/ACH/transferencia). Para "cómo pago", responde con lo que devuelva info_tienda y deja la coordinación a un asesor.
 - DISTINGUE métodos vs trámite EN CURSO: explicar QUÉ formas de pago aceptamos o las tarifas de envío (vía info_tienda) está bien; pero COORDINAR el pago o la entrega de un pedido concreto (cuándo paga, a qué cuenta transfiere, cuándo le llega) es un trámite de un asesor. NUNCA te comprometas con "puede pagar hoy", "le llega mañana" ni des una cuenta para transferir: deriva esa coordinación a un asesor.
 - Si info_tienda no tiene el dato (devuelve "sin datos disponibles"): dilo con honestidad y deriva a un asesor para confirmarlo. No prometas plazos ni costos específicos.
+- SUCURSALES DEL INTERIOR (recogida): si el cliente del interior pregunta dónde recoger/retirar o si hay sucursal/agencia en su zona, usa la herramienta sucursales_interior con su provincia o ciudad (ej. "David", "Chiriquí", "Penonomé") y responde SOLO con los puntos que devuelva (nombre, teléfono, horario). NUNCA inventes una sucursal, dirección ni teléfono. Si la ciudad exacta no aparece, deduce la provincia (sabes la geografía de Panamá) y vuelve a consultar por la provincia; si aun así no hay punto, dilo y comparte el listado completo. Para tarifas/plazos del interior usa info_tienda.
 
 SOPORTE TÉCNICO Y REPARACIONES
 - QSP NO ofrece soporte técnico ni servicios de reparación. Si preguntan por reparar/arreglar un equipo, soporte técnico, o que algo "no enciende/no imprime", usa info_tienda y sugiere la empresa de la marca correspondiente que ahí figure; NUNCA inventes teléfonos ni empresas, y si no hay dato, deriva a un asesor.
@@ -523,6 +534,10 @@ const TOOLS: Anthropic.Tool[] = [{
   name: "guardar_lead",
   description: "Guarda los datos de contacto del cliente en WATI para que un asesor cotice más rápido y para enriquecer el CRM. Llámala cuando el cliente te dé alguno de estos datos (correo, nombre, apellido y/o empresa), normalmente cuando hay intención de cotizar o comprar. Pasa SOLO los datos que el cliente realmente dio (puedes llamarla varias veces a medida que los da). NO la uses para RUC/cédula/datos de factura (eso lo maneja un asesor). El número de WhatsApp se toma solo.",
   input_schema: { type: "object", properties: { email: { type: "string", description: "Correo electrónico del cliente, ej: juan@empresa.com" }, nombre: { type: "string", description: "Nombre (de pila) del cliente" }, apellido: { type: "string", description: "Apellido del cliente" }, empresa: { type: "string", description: "Nombre de la empresa (solo si la compra es para una empresa)" } } },
+} as Anthropic.Tool, {
+  name: "sucursales_interior",
+  description: "Puntos de recogida en el INTERIOR del país (red Servientrega, 45 sucursales con teléfono y horario). Úsala cuando el cliente del interior pregunte dónde recoger/retirar, si hay sucursal/agencia/punto en su zona, o pida la ubicación de un punto. Pasa 'lugar' = la provincia o ciudad del cliente (ej. 'Chiriquí', 'David', 'Penonomé', 'Chitré'). Si el cliente da una ciudad y no aparece, deduce TÚ la provincia (sabes la geografía de Panamá) y vuelve a llamarla con la provincia. Devuelve SOLO puntos reales — NUNCA inventes sucursales, direcciones ni teléfonos.",
+  input_schema: { type: "object", properties: { lugar: { type: "string", description: "Provincia o ciudad del cliente (ej. Chiriquí, David, Penonomé, Coclé). Vacío = resumen por provincia." } } },
 } as Anthropic.Tool];
 
 const HANDOFF_RE = /\b(humano|persona|asesor|agente|reclamo|queja|devoluci[oó]n|garant[ií]a|hablar con alguien|supervisor)\b/i;
@@ -768,6 +783,75 @@ async function infoTienda(): Promise<string> {
   } catch (e) { return JSON.stringify({ error: String(e).slice(0, 200) }); }
 }
 
+// v43 — sucursales de recogida en el INTERIOR (red Servientrega, 45 puntos). Datos del listado oficial
+// (web/envios-interior-sucursal.html = la página /pages/envios-al-interior). El bot NUNCA debe inventar
+// sucursales/direcciones/teléfonos: esta tool los da GROUNDED. El modelo aporta la geografía (qué provincia
+// es cada ciudad) para enrutar; los DATOS salen de aquí. Si la red Servientrega cambia, actualizar esta lista.
+const SUCURSALES_URL = "https://quickservicepanama.com/pages/envios-al-interior";
+const SUCURSALES: { prov: string; nombre: string; datos: string }[] = [
+  { prov: "Panamá", nombre: "CDS Parque Lefevre", datos: "2133000 · Lun–Vie 8:00 AM–7:00 PM · Sáb 8:00 AM–3:00 PM" },
+  { prov: "Panamá", nombre: "CDS Plaza Aventura – El Dorado", datos: "62069207 · Lun–Vie 8:00 AM–5:30 PM (almuerzo 12–1) · Sáb 8:00 AM–1:00 PM" },
+  { prov: "Panamá", nombre: "CDS Plaza Concordia – Vía España", datos: "62527762 · Lun–Vie 8:00 AM–5:00 PM (almuerzo 1–2) · Sáb 8:00 AM–1:00 PM" },
+  { prov: "Panamá", nombre: "CDS Paitilla – Vía Italia", datos: "63003052 · Lun–Vie 8:00 AM–5:00 PM (almuerzo 12–1) · Sáb 8:00 AM–1:00 PM" },
+  { prov: "Panamá", nombre: "CDS Logística Móvil", datos: "62069238 · Lun–Vie 8:00 AM–5:30 PM · Sáb 8:00 AM–1:30 PM" },
+  { prov: "Panamá", nombre: "CDS Los Andes Mall – San Miguelito", datos: "62821785 · Lun–Vie 8:00 AM–5:00 PM (almuerzo 1–2) · Sáb 8:00 AM–1:00 PM" },
+  { prov: "Panamá", nombre: "CDS Mañanitas", datos: "62034204 · Lun–Vie 8:00 AM–5:00 PM · Sáb 8:00 AM–1:00 PM" },
+  { prov: "Panamá", nombre: "AV Perugraff (Torti)", datos: "69797445 · Lun–Sáb 9 AM–6 PM" },
+  { prov: "Panamá", nombre: "AV TSB Cargo San Francisco", datos: "3736590 / +507 6720-9891 · Lun–Vie 8 AM–5 PM · Sáb 9 AM–2 PM · Dom 10 AM–2 PM" },
+  { prov: "Panamá", nombre: "AV Cargo Box Express (Hato Pintado)", datos: "+507 67768244 / 2754225 · Lun–Vie 9 AM–6 PM · Sáb 9 AM–2 PM" },
+  { prov: "Panamá", nombre: "AV Mr. Mail – El Dorado", datos: "+507 6607-2164 · Lun–Vie 10 AM–5:30 PM · Sáb 10 AM–1:30 PM" },
+  { prov: "Panamá", nombre: "AV Mr Mail – Vía Argentina", datos: "+507 6672-6745 · Lun–Vie 10 AM–5:30 PM · Sáb 9 AM–1 PM" },
+  { prov: "Panamá", nombre: "AV Compucel Chepo", datos: "+507 62223298 · Lun–Vie 10 AM–6 PM · Sáb 9 AM–2 PM" },
+  { prov: "Panamá", nombre: "AV Shop Box Don Bosco", datos: "+507 65007378 / 66150948 · Lun–Vie 10 AM–6 PM · Sáb 9 AM–2 PM" },
+  { prov: "Panamá", nombre: "AV Nuevo Tocumen Shopline", datos: "+507 64373481 · Lun–Vie 10 AM–6 PM · Sáb 9 AM–2 PM" },
+  { prov: "Panamá Oeste", nombre: "CDS Chorrera", datos: "63003046 · Lun–Vie 8:00 AM–5:00 PM (almuerzo 1–2) · Sáb 8:00 AM–1:00 PM" },
+  { prov: "Panamá Oeste", nombre: "AV PtyBuy Express Arraiján", datos: "6780-9187 · Lun–Vie 10 AM–6 PM · Sáb 10 AM–3 PM" },
+  { prov: "Panamá Oeste", nombre: "AV Kabak Store Coronado", datos: "+507 66367979 / 349-6301 · Lun–Vie 9:30 AM–6 PM · Sáb 9 AM–3 PM" },
+  { prov: "Panamá Oeste", nombre: "AV Western Union Chorrera Guadalupe", datos: "+507 6133-4883 · Lun–Vie 8 AM–5 PM · Sáb 8 AM–1 PM" },
+  { prov: "Colón", nombre: "CDS Colón", datos: "62069261 · Lun–Vie 8:00 AM–5:00 PM (almuerzo 12–1) · Sáb 8:00 AM–1:00 PM" },
+  { prov: "Colón", nombre: "AV Colón Cristóbal Este (Service Freight Jare)", datos: "+507 62996136 / 69250730 · Lun–Sáb 8 AM–5 PM" },
+  { prov: "Colón", nombre: "AV Colón San Juan El 20 (Curiosidades Thamara)", datos: "+507 63907939 · Lun–Vie 9 AM–6 PM · Sáb 9 AM–5 PM" },
+  { prov: "Coclé", nombre: "CDS Aguadulce", datos: "62822609 · Lun–Vie 8:00 AM–5:00 PM (almuerzo 12–1) · Sáb 8:00 AM–1:00 PM" },
+  { prov: "Coclé", nombre: "CDS Penonomé", datos: "62069222 · Lun–Vie 8:00 AM–5:00 PM (almuerzo 12–1) · Sáb 8:00 AM–1:00 PM" },
+  { prov: "Coclé", nombre: "AV El Valle de Antón (Valle Express)", datos: "6983-8292 · Lun–Vie 8 AM–5 PM · Sáb 8 AM–1 PM" },
+  { prov: "Herrera", nombre: "CDS Chitré", datos: "62822831 · Lun–Vie 8:00 AM–5:00 PM (almuerzo 12:30–1:30) · Sáb 8:00 AM–1:00 PM" },
+  { prov: "Los Santos", nombre: "CDS Las Tablas", datos: "Calle Joaquín Pablo Franco, frente a La Paulina Café · Teléfono y horario: por confirmar" },
+  { prov: "Los Santos", nombre: "AV Guararé (Malala)", datos: "+507 68763077 / 9945246 · Lun–Vie 8 AM–5 PM · Sáb 9 AM–2 PM" },
+  { prov: "Los Santos", nombre: "AV Tonosí (Hostal Victoria)", datos: "+507 66432936 · Lun–Vie 8 AM–3:30 PM · Sáb 8 AM–12 MD" },
+  { prov: "Veraguas", nombre: "CDS Santiago", datos: "62382594 · Lun–Vie 8:00 AM–5:00 PM (almuerzo 12–1) · Sáb 8:00 AM–1:00 PM" },
+  { prov: "Chiriquí", nombre: "CDS David Centro Calle 4ta", datos: "62821798 · Lun–Vie 8:00 AM–5:00 PM (almuerzo 12–1) · Sáb 8:00 AM–1:00 PM" },
+  { prov: "Chiriquí", nombre: "CDS David El Rocío", datos: "62069219 · Lun–Vie 8:00 AM–5:00 PM (almuerzo 12–1) · Sáb 8:00 AM–1:00 PM" },
+  { prov: "Chiriquí", nombre: "AV Concepción Bugaba", datos: "+507 788-3060 / 6733-7049 / 6629-3267 · Lun–Vie 9:00 AM–5:30 PM · Sáb 9:00 AM–2:00 PM (Dom cerrado)" },
+  { prov: "Chiriquí", nombre: "AV Río Sereno (Farmacia Don Andrés)", datos: "+507 6551-2690 · Lun–Sáb 8 AM–2 PM y 4 PM–6 PM" },
+  { prov: "Chiriquí", nombre: "AV Volcán (Alfa Cell)", datos: "+507 6557-9415 / 6115-3333 · Lun–Sáb 9 AM–5 PM" },
+  { prov: "Chiriquí", nombre: "AV Monchis Compras (Tolé)", datos: "+507 62125251 · Lun–Vie 8 AM–4 PM · Sáb 9 AM–1 PM" },
+  { prov: "Chiriquí", nombre: "AV Rapid Service Barú", datos: "+507 6585-2214 · Lun–Sáb 9 AM–5 PM" },
+  { prov: "Chiriquí", nombre: "AV E-Box Express (Paso Canoas)", datos: "+507 6924-9023 · Lun–Vie 10 AM–6 PM · Sáb 9 AM–2 PM" },
+  { prov: "Bocas del Toro", nombre: "CDS Changuinola", datos: "62311466 · Lun–Vie 8:00 AM–5:00 PM (almuerzo 1–2) · Sáb 8:00 AM–1:00 PM" },
+  { prov: "Bocas del Toro", nombre: "AV Almirante", datos: "+507 6500-3365 / 6471-8191 · Lun–Vie 9:00 AM–6:00 PM · Sáb 9:00 AM–5:00 PM" },
+  { prov: "Bocas del Toro", nombre: "AV Bocas Island Express", datos: "+507 760-8459 · Lun–Vie 8:30 AM–4:30 PM · Sáb 8:30 AM–2:00 PM" },
+  { prov: "Bocas del Toro", nombre: "AV Chiriquí Grande (Zamarci)", datos: "+507 6285-0553 / 6236-3712 · Lun–Sáb 8:00 AM–4:00 PM" },
+  { prov: "Darién", nombre: "AV Metetí Darién (Valeria's)", datos: "+507 6168-5748 · Lun–Sáb 9 AM–5 PM" },
+  { prov: "Otras ubicaciones", nombre: "AV Servicios y Utilería M&C", datos: "+507 64540865 · Lun–Sáb 8:30 AM–7:00 PM" },
+  { prov: "Otras ubicaciones", nombre: "AV Jece Soluciones", datos: "+507 308-6977 / 62132930 / 6201-7543 · Lun–Vie 8 AM–5 PM · Sáb 8 AM–12 PM" },
+];
+// Devuelve los puntos de recogida del interior que coincidan con `lugar` (provincia o ciudad). Match por
+// substring sin acentos contra provincia y nombre del punto. Sin `lugar`: resumen por provincia. Sin
+// coincidencia: invita a dar la provincia + el listado completo. NUNCA inventa: solo lo de SUCURSALES.
+function sucursalesInterior(lugar: string = ""): string {
+  const norm = (s: string) => (s || "").toLowerCase().replace(/[áàä]/g, "a").replace(/[éèë]/g, "e").replace(/[íìï]/g, "i").replace(/[óòö]/g, "o").replace(/[úùü]/g, "u").replace(/ñ/g, "n").trim();
+  const q = norm(lugar);
+  if (!q) {
+    const provs = [...new Set(SUCURSALES.map((s) => s.prov))].map((p) => `${p} (${SUCURSALES.filter((s) => s.prov === p).length})`);
+    return JSON.stringify({ resultado: "pide la provincia o ciudad del cliente para dar el punto exacto", provincias_con_puntos: provs, listado_completo: SUCURSALES_URL });
+  }
+  const hits = SUCURSALES.filter((s) => { const p = norm(s.prov), n = norm(s.nombre); return p.includes(q) || q.includes(p) || n.includes(q); });
+  if (!hits.length) {
+    return JSON.stringify({ resultado: `no hay un punto que coincida con "${lugar}"`, sugerencia: "si sabes la provincia (Chiriquí, Coclé, Los Santos, etc.), vuelve a buscar por la provincia; o comparte el listado completo", listado_completo: SUCURSALES_URL });
+  }
+  return JSON.stringify({ sucursales: hits.slice(0, 8).map((h) => ({ provincia: h.prov, nombre: h.nombre, datos: h.datos })), total_coincidencias: hits.length, listado_completo: SUCURSALES_URL });
+}
+
 async function responderLLM(history: { role: string; content: string; model?: string | null; created_at?: string | null }[], forceTool: boolean, imagen?: { b64: string; mediaType: string } | null, imagenFallo?: boolean, waId: string = "", atributos: Record<string, string> = {}, linksTracked: Record<string, string> = {}, modoAsistencia: boolean = false): Promise<{ text: string | null; toolCalls: unknown[]; tokensIn: number; tokensOut: number; cacheRead: number; cacheWrite: number }> {
   if (!anthropic) return { text: null, toolCalls: [], tokensIn: 0, tokensOut: 0, cacheRead: 0, cacheWrite: 0 };
   // La API exige que el primer mensaje sea del usuario: descarta "assistant" al inicio
@@ -817,7 +901,7 @@ async function responderLLM(history: { role: string; content: string; model?: st
   ];
   // v31 — en asistencia, la ÚNICA tool disponible es info_tienda (no buscar_producto/guardar_lead):
   // el bot solo puede adelantar datos de tienda, nunca cotizar ni capturar datos del cliente.
-  const toolsActivas = modoAsistencia ? TOOLS.filter((t) => t.name === "info_tienda") : TOOLS;
+  const toolsActivas = modoAsistencia ? TOOLS.filter((t) => t.name === "info_tienda" || t.name === "sucursales_interior") : TOOLS;
   // Los mensajes de un asesor humano se marcan para que el agente sepa que los dijo una persona.
   // v32: cada mensaje ANTERIOR (no el último/actual) se prefija con [hoy/ayer/fecha] para que el bot
   // ubique el historial en el tiempo. El último (el que se responde ahora) va limpio (es "ahora", y así
@@ -883,6 +967,8 @@ async function responderLLM(history: { role: string; content: string; model?: st
           ? await infoTienda()
           : block.name === "guardar_lead"
           ? await guardarLead(waId, (block.input as any).email, (block.input as any).empresa, (block.input as any).nombre, (block.input as any).apellido)
+          : block.name === "sucursales_interior"
+          ? sucursalesInterior((block.input as any).lugar ?? "")
           : JSON.stringify({ error: "tool desconocida" });
         results.push({ type: "tool_result", tool_use_id: block.id, content: out });
       }
@@ -1029,7 +1115,7 @@ Deno.serve(async (req) => {
       if (!data) return Response.json({ error: "not_found" }, { status: 404 });
       return Response.json({ wa_id: data.wa_id, producto_handle: data.producto_handle, ts: data.created_at });
     }
-    return Response.json({ status: "ok", function: "copilot-webhook", version: "v42-guardrails", mode: MODE, mode_raw: MODE_RAW, model: MODEL, llm_configured: !!anthropic, wati_send_configured: !!(WATI_API_TOKEN && WATI_API_BASE), inventario_configurado: !!(SHOPIFY_ADMIN_TOKEN && SHOPIFY_ADMIN_API_BASE), resolve_configured: !!RESOLVE_SECRET, handoff_assist_min: HANDOFF_ASSIST_MIN, handoff_cold_hours: HANDOFF_COLD_HOURS, live_targets: MODE === "live" ? (LIVE_ALL ? "all" : LIVE_ALLOWLIST.length) : 0, ts: new Date().toISOString() });
+    return Response.json({ status: "ok", function: "copilot-webhook", version: "v43-sucursales-interior", mode: MODE, mode_raw: MODE_RAW, model: MODEL, llm_configured: !!anthropic, wati_send_configured: !!(WATI_API_TOKEN && WATI_API_BASE), inventario_configurado: !!(SHOPIFY_ADMIN_TOKEN && SHOPIFY_ADMIN_API_BASE), resolve_configured: !!RESOLVE_SECRET, handoff_assist_min: HANDOFF_ASSIST_MIN, handoff_cold_hours: HANDOFF_COLD_HOURS, live_targets: MODE === "live" ? (LIVE_ALL ? "all" : LIVE_ALLOWLIST.length) : 0, ts: new Date().toISOString() });
   }
   if (req.method !== "POST") return Response.json({ error: "method_not_allowed" }, { status: 405 });
   if (url.searchParams.get("key") !== WEBHOOK_KEY) return Response.json({ error: "forbidden" }, { status: 403 });

@@ -1,9 +1,9 @@
 # CLAUDE.md — Copiloto AI de WhatsApp (WATI) · Quick Service Panamá
 
 > Contexto base para Claude Code trabajando en ESTE repo. Lee esto primero.
-> Generado 2026-06-15; actualizado 2026-06-30 (edge function v42 en el repo, listo para desplegar;
-> v41 EN VIVO —incluye v40 inventario + trato de usted—, probando Sonnet 5) + esquema del proyecto
-> Supabase. Docs de diseño originales en el repo
+> Generado 2026-06-15; actualizado 2026-06-30 (edge function v43 en el repo —incluye v42 guardrails—,
+> listo para desplegar; v41 EN VIVO —incluye v40 inventario + trato de usted—, probando Sonnet 5) +
+> esquema del proyecto Supabase. Docs de diseño originales en el repo
 > `qsp-cdp/qsp-cdp-docs` (`docs/design/2026-06-12-proyecto-copilot-wati.md` y
 > `docs/design/2026-06-13-copilot-analisis-sombra-prompt-v2.md`).
 
@@ -20,11 +20,12 @@ con certeza, y calla/deriva cuando es mejor que responda un humano. Tienda:
   `avg(tokens_in)` ~9.554 → ~2.337; ~−69% de costo de input real. v36/v37 (horario + feriados) en vivo.
   **PROBANDO Sonnet 5:** `COPILOT_MODEL=claude-sonnet-5` (flipeado ~21:02Z; v39 dejó `thinking` apagado para
   que sea seguro). A/B en curso (auditoría: grounding/coexistencia sólidos). Revertir = `claude-sonnet-4-6`.
-- **EN EL REPO, LISTO PARA DESPLEGAR: v42 (`v42-guardrails`).** Endurecimiento tras auditar tráfico real en
-  Sonnet 5: (1) no ofrecer genéricos/alternativas que `buscar_producto` no devolvió; (2) no inventar specs
-  (rendimiento/velocidad) que la tool no trae; (3) anti-interrupción ante intención de pagar/transferir/
-  coordinar entrega (no comprometerse con "puede pagar hoy/le llega mañana"). Solo prompt + `INTERRUPT_RE`.
-  Desplegar con `git pull` + `.\deploy.ps1`.
+- **EN EL REPO, LISTO PARA DESPLEGAR: v43 (`v43-sucursales-interior`) — incluye v42.** (a) **v42 guardrails**
+  (auditoría Sonnet 5): no ofrecer genéricos que la tool no trajo, no inventar specs, anti-interrupción en
+  intención de pago/transferencia/entrega. (b) **v43 sucursales del interior**: tool `sucursales_interior` con
+  las 45 sucursales Servientrega (provincia/nombre/teléfono/horario, del listado oficial) → el bot da el punto
+  GROUNDED en vez de adivinar; el modelo enruta la geografía (David→Chiriquí), los datos salen de la lista. Un
+  `git pull` + `.\deploy.ps1` aplica ambos.
 - **MODO: LIVE A TODOS.** `COPILOT_MODE=live` + `COPILOT_LIVE_ALLOWLIST=all`
   (`live_targets:"all"`). El piloto por allowlist (sombra → número por número) ya se
   completó; hoy el bot responde a todos los clientes. El default del CÓDIGO sigue
@@ -218,6 +219,17 @@ con certeza, y calla/deriva cuando es mejor que responda un humano. Tienda:
   + regla que distingue MÉTODOS (ok vía info_tienda) de COORDINAR un pedido (asesor). Solo prompt + regex, no
   toca lógica de envío/handoff ni esquema. Reescribe el caché de v35 (re-warm). (Estos huecos los amplificaba
   la tendencia más consultiva de Sonnet 5.)
+- **v43 (sucursales de recogida del interior — grounded, 2026-06-30 — listo para desplegar):** el bot solo
+  tenía la URL de la página de envíos al interior, así que ante "¿hay sucursal en David?" ADIVINABA ("sí hay
+  sucursal en David") sin el dato real. Fix grounded: nueva tool **`sucursales_interior(lugar)`** con las **45
+  sucursales Servientrega** (provincia, nombre, teléfono, horario) extraídas del listado oficial
+  (`web/envios-interior-sucursal.html`). Match por substring sin acentos contra provincia/nombre; **el modelo
+  aporta la geografía** (qué provincia es cada ciudad → enruta David→Chiriquí) y los **datos salen de la lista**
+  (no inventa). Disponible también en MODO ASISTENCIA (es info de logística). `NEEDS_TOOL_RE` ya forzaba tool
+  en "sucursal/recoger/retir". Respuesta de diseño a Gerencia: hay que **dotarlo de los datos** (no confiar en
+  que el modelo sepa direcciones/teléfonos); la geografía sí la sabe el lenguaje. La lista vive en código
+  (estática, fácil de refrescar; futuro opcional: metaobjeto de Shopify si la red cambia seguido). Sin cambios
+  de esquema.
 - **Despliegue por CLI (2026-06-26):** se agregó **`deploy.ps1`** (raíz del repo) — `git pull` + `.\deploy.ps1`
   hace `supabase functions deploy … --no-verify-jwt` (byte-exacto desde disco, sin re-escribir contenido)
   y verifica el healthcheck. Es la vía recomendada (ver Despliegue): evita el error de un agente que
@@ -428,6 +440,12 @@ Reglas clave (texto completo en `index.ts`, const `SYSTEM_PROMPT`):
   toma del contexto (no del modelo); NO acepta RUC/datos fiscales (anti-interrupción). El bot lee los
   atributos existentes del payload de WATI para no repreguntar. Telemetría: `job_log` `lead_capturado`.
   El email enriquece el CDP y ayuda a los vendedores a cotizar más rápido.
+- **`sucursales_interior(lugar?)`** (v43, lista para desplegar) — puntos de recogida del INTERIOR (red
+  Servientrega, **45 sucursales** con provincia/nombre/teléfono/horario, del listado oficial
+  `web/envios-interior-sucursal.html`). Match por substring sin acentos contra provincia/nombre; el modelo
+  enruta la geografía (David→Chiriquí) y los datos salen de la lista (NO inventa). Sin `lugar` → resumen por
+  provincia + URL. Está en código (estática); también disponible en MODO ASISTENCIA. Cierra el "adivinar
+  sucursal" que se vio en la auditoría.
 - **Visión (v19, desplegada — no es una tool, es entrada multimodal):** las imágenes del
   cliente (`type:image`, `owner=false`) se descargan de WATI (`descargarMediaWati`: campo
   `data` + `Authorization: Bearer WATI_API_TOKEN`, base64, límite ~3.5 MB) y se adjuntan al
