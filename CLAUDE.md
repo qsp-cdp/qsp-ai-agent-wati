@@ -1,8 +1,8 @@
 # CLAUDE.md — Copiloto AI de WhatsApp (WATI) · Quick Service Panamá
 
 > Contexto base para Claude Code trabajando en ESTE repo. Lee esto primero.
-> Generado 2026-06-15; actualizado 2026-06-30 (edge function v38 en el repo, listo para
-> desplegar; v37 EN VIVO) + esquema del proyecto Supabase. Docs de diseño originales en el repo
+> Generado 2026-06-15; actualizado 2026-06-30 (edge function v39 en el repo, listo para
+> desplegar; v38 EN VIVO) + esquema del proyecto Supabase. Docs de diseño originales en el repo
 > `qsp-cdp/qsp-cdp-docs` (`docs/design/2026-06-12-proyecto-copilot-wati.md` y
 > `docs/design/2026-06-13-copilot-analisis-sombra-prompt-v2.md`).
 
@@ -13,16 +13,18 @@ con certeza, y calla/deriva cuando es mejor que responda un humano. Tienda:
 **quickservicepanama.com** (suministros de impresión y tecnología en Panamá).
 
 ## Estado actual (2026-06-30)
-- **EN VIVO: `copilot-webhook` v37 (`v37-feriados`), ACTIVE.** Desplegado con
-  `verify_jwt=false` (2026-06-30). Healthcheck (GET, sin key) reporta `version/mode/mode_raw/model/
-  llm_configured/wati_send_configured/inventario_configurado/resolve_configured/
-  handoff_assist_min/handoff_cold_hours/live_targets`. **Prompt caching (v35) confirmado en prod:** `avg(tokens_in)`
-  cayó de ~9.554 a ~2.337 (−75% de input a 1×), sin cambio de comportamiento. v36 (horario hábil calculado)
-  y v37 (feriados nacionales) también desplegados y verificados por healthcheck.
-- **EN EL REPO, LISTO PARA DESPLEGAR: v38 (`v38-cache-metrics`).** Telemetría de prompt caching: persiste
-  `cache_read_input_tokens`/`cache_creation_input_tokens` por turno en `messages` (solo medición, no cambia
-  comportamiento). Requiere la migración `20260630160000_messages_cache_tokens.sql` (ADD COLUMN). Desplegar
-  con `git pull` + `.\deploy.ps1` y correr el SQL; verificar `version:"v38-cache-metrics"`.
+- **EN VIVO: `copilot-webhook` v38 (`v38-cache-metrics`), ACTIVE.** Desplegado con
+  `verify_jwt=false` (2026-06-30), migración `20260630160000_messages_cache_tokens` aplicada. Healthcheck
+  (GET, sin key) reporta `version/mode/mode_raw/model/llm_configured/wati_send_configured/
+  inventario_configurado/resolve_configured/handoff_assist_min/handoff_cold_hours/live_targets`. **Prompt
+  caching (v35) confirmado en prod:** `avg(tokens_in)` ~9.554 → ~2.337 (−75% de input a 1×); con la telemetría
+  de v38, las lecturas de caché (~9.660 tokens/turno a 0.1×) dan ~−69% de costo de input real. v36/v37
+  (horario hábil + feriados) también en vivo.
+- **EN EL REPO, LISTO PARA DESPLEGAR: v39 (`v39-thinking-off`).** Prep para PROBAR **Claude Sonnet 5**
+  (`claude-sonnet-5`): fija `thinking:{type:"disabled"}` en el `messages.create` (NO-OP en la Sonnet 4.6 viva;
+  evita que Sonnet 5 encienda adaptive thinking solo). Desplegar con `git pull` + `.\deploy.ps1`; luego se
+  prueba Sonnet 5 cambiando **solo** `COPILOT_MODEL`. Ver "Evaluación de modelos" para el costo (tokenizer
+  +30%, intro $2/$10 hasta 2026-08-31).
 - **MODO: LIVE A TODOS.** `COPILOT_MODE=live` + `COPILOT_LIVE_ALLOWLIST=all`
   (`live_targets:"all"`). El piloto por allowlist (sombra → número por número) ya se
   completó; hoy el bot responde a todos los clientes. El default del CÓDIGO sigue
@@ -164,7 +166,7 @@ con certeza, y calla/deriva cuando es mejor que responda un humano. Tienda:
   marca cerrado y `proximoHorarioHabil` salta al próximo día hábil no feriado (incluye feriados consecutivos
   como Carnaval lun+mar); el CONTEXTO HORARIO aclara "hoy es feriado". Probado contra la lista oficial 2026
   (14/14) + verificación de Pascua 2027. No toca guardrails ni el caché de v35. Sin cambios de esquema.
-- **v38 (telemetría de prompt caching, 2026-06-30 — listo para desplegar):** el caching de v35 abarató el
+- **v38 (telemetría de prompt caching, 2026-06-30 — desplegado):** el caching de v35 abarató el
   input (`avg(tokens_in)` ~9.554 → ~2.337) pero `tokens_in` (= `usage.input_tokens`) NO incluye lo
   leído/escrito al caché → el ahorro $ exacto y el hit-rate quedaban como proxy. Fix: persistir por turno
   `usage.cache_read_input_tokens` y `usage.cache_creation_input_tokens` (sumados a través de las iteraciones
@@ -173,6 +175,18 @@ con certeza, y calla/deriva cuando es mejor que responda un humano. Tienda:
   (`ADD COLUMN`, idempotente, no requiere GRANT nuevo porque el grant a `service_role` es a nivel de tabla).
   Lectura de caché se factura 0.1×, escritura 1.25×, `tokens_in` 1× → con estas columnas se calcula el $
   real. Verás `cache_creation>0` en el 1er turno de cada ventana de 5 min y `cache_read>0` en los siguientes.
+  **Confirmado en prod:** turnos con `cache_read≈9.660` a 0.1×, `cache_creation=null` (lecturas) → ~−69% de
+  costo de input real (no solo proxy).
+- **v39 (thinking apagado explícito — prep Sonnet 5, 2026-06-30 — listo para desplegar):** prep para PROBAR
+  **Claude Sonnet 5** cambiando solo `COPILOT_MODEL`. El código no mandaba `thinking`; en Sonnet 4.6 eso es
+  "sin pensar" (lo actual), pero en **Sonnet 5 omitirlo enciende adaptive thinking por defecto** → latencia y
+  tokens extra y, con `max_tokens=1024`, riesgo de truncar la respuesta. Fix: `thinking:{type:"disabled"}`
+  fijo en el `messages.create`. **NO-OP en la Sonnet 4.6 viva** (mismo comportamiento), deja seguro el A/B de
+  Sonnet 5. No toca prompt/tools/system ni el caché de v35 (thinking es constante, no por turno). Sin cambios
+  de esquema. (`temperature`/`top_p`/prefill no nos afectan — no los usamos.) **Plan:** desplegar v39 →
+  cambiar `COPILOT_MODEL=claude-sonnet-5` en un número de prueba → comparar grounding y costo (tokenizer +30%,
+  intro $2/$10 hasta 2026-08-31) con la telemetría de v38 → decidir antes del 31/ago (volver a 4.6 = flipear
+  el secreto).
 - **Despliegue por CLI (2026-06-26):** se agregó **`deploy.ps1`** (raíz del repo) — `git pull` + `.\deploy.ps1`
   hace `supabase functions deploy … --no-verify-jwt` (byte-exacto desde disco, sin re-escribir contenido)
   y verifica el healthcheck. Es la vía recomendada (ver Despliegue): evita el error de un agente que
@@ -189,6 +203,13 @@ con certeza, y calla/deriva cuando es mejor que responda un humano. Tienda:
   ~39% grounding). Conclusión: **Opus no justifica el costo** (cuesta 2× Sonnet y
   aterriza MENOS); **Sonnet 4.6 es el punto justo**. Lección: los huecos de búsqueda se
   arreglan en CÓDIGO (determinista), no esperando que un LLM más caro adivine.
+- **Sonnet 5 (`claude-sonnet-5`) — por evaluar (v39 deja el terreno listo):** "casi nivel Opus" en
+  agéntico/coding y sigue instrucciones más literal (juega a favor del "no inventar"). Mismo contexto (1M) y
+  caching (el prefijo supera el mínimo, v35/v38 intactos). **OJO al cambiar:** (1) omitir `thinking` enciende
+  adaptive por defecto → v39 lo fija en `disabled`; (2) tokenizer nuevo ~+30% tokens; (3) precio estándar
+  igual a 4.6 ($3/$15) pero **intro $2/$10 hasta 2026-08-31**. Costo real con caching: ~−13% vs 4.6 durante
+  el intro (el −33% cancela el +30% del tokenizer) y ~+30% después. Plan: A/B en un número de prueba con la
+  telemetría de v38 antes del 31/ago; volver a 4.6 = flipear `COPILOT_MODEL`.
 
 ## Arquitectura
 ```

@@ -1,3 +1,12 @@
+// === copilot-webhook v39 — Copiloto AI de WATI — thinking apagado explícito (prep Sonnet 5) ===
+// v39 (2026-06-30): prep para PROBAR Claude Sonnet 5 (claude-sonnet-5) cambiando solo COPILOT_MODEL.
+//   El código no mandaba el parámetro `thinking`. En Sonnet 4.6 omitirlo = "sin pensar" (lo actual);
+//   en Sonnet 5 omitirlo ENCIENDE adaptive thinking por defecto → latencia y tokens extra por turno y,
+//   con max_tokens=1024, riesgo de truncar la respuesta. Fix: fijar `thinking:{type:"disabled"}` en el
+//   messages.create. Es NO-OP en la Sonnet 4.6 que está en vivo (mismo comportamiento), y deja seguro el
+//   A/B de Sonnet 5 (no se enciende el pensamiento solo). No toca prompt, tools, system ni el caché de
+//   v35 (thinking es constante, no por turno). Sin cambios de esquema. Nota de costo: Sonnet 5 usa un
+//   tokenizer nuevo (~+30% tokens) — re-baselinar con la telemetría de v38; intro $2/$10 hasta 2026-08-31.
 // === copilot-webhook v38 — Copiloto AI de WATI — telemetría de prompt caching ===
 // v38 (2026-06-30): el prompt caching (v35) abarató el input (avg(tokens_in) ~9.554 → ~2.337), pero
 //   tokens_in (= usage.input_tokens) NO incluye lo leído/escrito al caché, así que el ahorro $ exacto y el
@@ -810,7 +819,11 @@ async function responderLLM(history: { role: string; content: string; model?: st
     while (messages.length && messages[messages.length - 1].role === "assistant") messages.pop();
     if (!messages.length) break;
     const resp = await anthropic.messages.create({
-      model: MODEL, max_tokens: 1024, system, tools: toolsActivas, messages,
+      // v39: thinking EXPLÍCITAMENTE apagado. En Sonnet 4.6 omitirlo ya es "sin pensar" (no-op),
+      // pero en Sonnet 5 omitirlo enciende adaptive thinking por defecto → latencia/tokens extra y
+      // riesgo de truncar la respuesta con max_tokens=1024. Dejarlo fijo hace seguro probar Sonnet 5
+      // (cambiando solo COPILOT_MODEL) sin que el bot empiece a "pensar" en cada turno.
+      model: MODEL, max_tokens: 1024, thinking: { type: "disabled" }, system, tools: toolsActivas, messages,
       ...(i === 0 && forceTool ? { tool_choice: { type: "any" as const } } : {}),
     });
     tokensIn += resp.usage.input_tokens; tokensOut += resp.usage.output_tokens;
@@ -976,7 +989,7 @@ Deno.serve(async (req) => {
       if (!data) return Response.json({ error: "not_found" }, { status: 404 });
       return Response.json({ wa_id: data.wa_id, producto_handle: data.producto_handle, ts: data.created_at });
     }
-    return Response.json({ status: "ok", function: "copilot-webhook", version: "v38-cache-metrics", mode: MODE, mode_raw: MODE_RAW, model: MODEL, llm_configured: !!anthropic, wati_send_configured: !!(WATI_API_TOKEN && WATI_API_BASE), inventario_configurado: !!(SHOPIFY_ADMIN_TOKEN && SHOPIFY_ADMIN_API_BASE), resolve_configured: !!RESOLVE_SECRET, handoff_assist_min: HANDOFF_ASSIST_MIN, handoff_cold_hours: HANDOFF_COLD_HOURS, live_targets: MODE === "live" ? (LIVE_ALL ? "all" : LIVE_ALLOWLIST.length) : 0, ts: new Date().toISOString() });
+    return Response.json({ status: "ok", function: "copilot-webhook", version: "v39-thinking-off", mode: MODE, mode_raw: MODE_RAW, model: MODEL, llm_configured: !!anthropic, wati_send_configured: !!(WATI_API_TOKEN && WATI_API_BASE), inventario_configurado: !!(SHOPIFY_ADMIN_TOKEN && SHOPIFY_ADMIN_API_BASE), resolve_configured: !!RESOLVE_SECRET, handoff_assist_min: HANDOFF_ASSIST_MIN, handoff_cold_hours: HANDOFF_COLD_HOURS, live_targets: MODE === "live" ? (LIVE_ALL ? "all" : LIVE_ALLOWLIST.length) : 0, ts: new Date().toISOString() });
   }
   if (req.method !== "POST") return Response.json({ error: "method_not_allowed" }, { status: 405 });
   if (url.searchParams.get("key") !== WEBHOOK_KEY) return Response.json({ error: "forbidden" }, { status: 403 });
