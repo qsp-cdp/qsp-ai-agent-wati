@@ -1,8 +1,8 @@
 # CLAUDE.md — Copiloto AI de WhatsApp (WATI) · Quick Service Panamá
 
 > Contexto base para Claude Code trabajando en ESTE repo. Lee esto primero.
-> Generado 2026-06-15; actualizado 2026-06-30 (edge function v36 en el repo, listo para
-> desplegar; v35 es lo último EN VIVO) + esquema del proyecto Supabase. Docs de diseño originales en el repo
+> Generado 2026-06-15; actualizado 2026-06-30 (edge function v37 en el repo, listo para
+> desplegar; v36 es lo último EN VIVO) + esquema del proyecto Supabase. Docs de diseño originales en el repo
 > `qsp-cdp/qsp-cdp-docs` (`docs/design/2026-06-12-proyecto-copilot-wati.md` y
 > `docs/design/2026-06-13-copilot-analisis-sombra-prompt-v2.md`).
 
@@ -13,14 +13,14 @@ con certeza, y calla/deriva cuando es mejor que responda un humano. Tienda:
 **quickservicepanama.com** (suministros de impresión y tecnología en Panamá).
 
 ## Estado actual (2026-06-30)
-- **EN VIVO: `copilot-webhook` v35 (`v35-prompt-cache`), ACTIVE.** Desplegado con
+- **EN VIVO: `copilot-webhook` v36 (`v36-proximo-horario`), ACTIVE.** Desplegado con
   `verify_jwt=false`. Healthcheck (GET, sin key) reporta `version/mode/mode_raw/model/
   llm_configured/wati_send_configured/inventario_configurado/resolve_configured/
-  handoff_assist_min/handoff_cold_hours/live_targets`. **Prompt caching confirmado en prod:** `avg(tokens_in)`
+  handoff_assist_min/handoff_cold_hours/live_targets`. **Prompt caching (v35) confirmado en prod:** `avg(tokens_in)`
   cayó de ~9.554 a ~2.337 (−75% de input a 1×), sin cambio de comportamiento.
-- **EN EL REPO, LISTO PARA DESPLEGAR: v36 (`v36-proximo-horario`).** Bug fix: el "próximo horario hábil"
-  ahora se calcula en código (determinista) en vez de pedírselo al LLM. Desplegar con `git pull` +
-  `.\deploy.ps1`; verificar el healthcheck (`version:"v36-proximo-horario"`).
+- **EN EL REPO, LISTO PARA DESPLEGAR: v37 (`v37-feriados`).** Feriados nacionales de Panamá en la lógica de
+  horario (fijos por mes/día + Carnaval/Viernes Santo calculados desde la Pascua → correcto cualquier año).
+  Desplegar con `git pull` + `.\deploy.ps1`; verificar el healthcheck (`version:"v37-feriados"`).
 - **MODO: LIVE A TODOS.** `COPILOT_MODE=live` + `COPILOT_LIVE_ALLOWLIST=all`
   (`live_targets:"all"`). El piloto por allowlist (sombra → número por número) ya se
   completó; hoy el bot responde a todos los clientes. El default del CÓDIGO sigue
@@ -61,7 +61,7 @@ con certeza, y calla/deriva cuando es mejor que responda un humano. Tienda:
 - **v22 (conciencia de horario, 2026-06-19):** atención Lun-Vie **9:00am–5:00pm** (Panamá, UTC-5
   fijo). Fuera de horario el bot SIGUE respondiendo lo automático, pero al derivar aclara que un
   asesor responde en el próximo horario hábil (no promete humano inmediato); el handoff fijo
-  también es consciente del horario. (Feriados: pendiente.) Validado en prod.
+  también es consciente del horario. (Feriados: resueltos en v37.) Validado en prod.
 - **v23 (resiliencia ante fallos de API, 2026-06-23):** tras una auditoría que halló un bache de
   Anthropic (`529 overloaded` / `500 internal`) de ~33 min que dejó ~21 turnos sin respuesta:
   `maxRetries=3` en el SDK + **respuesta de respaldo** (si la API falla y no se alcanzó a responder,
@@ -151,7 +151,17 @@ con certeza, y calla/deriva cuando es mejor que responda un humano. Tienda:
   "mañana …" / "el lunes 6 de julio …", Lun-Vie 9am) y se inyecta TAL CUAL en el CONTEXTO HORARIO con la
   orden de NO recalcularla. Casos cubiertos (probados): día hábil antes de las 9 → HOY; día hábil después de
   las 5 → próximo hábil; fin de semana → lunes; rollover de mes/año. Va en el bloque VOLÁTIL del system (no
-  invalida el caché). (Feriados: sigue pendiente, igual que v22.) Sin cambios de esquema.
+  invalida el caché). Sin cambios de esquema.
+- **v37 (feriados nacionales de Panamá, 2026-06-30 — listo para desplegar):** v22/v36 solo conocían Lun-Vie
+  9-5 + fines de semana → un feriado entre semana se trataba como día hábil (el bot daría a entender que un
+  asesor responde "hoy", y al derivar apuntaría a un día cerrado). Fix determinista: se agregan los feriados
+  nacionales. Los **FIJOS** (Año Nuevo 1/1, Mártires 9/1, Trabajo 1/5, los de noviembre 3/4/5/10/28, Madres
+  8/12, Duelo Nacional 20/12, Navidad 25/12) van por mes/día. **Carnaval (lun/mar) y Viernes Santo son
+  MÓVILES** (dependen de la Pascua) → se calculan con **Meeus/Jones/Butcher** (Carnaval = Pascua−48/−47,
+  Viernes Santo = Pascua−2), correcto para CUALQUIER año, sin mantenimiento. En un feriado: `horarioPanama`
+  marca cerrado y `proximoHorarioHabil` salta al próximo día hábil no feriado (incluye feriados consecutivos
+  como Carnaval lun+mar); el CONTEXTO HORARIO aclara "hoy es feriado". Probado contra la lista oficial 2026
+  (14/14) + verificación de Pascua 2027. No toca guardrails ni el caché de v35. Sin cambios de esquema.
 - **Despliegue por CLI (2026-06-26):** se agregó **`deploy.ps1`** (raíz del repo) — `git pull` + `.\deploy.ps1`
   hace `supabase functions deploy … --no-verify-jwt` (byte-exacto desde disco, sin re-escribir contenido)
   y verifica el healthcheck. Es la vía recomendada (ver Despliegue): evita el error de un agente que
@@ -459,7 +469,8 @@ Eventos WATI suscritos (necesarios): **Message Received**, **Session Message Sen
 10. **Captura de lead** (correo/nombre/apellido/empresa) en atributos de WATI → ✅ **HECHA en v25/v27**
     (pasiva, dentro del agente actual, sin pedir datos fiscales; `guardar_lead`). Pendiente: el puente
     **WATI→CDP** (evaluando **Make**) para que el dato capturado enriquezca el CDP automáticamente.
-11. **Feriados** en la lógica de horario (v22 hoy solo maneja Lun-Vie 9-5 + fines de semana).
+11. **Feriados** en la lógica de horario: ✅ **HECHO en v37** (fijos por mes/día + Carnaval/Viernes Santo
+    calculados desde la Pascua con Meeus/Jones/Butcher → correcto cualquier año, sin mantenimiento).
 12. **Puente WhatsApp→web por `ref_code` (v28–v30): ✅ mitad del copiloto lista** (emite + guarda +
     expone). Pendiente del lado **CDP**: el resolver inverso (leer el endpoint → enriquecer `contacts`) +
     entregar `RESOLVE_SECRET` por canal seguro. Opcional copiloto: purga `pg_cron` de `ref_codes` ≥90 d.

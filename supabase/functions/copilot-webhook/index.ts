@@ -1,3 +1,15 @@
+// === copilot-webhook v37 — Copiloto AI de WATI — feriados nacionales de Panamá ===
+// v37 (2026-06-30): el horario (v22/v36) solo conocía Lun-Vie 9-5 + fines de semana → un feriado entre
+//   semana se trataba como día hábil (el bot daría a entender que un asesor responde "hoy", y al derivar
+//   apuntaría a un día cerrado). Fix: se agregan los FERIADOS nacionales de Panamá. Los FIJOS (Año Nuevo
+//   1/1, Mártires 9/1, Trabajo 1/5, los de noviembre 3/4/5/10/28, Madres 8/12, Duelo Nacional 20/12,
+//   Navidad 25/12) van por mes/día (se repiten cada año). Carnaval (lunes y martes) y Viernes Santo son
+//   MÓVILES (dependen de la Pascua) → se calculan con Meeus/Jones/Butcher (Carnaval = Pascua−48/−47,
+//   Viernes Santo = Pascua−2), correcto para CUALQUIER año, sin mantenimiento. En un feriado: horarioPanama
+//   marca "fuera de horario" (cerrado) y proximoHorarioHabil salta al próximo día hábil no feriado (incluye
+//   feriados consecutivos como Carnaval lun+mar). El CONTEXTO HORARIO aclara "hoy es feriado". Probado
+//   contra la lista oficial 2026 (14/14) + verificación de Pascua 2027. No toca guardrails ni el caché de
+//   v35 (el texto de horario vive en el bloque VOLÁTIL). Sin cambios de esquema.
 // === copilot-webhook v36 — Copiloto AI de WATI — "próximo horario hábil" calculado en código ===
 // v36 (2026-06-30): bug real en producción. A la 1:00am del martes 30/jun el bot derivó diciendo que un
 //   asesor respondería "desde el miércoles 1 de julio a las 9:00am" cuando lo correcto era HOY (martes 30)
@@ -262,13 +274,42 @@ function liveAllowed(waId: string): boolean {
   return LIVE_ALL || LIVE_ALLOWLIST.includes(waId);
 }
 
+// v37 — feriados nacionales de Panamá. Los FIJOS se repiten cada año por mes/día; Carnaval (lunes y
+// martes) y Viernes Santo son MÓVILES (dependen de la Pascua) → se calculan con el algoritmo de
+// Meeus/Jones/Butcher para que sea correcto SIEMPRE, no solo el año en curso. En un feriado la tienda
+// está cerrada: horarioPanama lo marca fuera de horario y proximoHorarioHabil salta al próximo día hábil.
+// (Año Nuevo, Mártires, Trabajo, los de noviembre, Madres, Duelo Nacional, Navidad = fijos.)
+const FERIADOS_FIJOS = ["1-1", "1-9", "5-1", "11-3", "11-4", "11-5", "11-10", "11-28", "12-8", "12-20", "12-25"];
+const _feriadosCache: Record<number, Set<string>> = {};
+function feriadosPa(anio: number): Set<string> {
+  if (_feriadosCache[anio]) return _feriadosCache[anio];
+  const s = new Set(FERIADOS_FIJOS);
+  // Pascua (domingo) por Meeus/Jones/Butcher (gregoriano):
+  const a = anio % 19, b = Math.floor(anio / 100), c = anio % 100, d = Math.floor(b / 4), e = b % 4,
+    f = Math.floor((b + 8) / 25), g = Math.floor((b - f + 1) / 3),
+    h = (19 * a + b - d - g + 15) % 30, i = Math.floor(c / 4), k = c % 4,
+    l = (32 + 2 * e + 2 * i - h - k) % 7, mm = Math.floor((a + 11 * h + 22 * l) / 451),
+    mes = Math.floor((h + l - 7 * mm + 114) / 31), dia = ((h + l - 7 * mm + 114) % 31) + 1;
+  const pascua = Date.UTC(anio, mes - 1, dia);
+  // Carnaval lunes (Pascua−48), Carnaval martes (Pascua−47), Viernes Santo (Pascua−2).
+  for (const off of [48, 47, 2]) {
+    const x = new Date(pascua - off * 86400000);
+    s.add(`${x.getUTCMonth() + 1}-${x.getUTCDate()}`);
+  }
+  _feriadosCache[anio] = s;
+  return s;
+}
+function esFeriado(pa: Date): boolean {
+  return feriadosPa(pa.getUTCFullYear()).has(`${pa.getUTCMonth() + 1}-${pa.getUTCDate()}`);
+}
+
 // v22 — horario de atención de QSP: Lun-Vie 9:00am–5:00pm, hora de Panamá (UTC-5 fijo, sin
-// horario de verano → basta desplazar UTC y leer). Sáb/Dom o fuera de 9–17 = fuera de horario.
+// horario de verano → basta desplazar UTC y leer). Sáb/Dom, feriado o fuera de 9–17 = fuera de horario.
 function horarioPanama(now: Date = new Date()): { dentro: boolean; dia: number; hora: number } {
   const pa = new Date(now.getTime() - 5 * 3600 * 1000); // UTC-5
   const dia = pa.getUTCDay();    // 0=Dom … 6=Sáb
   const hora = pa.getUTCHours(); // 0–23
-  const dentro = dia >= 1 && dia <= 5 && hora >= 9 && hora < 17;
+  const dentro = dia >= 1 && dia <= 5 && hora >= 9 && hora < 17 && !esFeriado(pa); // v37: feriado = cerrado
   return { dentro, dia, hora };
 }
 
@@ -299,7 +340,7 @@ function etiquetaTiempo(iso: string, ahoraMs: number): string {
 // martes el bot dijo "miércoles 1 de julio" cuando lo correcto era "hoy a las 9am" — trató la madrugada
 // como si el día ya hubiera pasado y saltó un día. Devuelve una etiqueta concreta tipo "hoy martes 30 de
 // junio a las 9:00am" / "mañana …" / "el lunes 6 de julio …" para inyectarla TAL CUAL en el CONTEXTO
-// HORARIO. Reglas QSP: Lun-Vie, abre 9:00am. (Feriados: pendiente, igual que v22.)
+// HORARIO. Reglas QSP: Lun-Vie, abre 9:00am. (v37: salta también los feriados nacionales.)
 const MESES = ["enero", "febrero", "marzo", "abril", "mayo", "junio", "julio", "agosto", "septiembre", "octubre", "noviembre", "diciembre"];
 function proximoHorarioHabil(ahoraMs: number): string {
   const HORA_ABRE = 9;
@@ -307,10 +348,11 @@ function proximoHorarioHabil(ahoraMs: number): string {
   const esHabil = (dw: number) => dw >= 1 && dw <= 5; // Lun..Vie
   // Candidato base: hoy a las 9:00am (en el espacio desplazado de Panamá; Date normaliza el rollover).
   const cand = new Date(Date.UTC(pa.getUTCFullYear(), pa.getUTCMonth(), pa.getUTCDate(), HORA_ABRE, 0, 0));
-  // Hoy SOLO cuenta si es día hábil y aún NO dan las 9am; si no (después de las 9, o fin de semana),
-  // avanzar al próximo día hábil. (Entre 9–17 estamos "dentro" y este texto ni se usa.)
-  if (!(esHabil(pa.getUTCDay()) && pa.getUTCHours() < HORA_ABRE)) {
-    do { cand.setUTCDate(cand.getUTCDate() + 1); } while (!esHabil(cand.getUTCDay()));
+  // Hoy SOLO cuenta si es día hábil, NO feriado y aún NO dan las 9am; si no (después de las 9, fin de
+  // semana o feriado), avanzar al próximo día hábil no feriado. (Entre 9–17 hábil estamos "dentro".)
+  // v37: el while salta también feriados consecutivos (ej. Carnaval lunes+martes).
+  if (!(esHabil(pa.getUTCDay()) && !esFeriado(pa) && pa.getUTCHours() < HORA_ABRE)) {
+    do { cand.setUTCDate(cand.getUTCDate() + 1); } while (!esHabil(cand.getUTCDay()) || esFeriado(cand));
   }
   const hoy0 = Date.UTC(pa.getUTCFullYear(), pa.getUTCMonth(), pa.getUTCDate());
   const cand0 = Date.UTC(cand.getUTCFullYear(), cand.getUTCMonth(), cand.getUTCDate());
@@ -683,8 +725,10 @@ async function responderLLM(history: { role: string; content: string; model?: st
   const hh = horarioPanama();
   // v36 — el próximo horario hábil va CALCULADO (no lo deduce el LLM): a la 1am del martes decía
   // "miércoles 1 de julio" en vez de "hoy a las 9am". Se inyecta TAL CUAL para que no lo recalcule.
+  // v37 — si hoy es feriado, se aclara (la tienda está cerrada) y el próximo hábil ya salta el feriado.
+  const feriadoHoy = esFeriado(new Date(ahoraMs - 5 * 3600 * 1000));
   const ctxHorario = hh.dentro ? "" :
-    `\n\nCONTEXTO HORARIO: Ahora es ${DIAS_SEM[hh.dia]} ~${hh.hora}:00 en Panamá, FUERA del horario de atención de QSP (atención por WhatsApp y tienda: Lun-Vie 9:00am–5:00pm; sábados y domingos cerrado). Seguí ayudando con lo automático (precio/ITBMS, stock, info de tienda). Pero si el cliente necesita un asesor, una cotización formal o coordinar pago/entrega, aclará con calma que un asesor le responde en el próximo horario hábil, que es ${proximoHorarioHabil(ahoraMs)} (usá esa fecha/hora TAL CUAL, NO la recalcules), y NO prometas respuesta humana inmediata.`;
+    `\n\nCONTEXTO HORARIO: Ahora es ${DIAS_SEM[hh.dia]} ~${hh.hora}:00 en Panamá${feriadoHoy ? " y hoy es FERIADO nacional en Panamá (la tienda está cerrada)" : ""}, FUERA del horario de atención de QSP (atención por WhatsApp y tienda: Lun-Vie 9:00am–5:00pm; sábados, domingos y feriados cerrado). Seguí ayudando con lo automático (precio/ITBMS, stock, info de tienda). Pero si el cliente necesita un asesor, una cotización formal o coordinar pago/entrega, aclará con calma que un asesor le responde en el próximo horario hábil, que es ${proximoHorarioHabil(ahoraMs)} (usá esa fecha/hora TAL CUAL, NO la recalcules), y NO prometas respuesta humana inmediata.`;
   // v32 — conciencia temporal SIEMPRE (no solo fuera de horario): el bot sabe la fecha/hora actual y que
   // el historial viene marcado con cuándo se dijo cada cosa, para no arrastrar el "ayer" al "hoy".
   const paNow = new Date(ahoraMs - 5 * 3600 * 1000);
@@ -918,7 +962,7 @@ Deno.serve(async (req) => {
       if (!data) return Response.json({ error: "not_found" }, { status: 404 });
       return Response.json({ wa_id: data.wa_id, producto_handle: data.producto_handle, ts: data.created_at });
     }
-    return Response.json({ status: "ok", function: "copilot-webhook", version: "v36-proximo-horario", mode: MODE, mode_raw: MODE_RAW, model: MODEL, llm_configured: !!anthropic, wati_send_configured: !!(WATI_API_TOKEN && WATI_API_BASE), inventario_configurado: !!(SHOPIFY_ADMIN_TOKEN && SHOPIFY_ADMIN_API_BASE), resolve_configured: !!RESOLVE_SECRET, handoff_assist_min: HANDOFF_ASSIST_MIN, handoff_cold_hours: HANDOFF_COLD_HOURS, live_targets: MODE === "live" ? (LIVE_ALL ? "all" : LIVE_ALLOWLIST.length) : 0, ts: new Date().toISOString() });
+    return Response.json({ status: "ok", function: "copilot-webhook", version: "v37-feriados", mode: MODE, mode_raw: MODE_RAW, model: MODEL, llm_configured: !!anthropic, wati_send_configured: !!(WATI_API_TOKEN && WATI_API_BASE), inventario_configurado: !!(SHOPIFY_ADMIN_TOKEN && SHOPIFY_ADMIN_API_BASE), resolve_configured: !!RESOLVE_SECRET, handoff_assist_min: HANDOFF_ASSIST_MIN, handoff_cold_hours: HANDOFF_COLD_HOURS, live_targets: MODE === "live" ? (LIVE_ALL ? "all" : LIVE_ALLOWLIST.length) : 0, ts: new Date().toISOString() });
   }
   if (req.method !== "POST") return Response.json({ error: "method_not_allowed" }, { status: 405 });
   if (url.searchParams.get("key") !== WEBHOOK_KEY) return Response.json({ error: "forbidden" }, { status: 403 });
