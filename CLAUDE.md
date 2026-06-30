@@ -1,8 +1,8 @@
 # CLAUDE.md — Copiloto AI de WhatsApp (WATI) · Quick Service Panamá
 
 > Contexto base para Claude Code trabajando en ESTE repo. Lee esto primero.
-> Generado 2026-06-15; actualizado 2026-06-30 (edge function v37 en el repo, listo para
-> desplegar; v36 es lo último EN VIVO) + esquema del proyecto Supabase. Docs de diseño originales en el repo
+> Generado 2026-06-15; actualizado 2026-06-30 (edge function v37 EN VIVO) + esquema del
+> proyecto Supabase. Docs de diseño originales en el repo
 > `qsp-cdp/qsp-cdp-docs` (`docs/design/2026-06-12-proyecto-copilot-wati.md` y
 > `docs/design/2026-06-13-copilot-analisis-sombra-prompt-v2.md`).
 
@@ -13,14 +13,12 @@ con certeza, y calla/deriva cuando es mejor que responda un humano. Tienda:
 **quickservicepanama.com** (suministros de impresión y tecnología en Panamá).
 
 ## Estado actual (2026-06-30)
-- **EN VIVO: `copilot-webhook` v36 (`v36-proximo-horario`), ACTIVE.** Desplegado con
-  `verify_jwt=false`. Healthcheck (GET, sin key) reporta `version/mode/mode_raw/model/
+- **EN VIVO: `copilot-webhook` v37 (`v37-feriados`), ACTIVE.** Desplegado con
+  `verify_jwt=false` (2026-06-30). Healthcheck (GET, sin key) reporta `version/mode/mode_raw/model/
   llm_configured/wati_send_configured/inventario_configurado/resolve_configured/
   handoff_assist_min/handoff_cold_hours/live_targets`. **Prompt caching (v35) confirmado en prod:** `avg(tokens_in)`
-  cayó de ~9.554 a ~2.337 (−75% de input a 1×), sin cambio de comportamiento.
-- **EN EL REPO, LISTO PARA DESPLEGAR: v37 (`v37-feriados`).** Feriados nacionales de Panamá en la lógica de
-  horario (fijos por mes/día + Carnaval/Viernes Santo calculados desde la Pascua → correcto cualquier año).
-  Desplegar con `git pull` + `.\deploy.ps1`; verificar el healthcheck (`version:"v37-feriados"`).
+  cayó de ~9.554 a ~2.337 (−75% de input a 1×), sin cambio de comportamiento. v36 (horario hábil calculado)
+  y v37 (feriados nacionales) también desplegados y verificados por healthcheck.
 - **MODO: LIVE A TODOS.** `COPILOT_MODE=live` + `COPILOT_LIVE_ALLOWLIST=all`
   (`live_targets:"all"`). El piloto por allowlist (sombra → número por número) ya se
   completó; hoy el bot responde a todos los clientes. El default del CÓDIGO sigue
@@ -142,7 +140,7 @@ con certeza, y calla/deriva cuando es mejor que responda un humano. Tienda:
   Sin cambios de esquema. **Desplegado y confirmado en prod (2026-06-30):** `avg(tokens_in)` ~9.554 → ~2.337
   (−75% de input a 1×); turnos simples ~800–1.300 in (prefijo servido del caché), turnos con tool 2.7k–7.6k
   (el historial y el JSON de productos NO se cachean, por diseño).
-- **v36 (próximo horario hábil calculado en código, 2026-06-30 — listo para desplegar):** bug real en prod
+- **v36 (próximo horario hábil calculado en código, 2026-06-30 — desplegado):** bug real en prod
   → a la 1:00am del martes 30/jun el bot derivó diciendo que un asesor respondería "desde el miércoles 1 de
   julio a las 9:00am" cuando lo correcto era **HOY** (martes 30) a las 9:00am (faltaban 8 h para abrir). v22
   le pedía al LLM "deducí cuál [es el próximo horario hábil]" y eso es lo que falla: trata la madrugada como
@@ -152,7 +150,7 @@ con certeza, y calla/deriva cuando es mejor que responda un humano. Tienda:
   orden de NO recalcularla. Casos cubiertos (probados): día hábil antes de las 9 → HOY; día hábil después de
   las 5 → próximo hábil; fin de semana → lunes; rollover de mes/año. Va en el bloque VOLÁTIL del system (no
   invalida el caché). Sin cambios de esquema.
-- **v37 (feriados nacionales de Panamá, 2026-06-30 — listo para desplegar):** v22/v36 solo conocían Lun-Vie
+- **v37 (feriados nacionales de Panamá, 2026-06-30 — desplegado):** v22/v36 solo conocían Lun-Vie
   9-5 + fines de semana → un feriado entre semana se trataba como día hábil (el bot daría a entender que un
   asesor responde "hoy", y al derivar apuntaría a un día cerrado). Fix determinista: se agregan los feriados
   nacionales. Los **FIJOS** (Año Nuevo 1/1, Mártires 9/1, Trabajo 1/5, los de noviembre 3/4/5/10/28, Madres

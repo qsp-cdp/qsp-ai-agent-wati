@@ -21,7 +21,7 @@ sombra por seguridad.
 CLAUDE.md                                  # contexto autoritativo (leer primero)
 docs/base-conocimiento-qsp.md              # base de conocimiento del negocio (fuente → prompt + store_facts)
 supabase/
-  functions/copilot-webhook/index.ts       # la edge function (v37 en repo; v36 = lo desplegado)
+  functions/copilot-webhook/index.ts       # la edge function (v37, = lo desplegado)
   migrations/*.sql                          # esquema reproducible (7 migraciones)
 deploy.ps1                                  # deploy byte-exacto por CLI + verificación de healthcheck
 web/
@@ -29,9 +29,9 @@ web/
 ```
 
 ## Estado
-- Edge function `copilot-webhook` **v36 (`v36-proximo-horario`), ACTIVE** — EN VIVO a todos, en
+- Edge function `copilot-webhook` **v37 (`v37-feriados`), ACTIVE** — EN VIVO a todos, en
   Sonnet 4.6. Coexistencia validada (v15) · visión (v19) · endurecimiento anti-duplicado /
-  anti-carrera / MODE-seguro (v20). **v37 (`v37-feriados`) está en el repo, listo para `deploy.ps1`.**
+  anti-carrera / MODE-seguro (v20).
 - **v21:** ITBMS (precio + 7% + total, calculado en código) + inventario real (Shopify Admin
   `totalInventory`; ≤3 → "un asesor verifica") + anti-eco duro (se acabaron los handoffs falsos).
 - **v22:** conciencia de horario (atención Lun-Vie 9am-5pm, Panamá) — fuera de horario aclara
@@ -59,7 +59,7 @@ web/
 - **v36:** el "próximo horario hábil" se calcula en código (`proximoHorarioHabil`) en vez de pedírselo al
   LLM — arregla el bug de que a la 1am del martes derivaba a "mañana" (1 de julio) en vez de "hoy" (martes 30)
   a las 9am. Determinista, cubre antes/después de horario, fin de semana y rollover.
-- **v37 (listo para desplegar):** feriados nacionales de Panamá en la lógica de horario. Fijos por mes/día +
+- **v37:** feriados nacionales de Panamá en la lógica de horario. Fijos por mes/día +
   Carnaval/Viernes Santo calculados desde la Pascua (Meeus/Jones/Butcher) → correcto cualquier año, sin
   mantenimiento. En un feriado la tienda está cerrada y el "próximo horario hábil" salta al siguiente día
   laborable (incluye feriados consecutivos como Carnaval). Probado contra la lista oficial 2026 (14/14).
