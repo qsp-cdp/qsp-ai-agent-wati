@@ -1,8 +1,8 @@
 # CLAUDE.md — Copiloto AI de WhatsApp (WATI) · Quick Service Panamá
 
 > Contexto base para Claude Code trabajando en ESTE repo. Lee esto primero.
-> Generado 2026-06-15; actualizado 2026-06-30 (edge function v35 en el repo, listo para
-> desplegar; v34 es lo último EN VIVO) + esquema del proyecto Supabase. Docs de diseño originales en el repo
+> Generado 2026-06-15; actualizado 2026-06-30 (edge function v36 en el repo, listo para
+> desplegar; v35 es lo último EN VIVO) + esquema del proyecto Supabase. Docs de diseño originales en el repo
 > `qsp-cdp/qsp-cdp-docs` (`docs/design/2026-06-12-proyecto-copilot-wati.md` y
 > `docs/design/2026-06-13-copilot-analisis-sombra-prompt-v2.md`).
 
@@ -13,13 +13,14 @@ con certeza, y calla/deriva cuando es mejor que responda un humano. Tienda:
 **quickservicepanama.com** (suministros de impresión y tecnología en Panamá).
 
 ## Estado actual (2026-06-30)
-- **EN VIVO: `copilot-webhook` v34 (`v34-busqueda-tags`), ACTIVE.** Desplegado con
+- **EN VIVO: `copilot-webhook` v35 (`v35-prompt-cache`), ACTIVE.** Desplegado con
   `verify_jwt=false`. Healthcheck (GET, sin key) reporta `version/mode/mode_raw/model/
   llm_configured/wati_send_configured/inventario_configurado/resolve_configured/
-  handoff_assist_min/handoff_cold_hours/live_targets`.
-- **EN EL REPO, LISTO PARA DESPLEGAR: v35 (`v35-prompt-cache`).** Prompt caching para abaratar el
-  input (no cambia comportamiento). Desplegar con `git pull` + `.\deploy.ps1`; verificar el healthcheck
-  (`version:"v35-prompt-cache"`) y que `usage.cache_read_input_tokens>0` (baja el `avg(tokens_in)`).
+  handoff_assist_min/handoff_cold_hours/live_targets`. **Prompt caching confirmado en prod:** `avg(tokens_in)`
+  cayó de ~9.554 a ~2.337 (−75% de input a 1×), sin cambio de comportamiento.
+- **EN EL REPO, LISTO PARA DESPLEGAR: v36 (`v36-proximo-horario`).** Bug fix: el "próximo horario hábil"
+  ahora se calcula en código (determinista) en vez de pedírselo al LLM. Desplegar con `git pull` +
+  `.\deploy.ps1`; verificar el healthcheck (`version:"v36-proximo-horario"`).
 - **MODO: LIVE A TODOS.** `COPILOT_MODE=live` + `COPILOT_LIVE_ALLOWLIST=all`
   (`live_targets:"all"`). El piloto por allowlist (sombra → número por número) ya se
   completó; hoy el bot responde a todos los clientes. El default del CÓDIGO sigue
@@ -138,7 +139,19 @@ con certeza, y calla/deriva cuando es mejor que responda un humano. Tienda:
   mínimo de 2048 tokens de Sonnet 4.6. GA (sin header beta). Verificar con `usage.cache_read_input_tokens>0`
   y `avg(tokens_in)` cayendo (`input_tokens` NO incluye lo leído de caché). En MODO ASISTENCIA las tools
   difieren (solo `info_tienda`) → ese camino mantiene su propia entrada de caché (raro, no afecta el normal).
-  Sin cambios de esquema. **Pendiente: desplegar (`deploy.ps1`) y confirmar el ahorro en prod.**
+  Sin cambios de esquema. **Desplegado y confirmado en prod (2026-06-30):** `avg(tokens_in)` ~9.554 → ~2.337
+  (−75% de input a 1×); turnos simples ~800–1.300 in (prefijo servido del caché), turnos con tool 2.7k–7.6k
+  (el historial y el JSON de productos NO se cachean, por diseño).
+- **v36 (próximo horario hábil calculado en código, 2026-06-30 — listo para desplegar):** bug real en prod
+  → a la 1:00am del martes 30/jun el bot derivó diciendo que un asesor respondería "desde el miércoles 1 de
+  julio a las 9:00am" cuando lo correcto era **HOY** (martes 30) a las 9:00am (faltaban 8 h para abrir). v22
+  le pedía al LLM "deducí cuál [es el próximo horario hábil]" y eso es lo que falla: trata la madrugada como
+  si el día ya hubiera pasado. Fix **determinista** (no toca guardrails ni el caché de v35): nueva función
+  `proximoHorarioHabil(ahoraMs)` que devuelve la apertura concreta ("hoy martes 30 de junio a las 9:00am" /
+  "mañana …" / "el lunes 6 de julio …", Lun-Vie 9am) y se inyecta TAL CUAL en el CONTEXTO HORARIO con la
+  orden de NO recalcularla. Casos cubiertos (probados): día hábil antes de las 9 → HOY; día hábil después de
+  las 5 → próximo hábil; fin de semana → lunes; rollover de mes/año. Va en el bloque VOLÁTIL del system (no
+  invalida el caché). (Feriados: sigue pendiente, igual que v22.) Sin cambios de esquema.
 - **Despliegue por CLI (2026-06-26):** se agregó **`deploy.ps1`** (raíz del repo) — `git pull` + `.\deploy.ps1`
   hace `supabase functions deploy … --no-verify-jwt` (byte-exacto desde disco, sin re-escribir contenido)
   y verifica el healthcheck. Es la vía recomendada (ver Despliegue): evita el error de un agente que

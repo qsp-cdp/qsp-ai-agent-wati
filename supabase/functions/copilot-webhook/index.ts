@@ -1,3 +1,14 @@
+// === copilot-webhook v36 — Copiloto AI de WATI — "próximo horario hábil" calculado en código ===
+// v36 (2026-06-30): bug real en producción. A la 1:00am del martes 30/jun el bot derivó diciendo que un
+//   asesor respondería "desde el miércoles 1 de julio a las 9:00am" cuando lo correcto era HOY (martes 30)
+//   a las 9:00am — faltaban 8 horas para abrir. El LLM trataba la madrugada como si el día ya hubiera
+//   pasado y saltaba al día siguiente. v22 le pedía "deducí cuál [es el próximo horario hábil] según el
+//   día y la hora actuales", y eso es justo lo que falla. Fix DETERMINISTA (no se le pide al LLM que
+//   calcule fechas): nueva función proximoHorarioHabil(ahoraMs) que devuelve la apertura concreta
+//   ("hoy martes 30 de junio a las 9:00am" / "mañana …" / "el lunes 6 de julio …", Lun-Vie 9am) y se
+//   inyecta TAL CUAL en el CONTEXTO HORARIO con la orden de NO recalcularla. Casos: día hábil antes de
+//   las 9 → HOY; día hábil después de las 5 → próximo hábil; fin de semana → lunes. (Feriados: pendiente.)
+//   Solo toca el texto fuera de horario; va en el bloque VOLÁTIL del system (no afecta el caché de v35).
 // === copilot-webhook v35 — Copiloto AI de WATI — prompt caching (abarata el input) ===
 // v35 (2026-06-30): el consumo de input subió (el prompt creció v24→v34 y el volumen del lunes +
 //   reactivación) y es input-dominado (~10k in / ~155 out por turno). Fix sin cambiar comportamiento:
@@ -282,6 +293,30 @@ function etiquetaTiempo(iso: string, ahoraMs: number): string {
   if (dias === 1) return `ayer ${hora}`;
   if (dias < 7) return `hace ${dias} días, ${hora}`;
   return `${m.getUTCDate()}/${m.getUTCMonth() + 1} ${hora}`;
+}
+
+// v36 — el "próximo horario hábil" se calcula en CÓDIGO (no lo deduce el LLM). Caso real: a la 1am del
+// martes el bot dijo "miércoles 1 de julio" cuando lo correcto era "hoy a las 9am" — trató la madrugada
+// como si el día ya hubiera pasado y saltó un día. Devuelve una etiqueta concreta tipo "hoy martes 30 de
+// junio a las 9:00am" / "mañana …" / "el lunes 6 de julio …" para inyectarla TAL CUAL en el CONTEXTO
+// HORARIO. Reglas QSP: Lun-Vie, abre 9:00am. (Feriados: pendiente, igual que v22.)
+const MESES = ["enero", "febrero", "marzo", "abril", "mayo", "junio", "julio", "agosto", "septiembre", "octubre", "noviembre", "diciembre"];
+function proximoHorarioHabil(ahoraMs: number): string {
+  const HORA_ABRE = 9;
+  const pa = new Date(ahoraMs - 5 * 3600 * 1000); // hora de Panamá (UTC-5)
+  const esHabil = (dw: number) => dw >= 1 && dw <= 5; // Lun..Vie
+  // Candidato base: hoy a las 9:00am (en el espacio desplazado de Panamá; Date normaliza el rollover).
+  const cand = new Date(Date.UTC(pa.getUTCFullYear(), pa.getUTCMonth(), pa.getUTCDate(), HORA_ABRE, 0, 0));
+  // Hoy SOLO cuenta si es día hábil y aún NO dan las 9am; si no (después de las 9, o fin de semana),
+  // avanzar al próximo día hábil. (Entre 9–17 estamos "dentro" y este texto ni se usa.)
+  if (!(esHabil(pa.getUTCDay()) && pa.getUTCHours() < HORA_ABRE)) {
+    do { cand.setUTCDate(cand.getUTCDate() + 1); } while (!esHabil(cand.getUTCDay()));
+  }
+  const hoy0 = Date.UTC(pa.getUTCFullYear(), pa.getUTCMonth(), pa.getUTCDate());
+  const cand0 = Date.UTC(cand.getUTCFullYear(), cand.getUTCMonth(), cand.getUTCDate());
+  const dias = Math.round((cand0 - hoy0) / 86400000);
+  const pref = dias === 0 ? "hoy " : dias === 1 ? "mañana " : "el ";
+  return `${pref}${DIAS_SEM[cand.getUTCDay()]} ${cand.getUTCDate()} de ${MESES[cand.getUTCMonth()]} a las 9:00am`;
 }
 
 const sb = createClient(SB_URL, SB_KEY, { auth: { persistSession: false } });
@@ -646,8 +681,10 @@ async function responderLLM(history: { role: string; content: string; model?: st
   // con lo automático pero aclara cuándo responde un asesor (sin prometer respuesta humana inmediata).
   const ahoraMs = Date.now();
   const hh = horarioPanama();
+  // v36 — el próximo horario hábil va CALCULADO (no lo deduce el LLM): a la 1am del martes decía
+  // "miércoles 1 de julio" en vez de "hoy a las 9am". Se inyecta TAL CUAL para que no lo recalcule.
   const ctxHorario = hh.dentro ? "" :
-    `\n\nCONTEXTO HORARIO: Ahora es ${DIAS_SEM[hh.dia]} ~${hh.hora}:00 en Panamá, FUERA del horario de atención de QSP (atención por WhatsApp y tienda: Lun-Vie 9:00am–5:00pm; sábados y domingos cerrado). Seguí ayudando con lo automático (precio/ITBMS, stock, info de tienda). Pero si el cliente necesita un asesor, una cotización formal o coordinar pago/entrega, aclará con calma que un asesor le responde en el próximo horario hábil (deducí cuál según el día y la hora actuales) y NO prometas respuesta humana inmediata.`;
+    `\n\nCONTEXTO HORARIO: Ahora es ${DIAS_SEM[hh.dia]} ~${hh.hora}:00 en Panamá, FUERA del horario de atención de QSP (atención por WhatsApp y tienda: Lun-Vie 9:00am–5:00pm; sábados y domingos cerrado). Seguí ayudando con lo automático (precio/ITBMS, stock, info de tienda). Pero si el cliente necesita un asesor, una cotización formal o coordinar pago/entrega, aclará con calma que un asesor le responde en el próximo horario hábil, que es ${proximoHorarioHabil(ahoraMs)} (usá esa fecha/hora TAL CUAL, NO la recalcules), y NO prometas respuesta humana inmediata.`;
   // v32 — conciencia temporal SIEMPRE (no solo fuera de horario): el bot sabe la fecha/hora actual y que
   // el historial viene marcado con cuándo se dijo cada cosa, para no arrastrar el "ayer" al "hoy".
   const paNow = new Date(ahoraMs - 5 * 3600 * 1000);
@@ -881,7 +918,7 @@ Deno.serve(async (req) => {
       if (!data) return Response.json({ error: "not_found" }, { status: 404 });
       return Response.json({ wa_id: data.wa_id, producto_handle: data.producto_handle, ts: data.created_at });
     }
-    return Response.json({ status: "ok", function: "copilot-webhook", version: "v35-prompt-cache", mode: MODE, mode_raw: MODE_RAW, model: MODEL, llm_configured: !!anthropic, wati_send_configured: !!(WATI_API_TOKEN && WATI_API_BASE), inventario_configurado: !!(SHOPIFY_ADMIN_TOKEN && SHOPIFY_ADMIN_API_BASE), resolve_configured: !!RESOLVE_SECRET, handoff_assist_min: HANDOFF_ASSIST_MIN, handoff_cold_hours: HANDOFF_COLD_HOURS, live_targets: MODE === "live" ? (LIVE_ALL ? "all" : LIVE_ALLOWLIST.length) : 0, ts: new Date().toISOString() });
+    return Response.json({ status: "ok", function: "copilot-webhook", version: "v36-proximo-horario", mode: MODE, mode_raw: MODE_RAW, model: MODEL, llm_configured: !!anthropic, wati_send_configured: !!(WATI_API_TOKEN && WATI_API_BASE), inventario_configurado: !!(SHOPIFY_ADMIN_TOKEN && SHOPIFY_ADMIN_API_BASE), resolve_configured: !!RESOLVE_SECRET, handoff_assist_min: HANDOFF_ASSIST_MIN, handoff_cold_hours: HANDOFF_COLD_HOURS, live_targets: MODE === "live" ? (LIVE_ALL ? "all" : LIVE_ALLOWLIST.length) : 0, ts: new Date().toISOString() });
   }
   if (req.method !== "POST") return Response.json({ error: "method_not_allowed" }, { status: 405 });
   if (url.searchParams.get("key") !== WEBHOOK_KEY) return Response.json({ error: "forbidden" }, { status: 403 });
