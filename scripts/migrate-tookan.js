@@ -14,7 +14,7 @@
 //   data/contacts.csv   → copia en CSV por si quieres revisarla en Excel/Drive
 import { readFileSync, writeFileSync, mkdirSync } from 'node:fs';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), '..');
 const OUT_DIR = path.join(ROOT, 'data');
@@ -158,7 +158,9 @@ function numOrUndef(v) {
   return Number.isFinite(n) ? n : undefined;
 }
 
-if (process.argv[1] && import.meta.url === `file://${process.argv[1]}`) {
+// pathToFileURL normaliza la ruta a URL de forma correcta en Windows
+// (backslashes y letra de unidad) además de en Mac/Linux.
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   main().catch((err) => {
     console.error(err.message);
     process.exit(1);
