@@ -2,7 +2,7 @@
 // Shipday no expone una libreta de contactos por API, así que las direcciones
 // viven aquí y el flujo de WATI las consulta para pre-llenar la dirección
 // de clientes que ya compraron antes.
-import { readFileSync, existsSync } from 'node:fs';
+import { readFileSync, writeFileSync, mkdirSync, existsSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 
@@ -18,6 +18,20 @@ export function loadContacts(file = DATA_FILE) {
 
 export function resetContactsCache() {
   cache = null;
+}
+
+// Reemplaza la libreta completa (usado por POST /contacts/import para cargar
+// los contactos migrados de Tookan en un despliegue nuevo).
+export function saveContacts(contacts, file = DATA_FILE) {
+  if (!Array.isArray(contacts)) {
+    const err = new Error('Se espera un arreglo de contactos');
+    err.status = 400;
+    throw err;
+  }
+  mkdirSync(path.dirname(file), { recursive: true });
+  writeFileSync(file, JSON.stringify(contacts, null, 2));
+  cache = contacts;
+  return contacts.length;
 }
 
 // Busca por teléfono ignorando formato (+507, espacios, guiones).

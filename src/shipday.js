@@ -25,6 +25,19 @@ export async function createShipdayOrder(order, { apiKey = process.env.SHIPDAY_A
   }
 }
 
+// Decide si un pedido de Shopify debe generar entrega en Shipday.
+// SHOPIFY_DELIVERY_FILTER: lista separada por comas de textos a buscar en el
+// método de envío (ej. "entrega local,local delivery"). Vacío = todos los
+// pedidos. Así los retiros en tienda o envíos nacionales no crean viajes.
+export function shouldDispatchShopifyOrder(shopifyOrder, filter = process.env.SHOPIFY_DELIVERY_FILTER) {
+  const terms = (filter || '').split(',').map((t) => t.trim().toLowerCase()).filter(Boolean);
+  if (!terms.length) return true;
+  const methods = (shopifyOrder.shipping_lines || []).map((l) =>
+    `${l.title ?? ''} ${l.code ?? ''}`.toLowerCase()
+  );
+  return methods.some((m) => terms.some((t) => m.includes(t)));
+}
+
 // Convierte un pedido de Shopify (payload del webhook orders/create) al
 // formato de inserción de órdenes de Shipday.
 export function shopifyOrderToShipday(shopifyOrder, pickup = defaultPickup()) {

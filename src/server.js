@@ -1,7 +1,7 @@
 import express from 'express';
 import crypto from 'node:crypto';
-import { createShipdayOrder, shopifyOrderToShipday, watiCaptureToShipday } from './shipday.js';
-import { findContactByPhone } from './contacts.js';
+import { createShipdayOrder, shopifyOrderToShipday, shouldDispatchShopifyOrder, watiCaptureToShipday } from './shipday.js';
+import { findContactByPhone, saveContacts } from './contacts.js';
 import { parseShipdayStatusEvent, statusMessageFor } from './shipday-status.js';
 import { sendWatiSessionMessage } from './wati.js';
 
@@ -20,6 +20,10 @@ app.post(
     }
     try {
       const shopifyOrder = JSON.parse(req.body.toString('utf8'));
+      if (!shouldDispatchShopifyOrder(shopifyOrder)) {
+        console.log(`Pedido Shopify ${shopifyOrder.order_number ?? shopifyOrder.id} omitido (no es entrega local)`);
+        return res.json({ ok: true, skipped: true });
+      }
       const order = shopifyOrderToShipday(shopifyOrder);
       const result = await createShipdayOrder(order);
       console.log(`Pedido Shopify ${order.orderNumber} enviado a Shipday`);
@@ -33,7 +37,8 @@ app.post(
   }
 );
 
-app.use(express.json());
+// Límite amplio para poder importar la libreta completa (~5 mil contactos).
+app.use(express.json({ limit: '10mb' }));
 
 // ── WATI → Shipday ──────────────────────────────────────────────────────────
 // El flujo de WATI (plantilla de captura de dirección) llama aquí con los
@@ -56,6 +61,20 @@ app.get('/contacts/lookup', requireWatiToken, (req, res) => {
   const contact = findContactByPhone(req.query.phone);
   if (!contact) return res.status(404).json({ found: false });
   res.json({ found: true, contact });
+});
+
+// Carga la libreta migrada de Tookan en un despliegue nuevo (los datos no se
+// versionan en git). Uso: curl -X POST .../contacts/import \
+//   -H 'x-wati-token: ...' -H 'Content-Type: application/json' \
+//   --data-binary @data/contacts.json
+app.post('/contacts/import', requireWatiToken, (req, res) => {
+  try {
+    const count = saveContacts(req.body);
+    console.log(`Libreta actualizada: ${count} contactos`);
+    res.json({ ok: true, count });
+  } catch (err) {
+    res.status(err.status || 500).json({ ok: false, error: err.message });
+  }
 });
 
 // ── Shipday → estados de entrega ────────────────────────────────────────────
