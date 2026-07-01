@@ -52,6 +52,16 @@ GET /contacts/lookup?phone=61112233   (mismo header x-wati-token)
 → { "found": true, "contact": { "name": "...", "address": "...", ... } }
 ```
 
+## Estados de entrega (Shipday → este servicio)
+
+Shipday puede avisar cada cambio de estado (asignado, en camino, entregado, fallido). En el panel de Shipday: **Integraciones → API → Configuración de Webhook → + Agregar Enlace API** y registra:
+
+```
+https://TU-SERVICIO/webhooks/shipday/status?token=<SHIPDAY_WEBHOOK_TOKEN>
+```
+
+El servicio registra cada evento en los logs. Si además quieres que el cliente reciba el aviso por el WhatsApp de WATI (en lugar de las notificaciones nativas de Shipday), configura `WATI_NOTIFY=true` junto con `WATI_API_ENDPOINT` y `WATI_API_TOKEN`. Por defecto está apagado para no duplicar mensajes, porque el plan Branded Premium de Shipday ya notifica por WhatsApp.
+
 ## 3. Migración de contactos (direcciones) desde Tookan
 
 Shipday no tiene libreta de contactos por API: las direcciones viajan dentro de cada orden. Por eso la libreta migrada vive en `data/contacts.json` y la consulta el bot de WATI (endpoint `/contacts/lookup`).

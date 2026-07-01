@@ -2,6 +2,8 @@ import express from 'express';
 import crypto from 'node:crypto';
 import { createShipdayOrder, shopifyOrderToShipday, watiCaptureToShipday } from './shipday.js';
 import { findContactByPhone } from './contacts.js';
+import { parseShipdayStatusEvent, statusMessageFor } from './shipday-status.js';
+import { sendWatiSessionMessage } from './wati.js';
 
 const app = express();
 
@@ -54,6 +56,32 @@ app.get('/contacts/lookup', requireWatiToken, (req, res) => {
   const contact = findContactByPhone(req.query.phone);
   if (!contact) return res.status(404).json({ found: false });
   res.json({ found: true, contact });
+});
+
+// ── Shipday → estados de entrega ────────────────────────────────────────────
+// URL para cargar en Shipday: Integraciones → API → Configuración de Webhook:
+//   https://TU-SERVICIO/webhooks/shipday/status?token=<SHIPDAY_WEBHOOK_TOKEN>
+// Registra cada cambio de estado y, si WATI_NOTIFY=true, reenvía el aviso al
+// cliente por WhatsApp vía WATI. Por defecto NO reenvía, porque Shipday ya
+// notifica por su propio canal de WhatsApp (evita mensajes duplicados).
+app.post('/webhooks/shipday/status', async (req, res) => {
+  const expected = process.env.SHIPDAY_WEBHOOK_TOKEN;
+  if (expected && req.query.token !== expected && req.get('x-shipday-token') !== expected) {
+    return res.status(401).json({ error: 'Token inválido' });
+  }
+  const event = parseShipdayStatusEvent(req.body);
+  console.log(`Shipday: pedido ${event.orderNumber || '?'} → ${event.status || 'evento sin estado'}`);
+  if (process.env.WATI_NOTIFY === 'true' && event.customerPhone) {
+    const message = statusMessageFor(event);
+    if (message) {
+      try {
+        await sendWatiSessionMessage(event.customerPhone, message);
+      } catch (err) {
+        console.error('No se pudo notificar por WATI:', err.message);
+      }
+    }
+  }
+  res.json({ ok: true });
 });
 
 app.get('/health', (_req, res) => res.json({ ok: true }));
