@@ -1,5 +1,5 @@
-# Reemplaza con el ref de tu proyecto (Supabase Dashboard → Settings → General)
-project_id = "TU-PROJECT-REF"
+# Ref del proyecto de Supabase de Quick Service Panama
+project_id = "jbigmlcalcwiphqeudxd"
 
 # Los webhooks externos (Shopify, Shipday, WATI) no envían JWT de Supabase;
 # la seguridad la dan la firma HMAC de Shopify y los tokens propios.
