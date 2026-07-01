@@ -80,6 +80,12 @@ Ambas generan `data/contacts.json` (usado por el servicio) y `data/contacts.csv`
 
 > Nota: el endpoint del API de Tookan para listar clientes (`/v2/get_all_customers`) puede variar según el plan; si devuelve error, usa la Opción A, que siempre funciona. Verifica el nombre exacto en https://tookanapi.docs.apiary.io/.
 
+## Despliegue
+
+**Vía recomendada: Supabase** (Edge Functions + Postgres) — siempre despierto, contactos en base de datos permanente, dentro del tier gratuito y sin cuentas nuevas. Guía completa: [`docs/despliegue-supabase.md`](docs/despliegue-supabase.md).
+
+Alternativa: Render con el servicio Express de `src/` ([`docs/despliegue-render.md`](docs/despliegue-render.md)). La lógica es la misma en ambas versiones; las Edge Functions (`supabase/functions/`) son el port Deno del código de `src/`, que conserva las pruebas unitarias.
+
 ## Puesta en marcha
 
 ```bash

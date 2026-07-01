@@ -1,0 +1,16 @@
+# Reemplaza con el ref de tu proyecto (Supabase Dashboard → Settings → General)
+project_id = "TU-PROJECT-REF"
+
+# Los webhooks externos (Shopify, Shipday, WATI) no envían JWT de Supabase;
+# la seguridad la dan la firma HMAC de Shopify y los tokens propios.
+[functions.shopify-webhook]
+verify_jwt = false
+
+[functions.wati-order]
+verify_jwt = false
+
+[functions.contacts-lookup]
+verify_jwt = false
+
+[functions.shipday-status]
+verify_jwt = false
