@@ -1,9 +1,9 @@
 # CLAUDE.md — Copiloto AI de WhatsApp (WATI) · Quick Service Panamá
 
 > Contexto base para Claude Code trabajando en ESTE repo. Lee esto primero.
-> Generado 2026-06-15; actualizado 2026-07-01 (edge function v44 en el repo —autotest de inventario +
-> guard anti-fuga de tool-call—, lista para desplegar; v43 EN VIVO —incluye v40 inventario + v41 usted +
-> v42 guardrails + v43 sucursales del interior—, probando Sonnet 5) +
+> Generado 2026-06-15; actualizado 2026-07-01 (edge function v44 EN VIVO —autotest de inventario +
+> guard anti-fuga de tool-call; el autotest CONFIRMÓ el inventario real (PG-145XL=87), token nuevo OK—,
+> probando Sonnet 5) +
 > esquema del proyecto Supabase. Docs de diseño originales en el repo
 > `qsp-cdp/qsp-cdp-docs` (`docs/design/2026-06-12-proyecto-copilot-wati.md` y
 > `docs/design/2026-06-13-copilot-analisis-sombra-prompt-v2.md`).
@@ -15,17 +15,18 @@ con certeza, y calla/deriva cuando es mejor que responda un humano. Tienda:
 **quickservicepanama.com** (suministros de impresión y tecnología en Panamá).
 
 ## Estado actual (2026-07-01)
-- **EN VIVO: `copilot-webhook` v43 (`v43-sucursales-interior`), ACTIVE.** Desplegado con `verify_jwt=false`
-  (incluye v40 `.trim()` a secretos, v41 trato de usted sin voseo, v42 guardrails, v43 sucursales del interior).
-  **OJO — inventario:** el `.trim()` de v40 NO bastó; en la auditoría del 01-jul el stock seguía derivando en
-  TODOS los productos (incl. uno con 88 uds) → v44 agrega un autotest para diagnosticarlo desde adentro
-  (hipótesis fuerte: el token de secrets no tiene el scope `read_inventory`). Migraciones aplicadas
-  (`ref_codes`, `messages_cache_tokens`). **Prompt caching (v35/v38) confirmado:**
+- **EN VIVO: `copilot-webhook` v44 (`v44-inv-selftest-antifuga`), ACTIVE.** Desplegado con `verify_jwt=false`
+  (incluye v40–v43: `.trim()` a secretos, trato de usted, guardrails, sucursales del interior; + v44 autotest
+  de inventario y guard anti-fuga de tool-call). **INVENTARIO RESUELTO (01-jul):** el stock derivaba en TODOS
+  los productos por un token de Shopify viejo; se subió un token nuevo (15:39) y el deploy de v44 (16:05)
+  reinició la instancia y lo cargó. El autotest lo confirmó desde adentro (`diagnostico:ok_inventario_visible`,
+  HTTP 200, PG-145XL `totalInventory:87`); como el bot usa el MISMO token y la MISMA consulta, ya muestra la
+  cantidad real. Migraciones aplicadas (`ref_codes`, `messages_cache_tokens`). **Prompt caching (v35/v38) confirmado:**
   `avg(tokens_in)` ~9.554 → ~2.337; ~−69% de costo de input real. v36/v37 (horario + feriados) en vivo.
   **PROBANDO Sonnet 5:** `COPILOT_MODEL=claude-sonnet-5` (flipeado ~21:02Z; v39 dejó `thinking` apagado para
   que sea seguro). A/B en curso (auditoría: grounding/coexistencia sólidos). Revertir = `claude-sonnet-4-6`.
-- **EN EL REPO, LISTO PARA DESPLEGAR: v44 (`v44-inv-selftest-antifuga`).** Dos cosas de la auditoría del
-  01-jul (Sonnet 5): (a) **autotest de inventario** — como el `.trim()` de v40 no arregló el stock (sigue
+- **DESPLEGADO (01-jul ~16:05): v44 (`v44-inv-selftest-antifuga`).** Dos cosas de la auditoría del
+  01-jul (Sonnet 5): (a) **autotest de inventario** — como el `.trim()` de v40 no arregló el stock (seguía
   derivando en todos los productos) y el token de Shopify no se puede diagnosticar desde afuera (ya no lo
   tenemos), se agrega `inventarioSelfTest(pid)` + rama GET `?selftest=inventario` (gated por `?key=`, NO expone
   el token) que corre la consulta Admin `totalInventory` desde ADENTRO y devuelve status HTTP + errores GraphQL
@@ -34,7 +35,10 @@ con certeza, y calla/deriva cuando es mejor que responda un humano. Tienda:
   de tool-call** — Sonnet 5 (raro, 1 caso) escribió `<invoke name="buscar_producto">…</invoke>` como TEXTO en
   vez de invocarla nativa → salía XML crudo al cliente; `pareceFuncionEnTexto` lo detecta y manda la respuesta
   de respaldo (como v23) en su lugar (`job_log` `fuga_tool_texto`). Solo diagnóstico + guard de salida; no toca
-  prompt/tools/system, guardrails ni el caché de v35. Sin cambios de esquema. Un `git pull` + `.\deploy.ps1`.
+  prompt/tools/system, guardrails ni el caché de v35. Sin cambios de esquema. **Verificado en prod:** el
+  autotest (`?selftest=inventario`) dio `ok_inventario_visible` con PG-145XL `totalInventory:87` → el token
+  nuevo funciona y el inventario ya se muestra. (Hallazgo aparte: `COPILOT_WEBHOOK_KEY` NO está en secrets →
+  el `?key=` usa el default del código `cw-qsp-9f2e7b3a1c5d4806`; endurecer con un secreto real + actualizar WATI.)
 - **MODO: LIVE A TODOS.** `COPILOT_MODE=live` + `COPILOT_LIVE_ALLOWLIST=all`
   (`live_targets:"all"`). El piloto por allowlist (sombra → número por número) ya se
   completó; hoy el bot responde a todos los clientes. El default del CÓDIGO sigue
@@ -467,7 +471,9 @@ Reglas clave (texto completo en `index.ts`, const `SYSTEM_PROMPT`):
 `WATI_API_BASE`, `COPILOT_MODE` (shadow|live, default **shadow**),
 `COPILOT_LIVE_ALLOWLIST` (`wa_id` permitidos en live; vacío = nadie, `all`/`*` = todos),
 `COPILOT_MODEL` (default del código `claude-haiku-4-5`; en producción `claude-sonnet-4-6`),
-`COPILOT_WEBHOOK_KEY` (guard del `?key=`), **`SHOPIFY_ADMIN_TOKEN`** + **`SHOPIFY_ADMIN_API_BASE`**
+`COPILOT_WEBHOOK_KEY` (guard del `?key=`; ⚠️ HOY NO está en secrets → usa el default del código
+`cw-qsp-9f2e7b3a1c5d4806`; endurecer = crear el secreto con un valor aleatorio + actualizar la URL en WATI),
+**`SHOPIFY_ADMIN_TOKEN`** + **`SHOPIFY_ADMIN_API_BASE`**
 (v21 — inventario real vía Admin GraphQL; app de Shopify de **solo lectura** `read_products`+`read_inventory`;
 base `https://quick-service-supplies.myshopify.com/admin/api/2025-10`; si faltan, el `stock` cae a
 "un asesor confirma"). **`RESOLVE_SECRET`** (v28/v30 — guard del endpoint GET `?ref_code=`; el CDP lo lee

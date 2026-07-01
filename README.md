@@ -21,7 +21,7 @@ sombra por seguridad.
 CLAUDE.md                                  # contexto autoritativo (leer primero)
 docs/base-conocimiento-qsp.md              # base de conocimiento del negocio (fuente → prompt + store_facts)
 supabase/
-  functions/copilot-webhook/index.ts       # la edge function (v44 en repo: diagnóstico; v43 = lo desplegado, probando Sonnet 5)
+  functions/copilot-webhook/index.ts       # la edge function (v44 EN VIVO: diagnóstico + inventario resuelto, probando Sonnet 5)
   migrations/*.sql                          # esquema reproducible (8 migraciones)
 deploy.ps1                                  # deploy byte-exacto por CLI + verificación de healthcheck
 web/
@@ -29,13 +29,12 @@ web/
 ```
 
 ## Estado
-- Edge function `copilot-webhook` **v43 (`v43-sucursales-interior`), ACTIVE** — EN VIVO a todos (incluye v40
-  `.trim()` a secretos, v41 trato de usted sin voseo, v42 guardrails, v43 sucursales del interior).
-  Coexistencia validada (v15) · visión (v19) · endurecimiento anti-duplicado / anti-carrera / MODE-seguro
-  (v20). **Probando Claude Sonnet 5** (`COPILOT_MODEL=claude-sonnet-5`; revertir = flipear a 4.6). **v44
-  (`v44-inv-selftest-antifuga`) está en el repo, listo para `deploy.ps1`** — autotest de inventario
-  (diagnóstico) + guard anti-fuga de tool-call. OJO: el stock aún NO muestra cantidades en prod (el `.trim()`
-  de v40 no bastó); v44 sirve para diagnosticar por qué desde adentro.
+- Edge function `copilot-webhook` **v44 (`v44-inv-selftest-antifuga`), ACTIVE** — EN VIVO a todos (incluye
+  v40–v43: `.trim()` a secretos, trato de usted, guardrails, sucursales del interior). Coexistencia validada
+  (v15) · visión (v19) · endurecimiento anti-duplicado / anti-carrera / MODE-seguro (v20). **Probando Claude
+  Sonnet 5** (`COPILOT_MODEL=claude-sonnet-5`; revertir = flipear a 4.6). **Inventario RESUELTO (01-jul):** el
+  stock derivaba por un token de Shopify viejo; se subió un token nuevo y el deploy de v44 lo cargó, y el
+  autotest (`?selftest=inventario`) lo confirmó (`ok_inventario_visible`, PG-145XL=87).
 - **v21:** ITBMS (precio + 7% + total, calculado en código) + inventario real (Shopify Admin
   `totalInventory`; ≤3 → "un asesor verifica") + anti-eco duro (se acabaron los handoffs falsos).
 - **v22:** conciencia de horario (atención Lun-Vie 9am-5pm, Panamá) — fuera de horario aclara
@@ -86,10 +85,12 @@ web/
 - **v43:** tool `sucursales_interior(lugar)` con las **45 sucursales del interior**
   (red Servientrega, provincia/nombre/teléfono/horario del listado oficial) → el bot da el punto de recogida
   **grounded** en vez de adivinar; el modelo enruta la geografía (David→Chiriquí), los datos salen de la lista.
-- **v44 (listo para desplegar):** (a) **autotest de inventario** — `GET ?key=…&selftest=inventario` corre la
+- **v44 (desplegado 01-jul):** (a) **autotest de inventario** — `GET ?key=…&selftest=inventario` corre la
   consulta Admin `totalInventory` desde adentro y reporta por qué el stock no aparece (token inválido vs falta
-  el scope `read_inventory` vs base mal), sin exponer el token; (b) **guard anti-fuga de tool-call** — si el
-  modelo escribe la llamada como texto (visto en Sonnet 5), no se envía el XML: va la respuesta de respaldo.
+  el scope `read_inventory` vs base mal), sin exponer el token; **confirmó el fix** (`ok_inventario_visible`,
+  PG-145XL=87 → el problema era un token viejo; el nuevo + el restart del deploy lo resolvió). (b) **guard
+  anti-fuga de tool-call** — si el modelo escribe la llamada como texto (visto en Sonnet 5), no se envía el
+  XML: va la respuesta de respaldo.
 - Auditorías diarias: coexistencia perfecta (0 clientes pisados, 0 ecos falsos). ~$0.02/turno, ~8 s.
 
 ## Desarrollo / deploy
