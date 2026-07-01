@@ -1,8 +1,9 @@
 # CLAUDE.md — Copiloto AI de WhatsApp (WATI) · Quick Service Panamá
 
 > Contexto base para Claude Code trabajando en ESTE repo. Lee esto primero.
-> Generado 2026-06-15; actualizado 2026-06-30 (edge function v43 en el repo —incluye v42 guardrails—,
-> listo para desplegar; v41 EN VIVO —incluye v40 inventario + trato de usted—, probando Sonnet 5) +
+> Generado 2026-06-15; actualizado 2026-07-01 (edge function v44 en el repo —autotest de inventario +
+> guard anti-fuga de tool-call—, lista para desplegar; v43 EN VIVO —incluye v40 inventario + v41 usted +
+> v42 guardrails + v43 sucursales del interior—, probando Sonnet 5) +
 > esquema del proyecto Supabase. Docs de diseño originales en el repo
 > `qsp-cdp/qsp-cdp-docs` (`docs/design/2026-06-12-proyecto-copilot-wati.md` y
 > `docs/design/2026-06-13-copilot-analisis-sombra-prompt-v2.md`).
@@ -13,19 +14,27 @@ equipo humano: contesta preguntas generales, indica disponibilidad/stock y da pr
 con certeza, y calla/deriva cuando es mejor que responda un humano. Tienda:
 **quickservicepanama.com** (suministros de impresión y tecnología en Panamá).
 
-## Estado actual (2026-06-30)
-- **EN VIVO: `copilot-webhook` v41 (`v41-trato-usted`), ACTIVE.** Desplegado con `verify_jwt=false`
-  (incluye v40: `.trim()` a secretos → inventario real arreglado; y v41: trato de usted, sin voseo).
-  Migraciones aplicadas (`ref_codes`, `messages_cache_tokens`). **Prompt caching (v35/v38) confirmado:**
+## Estado actual (2026-07-01)
+- **EN VIVO: `copilot-webhook` v43 (`v43-sucursales-interior`), ACTIVE.** Desplegado con `verify_jwt=false`
+  (incluye v40 `.trim()` a secretos, v41 trato de usted sin voseo, v42 guardrails, v43 sucursales del interior).
+  **OJO — inventario:** el `.trim()` de v40 NO bastó; en la auditoría del 01-jul el stock seguía derivando en
+  TODOS los productos (incl. uno con 88 uds) → v44 agrega un autotest para diagnosticarlo desde adentro
+  (hipótesis fuerte: el token de secrets no tiene el scope `read_inventory`). Migraciones aplicadas
+  (`ref_codes`, `messages_cache_tokens`). **Prompt caching (v35/v38) confirmado:**
   `avg(tokens_in)` ~9.554 → ~2.337; ~−69% de costo de input real. v36/v37 (horario + feriados) en vivo.
   **PROBANDO Sonnet 5:** `COPILOT_MODEL=claude-sonnet-5` (flipeado ~21:02Z; v39 dejó `thinking` apagado para
   que sea seguro). A/B en curso (auditoría: grounding/coexistencia sólidos). Revertir = `claude-sonnet-4-6`.
-- **EN EL REPO, LISTO PARA DESPLEGAR: v43 (`v43-sucursales-interior`) — incluye v42.** (a) **v42 guardrails**
-  (auditoría Sonnet 5): no ofrecer genéricos que la tool no trajo, no inventar specs, anti-interrupción en
-  intención de pago/transferencia/entrega. (b) **v43 sucursales del interior**: tool `sucursales_interior` con
-  las 45 sucursales Servientrega (provincia/nombre/teléfono/horario, del listado oficial) → el bot da el punto
-  GROUNDED en vez de adivinar; el modelo enruta la geografía (David→Chiriquí), los datos salen de la lista. Un
-  `git pull` + `.\deploy.ps1` aplica ambos.
+- **EN EL REPO, LISTO PARA DESPLEGAR: v44 (`v44-inv-selftest-antifuga`).** Dos cosas de la auditoría del
+  01-jul (Sonnet 5): (a) **autotest de inventario** — como el `.trim()` de v40 no arregló el stock (sigue
+  derivando en todos los productos) y el token de Shopify no se puede diagnosticar desde afuera (ya no lo
+  tenemos), se agrega `inventarioSelfTest(pid)` + rama GET `?selftest=inventario` (gated por `?key=`, NO expone
+  el token) que corre la consulta Admin `totalInventory` desde ADENTRO y devuelve status HTTP + errores GraphQL
+  + nodos → distingue token inválido (401/403) de FALTA DE SCOPE `read_inventory` (HTTP 200 con "Access denied
+  … read_inventory", que `inventarioShopify` tragaba en silencio → derivaba) de base mal. (b) **guard anti-fuga
+  de tool-call** — Sonnet 5 (raro, 1 caso) escribió `<invoke name="buscar_producto">…</invoke>` como TEXTO en
+  vez de invocarla nativa → salía XML crudo al cliente; `pareceFuncionEnTexto` lo detecta y manda la respuesta
+  de respaldo (como v23) en su lugar (`job_log` `fuga_tool_texto`). Solo diagnóstico + guard de salida; no toca
+  prompt/tools/system, guardrails ni el caché de v35. Sin cambios de esquema. Un `git pull` + `.\deploy.ps1`.
 - **MODO: LIVE A TODOS.** `COPILOT_MODE=live` + `COPILOT_LIVE_ALLOWLIST=all`
   (`live_targets:"all"`). El piloto por allowlist (sombra → número por número) ya se
   completó; hoy el bot responde a todos los clientes. El default del CÓDIGO sigue
@@ -298,7 +307,8 @@ WATI (WhatsApp) ──webhook POST?key=──► Supabase Edge Function `copilot
   `contacto_nuevo`, `tope_turnos`, `evento_sin_texto`, `error`, `descartado_superado` (v20
   anti-duplicado), `descartado_handoff_tardio` (v20 anti-carrera), `imagen_procesada`/
   `imagen_no_descargada` (v19), `respuesta_respaldo` (v23 fallback), `lead_capturado` (v25/v27 captura de lead),
-  `ref_code_insert_error` (v28), `handoff_cold_return`/`asistencia_handoff` (v31 ciclo de vida del handoff).
+  `ref_code_insert_error` (v28), `handoff_cold_return`/`asistencia_handoff` (v31 ciclo de vida del handoff),
+  `fuga_tool_texto` (v44 — el modelo escribió una tool-call como texto; NO se envió el XML, fue la respuesta de respaldo).
 - **store_facts** (Fase 1.5) — `key`/`value` (vacío = no disponible). Espejo
   (snapshot) del metaobjeto Shopify `store_facts/datos-tienda` (envío, pagos, ubicación, horario,
   devoluciones, contacto, **soporte_reparaciones**, **sucursales_interior**…). Fuente única de
@@ -317,7 +327,7 @@ Migraciones (ver `supabase/migrations/`):
 `grants_service_role_tablas`, `conversations_confirmed_new`,
 `store_facts` (Fase 1.5 — **aplicada**, 17 datos reales),
 `20260624180000_ref_codes` (v28 — **aplicada**, stitching WhatsApp→web),
-`20260630160000_messages_cache_tokens` (v38 — **pendiente de aplicar**, 2 columnas de telemetría de caché).
+`20260630160000_messages_cache_tokens` (v38 — **aplicada**, 2 columnas de telemetría de caché).
 
 ## Flujo del webhook (resumen de index.ts)
 1. **GET** = healthcheck (status/version/mode/model/live_targets).
@@ -571,6 +581,13 @@ Eventos WATI suscritos (necesarios): **Message Received**, **Session Message Sen
 
 ## Cómo leer el estado real (debugging)
 - Código en vivo: `get_edge_function` o healthcheck GET. Esquema: `list_tables`.
+- **Inventario (v44):** si el stock no aparece, `GET …/copilot-webhook?key=<COPILOT_WEBHOOK_KEY>&selftest=inventario`
+  (opcional `&pid=<product_id>`) → corre la consulta Admin `totalInventory` DESDE ADENTRO y devuelve
+  `diagnostico`: `ok_inventario_visible` (funciona, muestra `nodes[].totalInventory`), `token_invalido_o_sin_permiso`
+  (401/403 → token mal), `graphql_error_probable_falta_scope_read_inventory` (HTTP 200 + `graphql_errors` →
+  falta el scope), `faltan_secretos`/`http_404`/… — NUNCA expone el token (solo su `token_len`).
+- Fugas de tool-call (v44): `select * from public.job_log where action='fuga_tool_texto' order by created_at desc;`
+  (el `detail.muestra` trae el inicio del texto que el modelo escribió como si fuera una tool-call).
 - Calidad/telemetría: `select mode, model, tokens_in, tokens_out, latency_ms from
   public.messages order by created_at desc` y `select * from public.job_log order
   by created_at desc`.

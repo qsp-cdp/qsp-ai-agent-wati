@@ -1,3 +1,19 @@
+// === copilot-webhook v44 — Copiloto AI de WATI — autotest de inventario + guard anti-fuga de tool-call ===
+// v44 (2026-07-01): dos hallazgos de una auditoría en Sonnet 5 (01-jul). (A) INVENTARIO AÚN SIN CANTIDAD:
+//   pese al .trim() de v40 y a rotar el token, el stock seguía derivando ("un asesor confirma") en TODOS
+//   los productos (incluido uno con 88 uds) → el token de secrets no funciona, pero NO se podía diagnosticar
+//   desde AFUERA (Shopify muestra el token una sola vez; el operador ya no lo tiene). Fix diagnóstico:
+//   función `inventarioSelfTest(pid)` + rama GET `?selftest=inventario` (gated por ?key=, NUNCA expone el
+//   token) que corre la MISMA consulta Admin totalInventory y devuelve el status HTTP + errores GraphQL +
+//   nodos → distingue token inválido (401/403) de FALTA DE SCOPE read_inventory ("Access denied for
+//   totalInventory … read_inventory", que Shopify devuelve como HTTP 200 con `errors` y por eso
+//   inventarioShopify lo tragaba en silencio → derivaba) de base mal (404). Así se ve desde ADENTRO por qué
+//   falla, sin pasar el token a nadie. (B) FUGA DE TOOL-CALL: Sonnet 5 (raro, 1 caso) escribió la llamada
+//   como TEXTO (<invoke name="buscar_producto">…</invoke>) en vez de invocarla nativa → salió XML crudo al
+//   cliente. Guard `pareceFuncionEnTexto`: si la respuesta trae esa sintaxis, NO se envía; se sustituye por
+//   la respuesta de respaldo consciente del horario (como v23) y se loggea `fuga_tool_texto`. Solo
+//   diagnóstico + guard de salida: no toca prompt/tools/system, guardrails, ni el caché de v35. Sin cambios
+//   de esquema.
 // === copilot-webhook v43 — Copiloto AI de WATI — sucursales de recogida del interior (grounded) ===
 // v43 (2026-06-30): el bot solo tenía la URL de la página de envíos al interior, así que al preguntar
 //   "¿hay sucursal en David?" ADIVINABA ("sí hay sucursal en David") sin el dato real. Fix grounded: nueva
@@ -676,6 +692,44 @@ async function inventarioShopify(ids: (string | number)[]): Promise<Record<strin
   } catch { return {}; }
 }
 
+// v44 — autotest de inventario (diagnóstico). Corre la MISMA consulta Admin que inventarioShopify pero
+// devuelve el DETALLE (status HTTP, errores GraphQL, nodos) SIN exponer el token, para ver desde ADENTRO
+// por qué el stock no aparece: token inválido → 401/403; falta el scope read_inventory → HTTP 200 con
+// `errors` "Access denied for totalInventory … read_inventory" (lo que inventarioShopify traga en silencio
+// → deriva); base mal → 404. Gated por ?key= en el healthcheck GET. NUNCA incluye el token (solo su largo).
+async function inventarioSelfTest(pid: string): Promise<Record<string, unknown>> {
+  const base = {
+    configured: !!(SHOPIFY_ADMIN_TOKEN && SHOPIFY_ADMIN_API_BASE),
+    token_present: !!SHOPIFY_ADMIN_TOKEN,
+    token_len: SHOPIFY_ADMIN_TOKEN.length, // longitud, NUNCA el token
+    api_base: SHOPIFY_ADMIN_API_BASE || null,
+    pid,
+  };
+  if (!SHOPIFY_ADMIN_TOKEN || !SHOPIFY_ADMIN_API_BASE) return { ...base, ok: false, diagnostico: "faltan_secretos" };
+  const gid = `gid://shopify/Product/${String(pid).replace(/\D/g, "")}`;
+  if (!/\d/.test(gid)) return { ...base, ok: false, diagnostico: "pid_invalido" };
+  try {
+    const query = "query($ids:[ID!]!){ nodes(ids:$ids){ ... on Product { id title totalInventory } } }";
+    const r = await fetch(`${SHOPIFY_ADMIN_API_BASE}/graphql.json`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "X-Shopify-Access-Token": SHOPIFY_ADMIN_TOKEN },
+      body: JSON.stringify({ query, variables: { ids: [gid] } }),
+      signal: AbortSignal.timeout(6000),
+    });
+    let j: any = null;
+    try { j = await r.json(); } catch { /* respuesta no-JSON (p.ej. 401 con HTML) */ }
+    const nodes = ((j?.data?.nodes ?? []) as any[]).map((n) => ({ id: n?.id ?? null, title: n?.title ?? null, totalInventory: n?.totalInventory ?? null }));
+    const errs = j?.errors ?? null;
+    const diagnostico = !r.ok
+      ? (r.status === 401 || r.status === 403 ? "token_invalido_o_sin_permiso" : `http_${r.status}`)
+      : (errs?.length ? "graphql_error_probable_falta_scope_read_inventory"
+        : (nodes.length && typeof nodes[0].totalInventory === "number" ? "ok_inventario_visible" : "sin_nodos"));
+    return { ...base, http_status: r.status, ok: r.ok && !errs?.length, graphql_errors: errs, nodes, diagnostico };
+  } catch (e) {
+    return { ...base, ok: false, diagnostico: "excepcion", error: String(e).slice(0, 200) };
+  }
+}
+
 // v21 — texto de stock LISTO para el bot (determinista). >3: muestra el número; 1-3: deriva sin
 // exponer el número; 0/desconocido pero disponible: deriva (puede ser sin seguimiento de stock);
 // no disponible: sin stock. Así el bot nunca ve ni inventa una cantidad que no deba decir.
@@ -986,6 +1040,17 @@ function limpiarWhatsApp(t: string): string {
     .replace(new RegExp("\\*\\*([^*\\n]+)\\*\\*", "g"), "*$1*");
 }
 
+// v44 — detecta cuando el modelo ESCRIBE la llamada a una herramienta como TEXTO (en vez de invocarla de
+// forma nativa) y se filtraría al cliente como XML crudo. Visto en Sonnet 5 (raro): <invoke
+// name="buscar_producto"><parameter name="consulta">…</parameter></invoke>. Cubre las variantes con y sin
+// el prefijo antml: y, como respaldo, cualquier atributo name="<tool nuestra>". El bot escribe español de
+// ventas, nunca etiquetas ni nombres de tool entre comillas → riesgo de falso positivo insignificante.
+function pareceFuncionEnTexto(t: string): boolean {
+  if (!t) return false;
+  return /<\s*\/?\s*(antml:)?(invoke|function_calls|parameter)\b/i.test(t)
+    || /\bname\s*=\s*"(buscar_producto|info_tienda|guardar_lead|sucursales_interior)"/i.test(t);
+}
+
 // v29 — re-aplica el tracking a los links de producto que el modelo pudo "limpiar" (sacándole el
 // ?utm…&ref_code=). Reemplaza cada URL de producto por la versión con tracking generada este turno
 // (links: handle → URL apex+utm+ref_code). Determinista: no depende de que el LLM copie bien la URL.
@@ -1115,7 +1180,17 @@ Deno.serve(async (req) => {
       if (!data) return Response.json({ error: "not_found" }, { status: 404 });
       return Response.json({ wa_id: data.wa_id, producto_handle: data.producto_handle, ts: data.created_at });
     }
-    return Response.json({ status: "ok", function: "copilot-webhook", version: "v43-sucursales-interior", mode: MODE, mode_raw: MODE_RAW, model: MODEL, llm_configured: !!anthropic, wati_send_configured: !!(WATI_API_TOKEN && WATI_API_BASE), inventario_configurado: !!(SHOPIFY_ADMIN_TOKEN && SHOPIFY_ADMIN_API_BASE), resolve_configured: !!RESOLVE_SECRET, handoff_assist_min: HANDOFF_ASSIST_MIN, handoff_cold_hours: HANDOFF_COLD_HOURS, live_targets: MODE === "live" ? (LIVE_ALL ? "all" : LIVE_ALLOWLIST.length) : 0, ts: new Date().toISOString() });
+    // v44 — autotest de inventario (diagnóstico), gated por ?key= (NO expone el token). Uso:
+    //   GET ?key=<WEBHOOK_KEY>&selftest=inventario[&pid=<product_id>]
+    // Corre la consulta Admin totalInventory desde ADENTRO y reporta status/errores/nodos, para ver por qué
+    // el stock no aparece (token inválido → 401/403; falta scope → HTTP 200 con "Access denied … read_inventory").
+    if (url.searchParams.get("selftest") === "inventario") {
+      if (url.searchParams.get("key") !== WEBHOOK_KEY) return Response.json({ error: "forbidden" }, { status: 403 });
+      const pid = (url.searchParams.get("pid") ?? "1167574466607").replace(/\D/g, "") || "1167574466607";
+      const diag = await inventarioSelfTest(pid);
+      return Response.json({ selftest: "inventario", ...diag, ts: new Date().toISOString() });
+    }
+    return Response.json({ status: "ok", function: "copilot-webhook", version: "v44-inv-selftest-antifuga", mode: MODE, mode_raw: MODE_RAW, model: MODEL, llm_configured: !!anthropic, wati_send_configured: !!(WATI_API_TOKEN && WATI_API_BASE), inventario_configurado: !!(SHOPIFY_ADMIN_TOKEN && SHOPIFY_ADMIN_API_BASE), resolve_configured: !!RESOLVE_SECRET, handoff_assist_min: HANDOFF_ASSIST_MIN, handoff_cold_hours: HANDOFF_COLD_HOURS, live_targets: MODE === "live" ? (LIVE_ALL ? "all" : LIVE_ALLOWLIST.length) : 0, ts: new Date().toISOString() });
   }
   if (req.method !== "POST") return Response.json({ error: "method_not_allowed" }, { status: 405 });
   if (url.searchParams.get("key") !== WEBHOOK_KEY) return Response.json({ error: "forbidden" }, { status: 403 });
@@ -1230,7 +1305,10 @@ Deno.serve(async (req) => {
             const history = (hist ?? []).reverse();
             // forceTool=true + modoAsistencia=true → única tool info_tienda, forzada (grounding).
             const r = await responderLLM(history as any, true, null, false, waId, {}, {}, true);
-            const salida = r.text ? limpiarWhatsApp(r.text) : null;
+            let salida = r.text ? limpiarWhatsApp(r.text) : null;
+            // v44 guard anti-fuga: si la tool-call se filtró como texto, no la enviamos (aquí un humano ya
+            // tiene el caso → basta con no responder). Loggea para telemetría.
+            if (salida && pareceFuncionEnTexto(salida)) { await log("fuga_tool_texto", false, { waId, fase: "asistencia", muestra: (r.text ?? "").slice(0, 200) }); salida = null; }
             if (!salida) { await log("asistencia_handoff", true, { waId, enviado: false, motivo: "sin_respuesta" }); return; }
             // anti-duplicado (llegó otro mensaje del cliente) + anti-carrera (el asesor volvió a escribir
             // durante el LLM → reseteó el reloj → él sigue; o la conversación dejó de estar en handoff).
@@ -1295,7 +1373,17 @@ Deno.serve(async (req) => {
         const atributosWati = extraerCustomParams(p); // v25: datos que ya tenemos (best-effort, del payload)
         const linksTracked: Record<string, string> = {}; // v29 — handle → URL con tracking (lo llena buscar_producto)
         const r = await responderLLM(history as any, imagen ? false : NEEDS_TOOL_RE.test(texto), imagen, esImagenCliente && !imagen, waId, atributosWati, linksTracked);
-        const salida = r.text ? reaplicarTracking(limpiarWhatsApp(r.text), linksTracked) : null; // v16 formato + v29 tracking
+        let salida = r.text ? reaplicarTracking(limpiarWhatsApp(r.text), linksTracked) : null; // v16 formato + v29 tracking
+        // v44 (guard anti-fuga de tool-call): si el modelo escribió la llamada como TEXTO (visto en Sonnet 5)
+        // en vez de invocarla nativa, NO mandamos ese XML; va la respuesta de respaldo (consciente del
+        // horario, como v23) y se loggea. Mejor una deferencia segura que basura al cliente.
+        let fugaTool = false;
+        if (salida && pareceFuncionEnTexto(salida)) {
+          fugaTool = true;
+          salida = horarioPanama().dentro
+            ? "Disculpe, tuve un inconveniente procesando su consulta 🙏. Un asesor le ayuda en breve."
+            : "Disculpe, tuve un inconveniente procesando su consulta 🙏. Un asesor le ayuda apenas estemos en horario (Lun-Vie 9:00am–5:00pm).";
+        }
         // v20 (anti-duplicado, post-LLM): durante los ~8s del LLM pudo llegar otro mensaje → no enviar el viejo.
         if (await hayMensajeClienteMasNuevo(conv.id, userCreatedAt)) { await log("descartado_superado", true, { waId, fase: "post-llm" }); return; }
         // v20 (anti-carrera): si el negocio tomó la conversación mientras pensábamos, no la pisamos.
@@ -1314,6 +1402,7 @@ Deno.serve(async (req) => {
         }
         respondido = true; // v23: ya insertamos/enviamos la respuesta del bot
         if (esImagenCliente) await log("imagen_procesada", true, { waId, descargada: !!imagen, enviado });
+        if (fugaTool) await log("fuga_tool_texto", false, { waId, enviado, muestra: (r.text ?? "").slice(0, 200) });
         if (!anthropic) await log("llm_no_configurado", true, { waId });
       } catch (e) {
         await log("error", false, { waId, fase: "async", error: String(e).slice(0, 400) });
