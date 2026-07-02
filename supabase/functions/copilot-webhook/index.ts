@@ -1,3 +1,33 @@
+// === copilot-webhook v45 — Copiloto AI de WATI — endurecimiento quirúrgico (auditoría 02-jul + consultoría externa) ===
+// v45 (2026-07-02): paquete quirúrgico, sin tocar lógica de handoff/anti-carrera/caché. De la AUDITORÍA del
+//   02-jul: (1) FIX eco de la despedida fija de handoff — se insertaba DESPUÉS de enviar y SIN `model` (null)
+//   → el chequeo anti-eco (`model != 'human-agent'`) no ve filas NULL (semántica SQL) → el eco de WATI se
+//   guardaba como asesor fantasma (2 casos reales); ahora se inserta ANTES con model='handoff-fijo' y el
+//   anti-eco acepta model NULL. (2) POLÍTICAS COMERCIALES: el bot negó "esquema de descuentos" sin fuente y
+//   el asesor luego SÍ ajustó el precio → regla: si info_tienda no trae la política, ni afirmarla ni negarla.
+//   (3) ESTILO: no pensar en voz alta ("espere, veo que…") ni afirmar acciones no verificables ("ya lo
+//   anoté", "el asesor ya vio su mensaje"). (4) COMPATIBILIDAD: tampoco como probabilidad ("suele ser la
+//   misma tinta"). De la CONSULTORÍA EXTERNA (verificada contra el código, se adoptó lo que aplicaba):
+//   (5) ejemplo con tuteo en CAPTURA DE DATOS que v41 no limpió ("Para enviarte… te la mandamos… tu
+//   nombre") → a usted. (6) NEEDS_TOOL_RE ahora detecta CÓDIGOS/SKU sueltos (letra+dígito: W1105A, CF258A,
+//   7MD68A, BA1U5LA#ABM, FDC-BT15KR-6B) → fuerza buscar_producto aunque no haya palabra de catálogo.
+//   (7) HANDOFF_RE: "garantía/devolución" GENERAL ya no va a handoff permanente (era inconsistente con
+//   BASIC_INFO_RE, que la trata como política respondible) → va a info_tienda; el RECLAMO concreto
+//   ("quiero devolver", "llegó dañado", "defectuoso") SÍ sigue a humano. (8) Seguridad: .trim() a TODOS los
+//   secretos pegados a mano (WATI_API_TOKEN/BASE, WEBHOOK_KEY, RESOLVE_SECRET), tope de payload (256 KB),
+//   menos PII en job_log (email→dominio en lead_capturado; evento_sin_texto ya no vuelca el payload entero),
+//   COPILOT_DIAG_KEY opcional para el selftest y `webhook_key_es_default` en el healthcheck (endurecer =
+//   crear el secreto + actualizar WATI; el default NO se elimina todavía para no dejar mudo al bot si se
+//   despliega antes de crear el secreto — se retira en una versión futura ya con el secreto en uso).
+//   (9) tests/golden.mjs — golden tests de los regex y helpers extraídos del index.ts real (node).
+//   ANTES del deploy, una revisión adversarial (13 agentes, verificación mecánica con node) endureció el
+//   paquete: reclamos con artículo ("necesito una devolución", "¿me pueden hacer la devolución?", "aplicar
+//   mi garantía", "me salió dañado") vuelven a ir a handoff (la 1ª versión los dejaba pasar a info_tienda);
+//   el patrón SKU excluye la cédula PA con letra (E-8-104720/PE-12-3456 — que además se agregó a
+//   INTERRUPT_RE) y las horas/plazos (10am, 00am de "9:00am", 24hrs, 1ero); el insert de la despedida se
+//   verifica (si falla, NO se envía — el eco volvería como asesor fantasma); el tope de payload chequea el
+//   body real (el header puede faltar o mentir). 108 golden tests verdes.
+//   Sin cambios de esquema. Reescribe el caché de v35 (cambia el SYSTEM_PROMPT → re-warm puntual).
 // === copilot-webhook v44 — Copiloto AI de WATI — autotest de inventario + guard anti-fuga de tool-call ===
 // v44 (2026-07-01): dos hallazgos de una auditoría en Sonnet 5 (01-jul). (A) INVENTARIO AÚN SIN CANTIDAD:
 //   pese al .trim() de v40 y a rotar el token, el stock seguía derivando ("un asesor confirma") en TODOS
@@ -315,16 +345,26 @@ import { createClient } from "npm:@supabase/supabase-js@2.45.4";
 
 const SB_URL = Deno.env.get("SUPABASE_URL")!;
 const SB_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
-const ANTHROPIC_API_KEY = Deno.env.get("ANTHROPIC_API_KEY") ?? "";
-const WATI_API_TOKEN = Deno.env.get("WATI_API_TOKEN") ?? "";
-const WATI_API_BASE = Deno.env.get("WATI_API_BASE") ?? "";
+const ANTHROPIC_API_KEY = (Deno.env.get("ANTHROPIC_API_KEY") ?? "").trim();
+// v45: .trim() a todos los secretos que se pegan a mano (la lección de v40: un espacio invisible en el
+// token de Shopify tumbó el inventario). El de WATI_API_BASE además quita la barra final (evita //api).
+const WATI_API_TOKEN = (Deno.env.get("WATI_API_TOKEN") ?? "").trim();
+const WATI_API_BASE = (Deno.env.get("WATI_API_BASE") ?? "").trim().replace(/\/$/, "");
 // v20: clamp a valores válidos. Si COPILOT_MODE trae basura (p.ej. un id de modelo por cruzar el
 // secreto con COPILOT_MODEL) cae a "shadow" (seguro) en vez de romper TODOS los inserts: la columna
 // messages.mode solo acepta live|shadow. MODE_RAW se expone en el healthcheck para diagnóstico.
 const MODE_RAW = (Deno.env.get("COPILOT_MODE") ?? "shadow").toLowerCase();
 const MODE = MODE_RAW === "live" ? "live" : "shadow";
 const MODEL = (Deno.env.get("COPILOT_MODEL") ?? "claude-haiku-4-5").trim(); // v40: trim (un espacio rompía el A/B de Sonnet 5)
-const WEBHOOK_KEY = Deno.env.get("COPILOT_WEBHOOK_KEY") ?? "cw-qsp-9f2e7b3a1c5d4806";
+// v45: trim + flag de diagnóstico. El default del código se MANTIENE por ahora (retirarlo antes de crear
+// el secreto dejaría mudo al bot: WATI recibiría 403); el healthcheck expone `webhook_key_es_default` para
+// ver de un vistazo si ya se endureció. Endurecer = crear COPILOT_WEBHOOK_KEY (valor aleatorio) + actualizar
+// la URL en WATI; una versión futura retira el default cuando el flag ya esté en false.
+const WEBHOOK_KEY = (Deno.env.get("COPILOT_WEBHOOK_KEY") ?? "").trim() || "cw-qsp-9f2e7b3a1c5d4806";
+const WEBHOOK_KEY_ES_DEFAULT = !(Deno.env.get("COPILOT_WEBHOOK_KEY") ?? "").trim();
+// v45: key OPCIONAL aparte para el selftest de inventario (?selftest=), para no pasear la key del webhook
+// al diagnosticar. Si no existe, el selftest sigue aceptando la WEBHOOK_KEY (compatibilidad).
+const DIAG_KEY = (Deno.env.get("COPILOT_DIAG_KEY") ?? "").trim();
 const MAX_TURNS_DIA = 40;
 // v31 — ciclo de vida del handoff (umbrales configurables por secreto, defaults acordados con
 // Gerencia). ASSIST: si el asesor lleva >= N min sin escribir y el cliente hace una pregunta
@@ -340,7 +380,7 @@ const STORE = "https://www.quickservicepanama.com";
 const SHOPIFY_ADMIN_TOKEN = (Deno.env.get("SHOPIFY_ADMIN_TOKEN") ?? "").trim();
 const SHOPIFY_ADMIN_API_BASE = (Deno.env.get("SHOPIFY_ADMIN_API_BASE") ?? "").trim().replace(/\/$/, "");
 // v28 — stitching WhatsApp→web por ref_code (atribución / identidad omnicanal en el CDP).
-const RESOLVE_SECRET = Deno.env.get("RESOLVE_SECRET") ?? "";   // guard del endpoint GET ?ref_code=
+const RESOLVE_SECRET = (Deno.env.get("RESOLVE_SECRET") ?? "").trim();   // guard del endpoint GET ?ref_code= (v45: trim)
 const STORE_APEX = "https://quickservicepanama.com";          // apex (sin www; www mete redirect)
 
 // Piloto gradual: en live, SOLO se envía a estos wa_id. Vacío = no se envía a nadie (sigue
@@ -454,6 +494,7 @@ ESTILO
 - TRATO DE USTED, siempre. Es lo natural, respetuoso y profesional en Panamá. NUNCA uses voseo: nada de "vos", "tenés", "podés", "querés", "mirá", "dale", "fijate". Tampoco tutees ("tú", "te", "tienes"): el trato es de usted, y el usted también puede ser cálido. Ejemplos correctos: "Con gusto le ayudo", "¿Para qué impresora la necesita?", "Le confirmo el precio y la disponibilidad", "Quedamos atentos a cualquier consulta".
 - Negrita SOLO con UN asterisco: *así*. NUNCA uses dobles asteriscos (**texto**), porque en WhatsApp se ven literales y se ve mal. Tampoco uses otra sintaxis de Markdown (#, listas con guion, tablas). Para enlaces, escribe la URL completa tal cual (https://...); NUNCA uses el formato [texto](url) — en WhatsApp se ve literal.
 - Emojis con moderación (uno o dos por mensaje, no más).
+- Da la respuesta FINAL directamente: NUNCA pienses en voz alta ni te corrijas a mitad de mensaje ("espere, veo que…", "ah no, mejor…"). Y no afirmes acciones que no puedes hacer ni verificar: nada de "ya lo anoté/registré el pedido" ni "el asesor ya vio su mensaje" — di que un asesor le dará seguimiento por aquí (la conversación queda visible para el equipo, eso basta). Excepción: si guardar_lead confirmó que guardó los datos, decir "quedaron guardados" SÍ es real.
 - CANAL: estás atendiendo POR WhatsApp, en este mismo chat. NUNCA le digas al cliente que te escriba o te contacte "por WhatsApp", ni le des el número de WhatsApp de la tienda (el que info_tienda trae como whatsapp/seguimiento) — ya está hablando con nosotros aquí; sonaría absurdo. Aunque info_tienda incluya ese número o un texto de "escríbenos por WhatsApp", NO lo repitas. Cuando derives a un asesor, di que un asesor le responde por aquí mismo / en este chat. Menciona el correo SOLO si de verdad hace falta enviar o recibir algo por esa vía.
 
 REGLA DE ORO — precio, stock y promociones
@@ -473,7 +514,7 @@ BÚSQUEDA DE PRODUCTOS (cómo usar buscar_producto)
 - Un mismo producto se nombra de varias formas: "Canon" ↔ línea "Pixma"; "Epson" ↔ "EcoTank"/"WorkForce"; "HP" ↔ "DeskJet/LaserJet/OfficeJet". Para "tinta para [impresora]", busca por el modelo de la impresora (la tinta suele indicar los modelos compatibles) y, si hace falta, por el modelo de la tinta.
 - Si la primera búsqueda no encuentra, REFORMULA y vuelve a llamar buscar_producto (prueba solo el número de modelo, la línea, o el modelo de la tinta) ANTES de derivar.
 - Preguntas genéricas de categoría ("¿venden impresoras Epson?", "¿manejan toner?"): busca la categoría/marca y responde sí/no con 1-2 ejemplos concretos y su precio; invita a indicar el modelo. No listes más de 2-3.
-- COMPATIBILIDAD: NO afirmes que un producto sirve para cierto equipo a menos que el resultado de buscar_producto lo indique. Si no estás seguro, dilo y deja que un asesor confirme.
+- COMPATIBILIDAD: NO afirmes que un producto sirve para cierto equipo a menos que el resultado de buscar_producto lo indique — NI SIQUIERA como probabilidad ("suele ser la misma tinta", "debería servir"): eso también es adivinar. Si no estás seguro, dilo y deja que un asesor confirme.
 - MODELO EXACTO: usa el TÍTULO tal cual lo devuelve buscar_producto. Si el modelo que pidió el cliente NO aparece en el título del resultado, NO lo renombres ni asumas que es el mismo equipo: dilo claro (ej. "no encontré el [modelo] exacto; lo más parecido que tenemos es [título real]…") y ofrécelo como alternativa o deriva. NUNCA pongas el modelo pedido junto al precio o link de otro producto.
 
 VENTA CONSULTIVA — ayuda a elegir bien (sin inventar)
@@ -485,7 +526,7 @@ VENTA CONSULTIVA — ayuda a elegir bien (sin inventar)
 - Empresa que pide cotización formal, factura, crédito o volumen: ayúdala con precio/disponibilidad (buscar_producto) y pásala con un asesor para la cotización o la factura; NO pidas RUC ni datos de factura tú mismo.
 
 CAPTURA DE DATOS (nombre, apellido, correo y empresa) — pasiva, sin insistir
-- Cuando el cliente muestra intención de COTIZAR o comprar algo concreto (o en un momento natural), y no los tenemos, pide con naturalidad su correo y su nombre y apellido: p.ej. "Para enviarte la cotización, ¿a qué correo te la mandamos y cuál es tu nombre y apellido?".
+- Cuando el cliente muestra intención de COTIZAR o comprar algo concreto (o en un momento natural), y no los tenemos, pide con naturalidad su correo y su nombre y apellido: p.ej. "Para enviarle la cotización, ¿a qué correo se la enviamos y cuál es su nombre y apellido?".
 - Detecta o pregunta si es para uso PERSONAL o para una EMPRESA; si es empresa, pide el nombre de la empresa (informal).
 - Cuando tengas CUALQUIERA de esos datos (correo, nombre, apellido, empresa), llama a guardar_lead con lo que tengas (puedes llamarla varias veces a medida que el cliente los da). Si guardar_lead dice que el correo es inválido, pide que lo confirme UNA sola vez.
 - Es PASIVO, no un formulario: si el cliente lo ignora, lo rechaza o sigue con otra cosa, NO insistas — sigue ayudando normal. Si ya lo pediste en esta conversación y no lo dio, no lo vuelvas a pedir. Si el CONTEXTO indica que ya tenemos un dato, no lo pidas de nuevo.
@@ -508,6 +549,7 @@ LOGÍSTICA, PAGOS Y DATOS DE LA TIENDA (envíos, ubicación, horarios, métodos 
 - NUNCA inventes montos, direcciones, horarios ni formas de pago, y NUNCA compartas números de cuenta (Yappy/ACH/transferencia). Para "cómo pago", responde con lo que devuelva info_tienda y deja la coordinación a un asesor.
 - DISTINGUE métodos vs trámite EN CURSO: explicar QUÉ formas de pago aceptamos o las tarifas de envío (vía info_tienda) está bien; pero COORDINAR el pago o la entrega de un pedido concreto (cuándo paga, a qué cuenta transfiere, cuándo le llega) es un trámite de un asesor. NUNCA te comprometas con "puede pagar hoy", "le llega mañana" ni des una cuenta para transferir: deriva esa coordinación a un asesor.
 - Si info_tienda no tiene el dato (devuelve "sin datos disponibles"): dilo con honestidad y deriva a un asesor para confirmarlo. No prometas plazos ni costos específicos.
+- POLÍTICAS COMERCIALES (descuentos, precios especiales, cliente frecuente, mayoreo/revendedor, crédito): si info_tienda NO trae el dato, NO las afirmes NI las niegues — nada de "no manejamos descuentos" ni "el precio es el mismo para todos" (solo un asesor decide precios especiales, y a veces los da). Di que un asesor le confirma si hay alguna opción para su caso.
 - SUCURSALES DEL INTERIOR (recogida): si el cliente del interior pregunta dónde recoger/retirar o si hay sucursal/agencia en su zona, usa la herramienta sucursales_interior con su provincia o ciudad (ej. "David", "Chiriquí", "Penonomé") y responde SOLO con los puntos que devuelva (nombre, teléfono, horario). NUNCA inventes una sucursal, dirección ni teléfono. Si la ciudad exacta no aparece, deduce la provincia (sabes la geografía de Panamá) y vuelve a consultar por la provincia; si aun así no hay punto, dilo y comparte el listado completo. Para tarifas/plazos del interior usa info_tienda.
 
 SOPORTE TÉCNICO Y REPARACIONES
@@ -556,7 +598,16 @@ const TOOLS: Anthropic.Tool[] = [{
   input_schema: { type: "object", properties: { lugar: { type: "string", description: "Provincia o ciudad del cliente (ej. Chiriquí, David, Penonomé, Coclé). Vacío = resumen por provincia." } } },
 } as Anthropic.Tool];
 
-const HANDOFF_RE = /\b(humano|persona|asesor|agente|reclamo|queja|devoluci[oó]n|garant[ií]a|hablar con alguien|supervisor)\b/i;
+// v45: "garantía/devolución" GENERAL ("¿qué garantía tienen?") ya NO va a handoff permanente — era
+// inconsistente: BASIC_INFO_RE la trata como política respondible (info_tienda) en modo asistencia, pero
+// aquí mandaba al cliente a esperar un humano por una pregunta de política. Ahora la pregunta general la
+// responde info_tienda (NEEDS_TOOL_RE la fuerza) y el RECLAMO concreto (intención de devolver / producto
+// dañado o defectuoso / aplicar la garantía de una compra) SÍ sigue yendo a humano.
+// Sesgo CONSERVADOR: ante ambigüedad ("¿tiene garantía?", "la devolución") se deriva igual que en v44;
+// solo la pregunta CLARAMENTE general ("política de devolución", "¿hacen devoluciones?", "¿qué garantía
+// tienen?" — plural/sin artículo) pasa a info_tienda. Endurecido tras revisión adversarial pre-deploy:
+// la 1ª versión de v45 dejaba pasar "necesito una devolución", "aplicar mi garantía", "me salió dañado".
+const HANDOFF_RE = /\b(humano|persona|asesor|agente|reclamo|queja|hablar con alguien|supervisor|quiero devolver|devolver (el|la|lo|los|las|un|una|mi|este|esta|esto|eso)|devolverl[oa]s?|devuelvan|cambiarl[oa]s?|(una|la|mi|su|esa|esta) devoluci[oó]n|(aplicar|usar|reclamar|validar|activar|hacer (v[aá]lida|efectiva)) (la |mi |su )?garant[ií]a|(mi|su) garant[ií]a|en garant[ií]a|tiene garant[ií]a|sali[oó] (mal|malo|mala|da[ñn]ad[oa]|defectuos[oa])|(lleg[oó]|vino) (mal|malo|mala|da[ñn]ad[oa]|roto|rota|defectuos[oa])|defectuos[oa]s?|me vendieron (uno|una|algo) (malo|mala|da[ñn]ad[oa]|defectuos[oa]))\b/i;
 
 // Anti-interrupción (guardrail PRE-LLM): señales de un trámite/pago/dato fiscal EN CURSO
 // (típicamente atendido por un humano). Si el texto entrante matchea, el bot se ABSTIENE
@@ -567,6 +618,7 @@ const INTERRUPT_RE = new RegExp([
   // datos fiscales / facturación
   "\\bruc\\b", "\\bdv\\b", "c[eé]dula", "raz[oó]n social", "factura a nombre", "facturar a", "datos (de|para) (la )?factura", "a nombre de",
   "\\b\\d{1,4}-\\d{2,4}-\\d{4,7}\\b", // RUC/cédula PA (ej. 557-538-101617); no matchea fechas (último grupo >=4 dígitos)
+  "\\b[a-z]{1,2}-\\d{1,4}-\\d{3,7}\\b", // v45: cédula PA con letra (E-8-104720, PE-12-3456, N-19-1234); no matchea SKUs (GI-190 = 1 solo grupo; FDC-… = 3 letras)
   // pago/comprobante EN CURSO (no "¿aceptan X?" / "¿cómo pago?", que son métodos → info_tienda)
   "le adjunto", "adjunto (el|la|mi) ?(pago|comprobante|transferencia|recibo)", "comprobante", "ya (le |te )?(hice|mand[eé]|envi[eé]|pagu[eé])", "dep[oó]sit",
   "pagar\\s+(ya|ahora|de una|hoy|mañana)", // intención de pagar YA (no "pagar con tarjeta/yappy" — eso no lleva ya/ahora/hoy)
@@ -591,6 +643,21 @@ const NEEDS_TOOL_RE = new RegExp([
   "\\bcable", "\\bhdmi\\b", "\\bvga\\b", "\\busb\\b", "adaptador", "disco", "\\bssd\\b", "\\bhdd\\b", "almacenamiento", "memoria", "\\bram\\b", "pendrive",
   "router", "\\bswitch\\b", "access.?point", "\\bwifi\\b", "audifon", "auricular", "parlante", "bocina", "proyector", "accesori", "perif[eé]ric", "tecnolog", "suministr",
   "dell", "lenovo", "\\bjbl\\b", "xtech", "alliance", "tablet",
+  // v45: garantía/devolución/cambios GENERAL → fuerza tool (info_tienda tiene la política); el reclamo
+  // concreto nunca llega aquí (HANDOFF_RE y el guardrail del prompt lo derivan antes).
+  "garant[ií]a", "devoluci", "\\bcambios?\\b",
+  // v45: CÓDIGOS/SKU sueltos — el cliente a veces manda SOLO el código (W1105A, CF258A, 7MD68A,
+  // BA1U5LA#ABM, FDC-BT15KR-6B) sin palabra de catálogo → antes no forzaba tool y el modelo podía negar
+  // de memoria. Dos formas (endurecidas tras revisión adversarial pre-deploy):
+  // (a) multi-segmento con guion/# — requiere letra Y dígito, y EXCLUYE la forma de cédula panameña con
+  //     letra / ref fiscal ([1-2 letras]-dígitos-dígitos…: E-8-104720, PE-12-3456, F-2024-001 — INTERRUPT_RE
+  //     también las atrapa ahora); FDC-BT15KR-6B y GI-190 sí matchean (cabeza de 3 letras / 1 solo grupo).
+  // (b) token mixto de 4-10 chars con una LETRA ANTES de un dígito — así horas/cantidades con sufijo
+  //     ("10am", "00am" de 9:00am, "24hrs", "1ero", "20usd") NO matchean; W1105A/CF258A/7MD68A/L220 sí.
+  //     Trade-off aceptado: un código PURO dígitos+sufijo ("954xl" solo, sin más texto) no fuerza — igual
+  //     que antes de v45 (paridad); con cualquier palabra de catálogo ("tinta 954xl") sí.
+  "\\b(?![a-z]{1,2}(?:-\\d+){2,}\\b)(?=[a-z0-9#-]*[a-z])(?=[a-z0-9#-]*\\d)[a-z0-9]+(?:[-#][a-z0-9]+)+\\b",
+  "\\b(?=[a-z0-9]{4,10}\\b)(?=[a-z0-9]*[a-z][a-z0-9]*\\d)[a-z0-9]+\\b",
 ].join("|"), "i");
 
 // v31 — pregunta BÁSICA de tienda que el bot SÍ puede adelantar mientras un asesor está ausente
@@ -1094,7 +1161,8 @@ async function guardarLead(waId: string, email?: string, empresa?: string, nombr
       body: JSON.stringify({ customParams: params }),
       signal: AbortSignal.timeout(10000),
     });
-    await log("lead_capturado", r.ok, { waId, campos: params.map((x) => x.name), email: e || null, wati_status: r.status });
+    // v45: no guardar el email completo en job_log (PII); el dato real ya quedó en los atributos de WATI.
+    await log("lead_capturado", r.ok, { waId, campos: params.map((x) => x.name), email_dominio: e.includes("@") ? e.split("@")[1] : null, wati_status: r.status });
     return JSON.stringify(r.ok ? { ok: true, guardado: params.map((x) => x.name) } : { ok: false, error: `wati_status_${r.status}` });
   } catch (err) {
     await log("lead_capturado", false, { waId, error: String(err).slice(0, 200) });
@@ -1185,18 +1253,31 @@ Deno.serve(async (req) => {
     // Corre la consulta Admin totalInventory desde ADENTRO y reporta status/errores/nodos, para ver por qué
     // el stock no aparece (token inválido → 401/403; falta scope → HTTP 200 con "Access denied … read_inventory").
     if (url.searchParams.get("selftest") === "inventario") {
-      if (url.searchParams.get("key") !== WEBHOOK_KEY) return Response.json({ error: "forbidden" }, { status: 403 });
+      // v45: acepta COPILOT_DIAG_KEY (si existe) además de la WEBHOOK_KEY, para diagnosticar sin pasear
+      // la key del webhook en URLs/navegadores.
+      const k = url.searchParams.get("key");
+      if (k !== WEBHOOK_KEY && !(DIAG_KEY && k === DIAG_KEY)) return Response.json({ error: "forbidden" }, { status: 403 });
       const pid = (url.searchParams.get("pid") ?? "1167574466607").replace(/\D/g, "") || "1167574466607";
       const diag = await inventarioSelfTest(pid);
       return Response.json({ selftest: "inventario", ...diag, ts: new Date().toISOString() });
     }
-    return Response.json({ status: "ok", function: "copilot-webhook", version: "v44-inv-selftest-antifuga", mode: MODE, mode_raw: MODE_RAW, model: MODEL, llm_configured: !!anthropic, wati_send_configured: !!(WATI_API_TOKEN && WATI_API_BASE), inventario_configurado: !!(SHOPIFY_ADMIN_TOKEN && SHOPIFY_ADMIN_API_BASE), resolve_configured: !!RESOLVE_SECRET, handoff_assist_min: HANDOFF_ASSIST_MIN, handoff_cold_hours: HANDOFF_COLD_HOURS, live_targets: MODE === "live" ? (LIVE_ALL ? "all" : LIVE_ALLOWLIST.length) : 0, ts: new Date().toISOString() });
+    return Response.json({ status: "ok", function: "copilot-webhook", version: "v45-endurecimiento-quirurgico", mode: MODE, mode_raw: MODE_RAW, model: MODEL, llm_configured: !!anthropic, wati_send_configured: !!(WATI_API_TOKEN && WATI_API_BASE), inventario_configurado: !!(SHOPIFY_ADMIN_TOKEN && SHOPIFY_ADMIN_API_BASE), resolve_configured: !!RESOLVE_SECRET, webhook_key_es_default: WEBHOOK_KEY_ES_DEFAULT, handoff_assist_min: HANDOFF_ASSIST_MIN, handoff_cold_hours: HANDOFF_COLD_HOURS, live_targets: MODE === "live" ? (LIVE_ALL ? "all" : LIVE_ALLOWLIST.length) : 0, ts: new Date().toISOString() });
   }
   if (req.method !== "POST") return Response.json({ error: "method_not_allowed" }, { status: 405 });
   if (url.searchParams.get("key") !== WEBHOOK_KEY) return Response.json({ error: "forbidden" }, { status: 403 });
 
+  // v45: tope de tamaño del payload — los webhooks de WATI son chicos (el media llega como URL, no como
+  // bytes); un body enorme es un error o abuso. Se chequea el header (fast path) Y el body real (el
+  // header puede faltar —chunked— o mentir; el límite duro de memoria lo pone la plataforma).
+  const clen = parseInt(req.headers.get("content-length") ?? "0", 10);
+  if (clen > 262144) return Response.json({ error: "payload_too_large" }, { status: 413 });
+
   let p: any;
-  try { p = await req.json(); } catch { return Response.json({ error: "invalid_json" }, { status: 400 }); }
+  try {
+    const raw = await req.text();
+    if (raw.length > 262144) return Response.json({ error: "payload_too_large" }, { status: 413 });
+    p = JSON.parse(raw);
+  } catch { return Response.json({ error: "invalid_json" }, { status: 400 }); }
 
   const waId = String(p.waId ?? p.wa_id ?? "").replace(/\D/g, "");
   const texto = (p.text ?? "").toString().trim();
@@ -1222,8 +1303,11 @@ Deno.serve(async (req) => {
     if (convH?.id) {
       // ¿Eco de un envío propio reciente del bot? (mismo texto, respuesta del bot < 5 min) → ignorar.
       const desde = new Date(Date.now() - 5 * 60 * 1000).toISOString();
+      // v45: `.or(model.is.null,…)` — con `.neq` solo, una fila con model NULL queda EXCLUIDA (NULL <>
+      // 'human-agent' es NULL en SQL) → el eco de la despedida fija (que se insertaba sin model) se
+      // guardaba como asesor fantasma. Cinturón y tirantes: la despedida ahora también lleva model.
       const { data: eco } = await sb.from("messages").select("id").eq("conversation_id", convH.id)
-        .eq("role", "assistant").neq("model", "human-agent").eq("content", texto).gte("created_at", desde).limit(1);
+        .eq("role", "assistant").or("model.is.null,model.neq.human-agent").eq("content", texto).gte("created_at", desde).limit(1);
       if (eco && eco.length) return Response.json({ ok: true, skipped: "eco_propio" });
       // El negocio está atendiendo: guarda el mensaje como contexto y marca la conversación como
       // ATENDIDA POR HUMANO (v15). El bot no la retoma hasta que se devuelva a status='bot'.
@@ -1239,12 +1323,16 @@ Deno.serve(async (req) => {
   const esImagenCliente = tipo === "image" && !esDelNegocio && !!waId;
 
   if (!esImagenCliente && (!waId || !texto || tipo !== "text")) {
-    // Diagnóstico v18.1: registrar el payload COMPLETO de mensajes no-texto (documentos,
-    // audio…) para conocer el shape real de media de WATI. Trunca strings largos.
-    const muestra: Record<string, unknown> = {};
-    for (const [k, val] of Object.entries(p ?? {})) {
-      muestra[k] = typeof val === "string" && val.length > 500 ? val.slice(0, 500) + "…[trunc]" : val;
-    }
+    // v45: el volcado COMPLETO del payload (diagnóstico v18.1) ya cumplió su propósito (descubrir el
+    // shape de media de WATI) y metía texto libre/PII del cliente en job_log. Ahora solo campos de
+    // diagnóstico: las llaves del payload (para detectar shapes nuevos) + tipo/URL del media.
+    const muestra: Record<string, unknown> = {
+      keys: Object.keys(p ?? {}).slice(0, 40),
+      type: p?.type ?? null,
+      filename: p?.filename ?? null,
+      mimeType: p?.mimeType ?? p?.mime_type ?? null,
+      data: typeof p?.data === "string" ? p.data.slice(0, 160) : null, // URL del media (debug de descarga)
+    };
     await log("evento_sin_texto", true, { tipo, eventType: eventType || null, payload: muestra });
     return Response.json({ ok: true, skipped: "no_es_mensaje_de_cliente" });
   }
@@ -1349,8 +1437,19 @@ Deno.serve(async (req) => {
       const despedida = horarioPanama().dentro
         ? "Con gusto, ya le paso con un asesor que le responderá en breve. ¡Gracias por escribirnos!"
         : "Con gusto, un asesor le responderá apenas estemos en horario (Lun-Vie 9:00am–5:00pm). ¡Gracias por escribirnos!";
-      const enviado = liveAllowed(waId) ? await enviarWati(waId, despedida) : false;
-      await sb.from("messages").insert({ conversation_id: conv.id, role: "assistant", content: despedida, mode: enviado ? "live" : "shadow", latency_ms: Date.now() - t0 });
+      // v45: insertar ANTES de enviar y con model explícito (anti-eco duro, como v21). Antes se insertaba
+      // DESPUÉS y sin model (NULL) → el anti-eco no encontraba la fila → el eco de WATI se guardaba como
+      // mensaje de asesor fantasma (2 casos reales el 02-jul) y reseteaba el reloj del handoff (v31).
+      const quiereEnviarH = liveAllowed(waId);
+      const insH = await sb.from("messages").insert({ conversation_id: conv.id, role: "assistant", content: despedida, mode: quiereEnviarH ? "live" : "shadow", model: "handoff-fijo", latency_ms: Date.now() - t0 }).select("id");
+      // Si el insert falló, NO enviamos: el eco volvería sin fila que lo reconozca (asesor fantasma).
+      // La conversación ya quedó en handoff; el asesor saluda él mismo. Telemetría para verlo.
+      if (insH.error) {
+        await log("error", false, { waId, fase: "handoff_despedida_insert", error: String(insH.error.message ?? insH.error).slice(0, 200) });
+        return Response.json({ ok: true, handoff: true, despedida: "omitida_insert_fallo" });
+      }
+      const enviado = quiereEnviarH ? await enviarWati(waId, despedida) : false;
+      if (quiereEnviarH && !enviado) await sb.from("messages").update({ mode: "shadow" }).eq("id", (insH.data?.[0] as any)?.id);
       return Response.json({ ok: true, handoff: true });
     }
 

@@ -21,7 +21,8 @@ sombra por seguridad.
 CLAUDE.md                                  # contexto autoritativo (leer primero)
 docs/base-conocimiento-qsp.md              # base de conocimiento del negocio (fuente → prompt + store_facts)
 supabase/
-  functions/copilot-webhook/index.ts       # la edge function (v44 EN VIVO: diagnóstico + inventario resuelto, probando Sonnet 5)
+  functions/copilot-webhook/index.ts       # la edge function (v45 en repo; v44 EN VIVO, probando Sonnet 5)
+tests/golden.mjs                            # golden tests (regex + helpers, extraídos del index.ts real) — node tests/golden.mjs
   migrations/*.sql                          # esquema reproducible (8 migraciones)
 deploy.ps1                                  # deploy byte-exacto por CLI + verificación de healthcheck
 web/
@@ -91,7 +92,15 @@ web/
   PG-145XL=87 → el problema era un token viejo; el nuevo + el restart del deploy lo resolvió). (b) **guard
   anti-fuga de tool-call** — si el modelo escribe la llamada como texto (visto en Sonnet 5), no se envía el
   XML: va la respuesta de respaldo.
-- Auditorías diarias: coexistencia perfecta (0 clientes pisados, 0 ecos falsos). ~$0.02/turno, ~8 s.
+- **v45 (listo para desplegar):** endurecimiento quirúrgico (auditoría 02-jul + consultoría externa
+  contrastada): fix del eco de la despedida de handoff (asesor fantasma), políticas comerciales sin fuente ni
+  se afirman ni se niegan, SKU sueltos (W1105A, BA1U5LA#ABM…) fuerzan `buscar_producto`, garantía/devolución
+  GENERAL → `info_tienda` (el reclamo sigue a humano, sesgo conservador), `.trim()` a todos los secretos,
+  menos PII en `job_log`, tope de payload, `tests/golden.mjs` (108 casos verdes). Endurecido con una revisión
+  adversarial pre-deploy (2 regresiones mayores halladas y corregidas). Correr `node tests/golden.mjs` antes
+  de cada deploy.
+- Auditorías diarias: coexistencia perfecta (0 clientes pisados, 0 ecos falsos). Con Sonnet 5 + caching:
+  ~$0.01/turno, ~8 s (02-jul: 119 turnos = $1.17).
 
 ## Desarrollo / deploy
 - Secretos van en **Supabase Edge Function secrets** (NO en el repo): `ANTHROPIC_API_KEY`,

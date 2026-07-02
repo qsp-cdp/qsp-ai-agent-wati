@@ -1,9 +1,9 @@
 # CLAUDE.md — Copiloto AI de WhatsApp (WATI) · Quick Service Panamá
 
 > Contexto base para Claude Code trabajando en ESTE repo. Lee esto primero.
-> Generado 2026-06-15; actualizado 2026-07-01 (edge function v44 EN VIVO —autotest de inventario +
-> guard anti-fuga de tool-call; el autotest CONFIRMÓ el inventario real (PG-145XL=87), token nuevo OK—,
-> probando Sonnet 5) +
+> Generado 2026-06-15; actualizado 2026-07-02 (v45 en el repo —endurecimiento quirúrgico: fix eco de
+> despedida, políticas comerciales, SKU sueltos fuerzan tool, garantía general→info_tienda, PII fuera de
+> job_log, golden tests—; v44 EN VIVO —inventario confirmado con clientes reales—, probando Sonnet 5) +
 > esquema del proyecto Supabase. Docs de diseño originales en el repo
 > `qsp-cdp/qsp-cdp-docs` (`docs/design/2026-06-12-proyecto-copilot-wati.md` y
 > `docs/design/2026-06-13-copilot-analisis-sombra-prompt-v2.md`).
@@ -39,6 +39,31 @@ con certeza, y calla/deriva cuando es mejor que responda un humano. Tienda:
   autotest (`?selftest=inventario`) dio `ok_inventario_visible` con PG-145XL `totalInventory:87` → el token
   nuevo funciona y el inventario ya se muestra. (Hallazgo aparte: `COPILOT_WEBHOOK_KEY` NO está en secrets →
   el `?key=` usa el default del código `cw-qsp-9f2e7b3a1c5d4806`; endurecer con un secreto real + actualizar WATI.)
+- **EN EL REPO, LISTO PARA DESPLEGAR: v45 (`v45-endurecimiento-quirurgico`).** Paquete quirúrgico de la
+  auditoría del 02-jul (día completo: 205 msgs, 44 convs, inventario ya mostrando cantidades, 0 críticos)
+  + una consultoría externa (ChatGPT) CONTRASTADA contra el código — se adoptó lo verificado, se difirió lo
+  riesgoso. Adoptado: (1) **fix eco de despedida de handoff** (bug real, 2 casos: se insertaba después de
+  enviar y sin `model` → el anti-eco no ve filas NULL → el eco quedaba como "asesor fantasma" y reseteaba el
+  reloj de v31; ahora insert-antes con `model='handoff-fijo'` + anti-eco null-safe); (2) **políticas
+  comerciales** — el bot negó "esquema de descuentos" sin fuente y el asesor luego SÍ ajustó precio → regla:
+  ni afirmarlas ni negarlas sin info_tienda; (3) **ejemplo con tuteo** en CAPTURA DE DATOS que v41 no limpió;
+  (4) **SKU sueltos fuerzan tool** (W1105A, BA1U5LA#ABM, FDC-BT15KR-6B… letra+dígito; teléfonos/RUC/cantidades,
+  cédulas con letra y horas NO matchean); (5) **garantía/devolución GENERAL → info_tienda** (era inconsistente
+  con BASIC_INFO_RE); el reclamo concreto ("quiero devolver", "necesito una devolución", "aplicar mi garantía",
+  "llegó dañado") sigue a humano, con sesgo conservador (lo ambiguo → handoff como en v44); (6) estilo: no
+  pensar en voz alta, no "ya lo anoté/el asesor ya vio", compatibilidad ni "como probabilidad"; (7) seguridad:
+  `.trim()` a todos los secretos, tope de payload 256KB (header + body real), cédula PA con letra
+  (E-8-104720) agregada a `INTERRUPT_RE`, email→dominio en `job_log`, `evento_sin_texto` ya no vuelca el
+  payload, `COPILOT_DIAG_KEY` opcional para el selftest, `webhook_key_es_default` en healthcheck;
+  (8) **`tests/golden.mjs`** (108 casos, extrae los regex/helpers del index.ts real; correr
+  `node tests/golden.mjs` antes de cada deploy). **Antes del deploy, una revisión adversarial (13 agentes,
+  verificación mecánica) halló y corrigió 2 regresiones mayores de la 1ª versión del paquete** (reclamos con
+  artículo que dejaban de ir a handoff; el patrón SKU matcheaba cédulas con letra y horas) — los
+  contraejemplos quedaron en la suite.
+  DIFERIDO con razón: re-ranking de búsqueda (validar contra tienda viva primero), validador post-LLM duro
+  (habría roto respuestas correctas del 02-jul), tabla de sucursales (decisión documentada), audio (v46),
+  quitar el default de WEBHOOK_KEY (primero crear el secreto + WATI, si no el bot queda mudo). Sin cambios
+  de esquema. Reescribe el caché de v35 (re-warm).
 - **MODO: LIVE A TODOS.** `COPILOT_MODE=live` + `COPILOT_LIVE_ALLOWLIST=all`
   (`live_targets:"all"`). El piloto por allowlist (sombra → número por número) ya se
   completó; hoy el bot responde a todos los clientes. El default del CÓDIGO sigue
