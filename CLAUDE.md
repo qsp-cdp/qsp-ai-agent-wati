@@ -37,8 +37,8 @@ con certeza, y calla/deriva cuando es mejor que responda un humano. Tienda:
   de respaldo (como v23) en su lugar (`job_log` `fuga_tool_texto`). Solo diagnóstico + guard de salida; no toca
   prompt/tools/system, guardrails ni el caché de v35. Sin cambios de esquema. **Verificado en prod:** el
   autotest (`?selftest=inventario`) dio `ok_inventario_visible` con PG-145XL `totalInventory:87` → el token
-  nuevo funciona y el inventario ya se muestra. (Hallazgo aparte: `COPILOT_WEBHOOK_KEY` NO está en secrets →
-  el `?key=` usa el default del código `cw-qsp-9f2e7b3a1c5d4806`; endurecer con un secreto real + actualizar WATI.)
+  nuevo funciona y el inventario ya se muestra. (Hallazgo aparte: `COPILOT_WEBHOOK_KEY` no estaba en secrets
+  → ✅ **endurecido el 02-jul** tras desplegar v45: secreto aleatorio + WATI actualizado + verificado.)
 - **EN EL REPO, LISTO PARA DESPLEGAR: v45 (`v45-endurecimiento-quirurgico`).** Paquete quirúrgico de la
   auditoría del 02-jul (día completo: 205 msgs, 44 convs, inventario ya mostrando cantidades, 0 críticos)
   + una consultoría externa (ChatGPT) CONTRASTADA contra el código — se adoptó lo verificado, se difirió lo
@@ -496,8 +496,10 @@ Reglas clave (texto completo en `index.ts`, const `SYSTEM_PROMPT`):
 `WATI_API_BASE`, `COPILOT_MODE` (shadow|live, default **shadow**),
 `COPILOT_LIVE_ALLOWLIST` (`wa_id` permitidos en live; vacío = nadie, `all`/`*` = todos),
 `COPILOT_MODEL` (default del código `claude-haiku-4-5`; en producción `claude-sonnet-4-6`),
-`COPILOT_WEBHOOK_KEY` (guard del `?key=`; ⚠️ HOY NO está en secrets → usa el default del código
-`cw-qsp-9f2e7b3a1c5d4806`; endurecer = crear el secreto con un valor aleatorio + actualizar la URL en WATI),
+`COPILOT_WEBHOOK_KEY` (guard del `?key=`; ✅ **endurecida el 2026-07-02**: secreto aleatorio creado + URL
+actualizada en WATI, verificado con `webhook_key_es_default:false` y tráfico real fluyendo; el default del
+código `cw-qsp-9f2e7b3a1c5d4806` quedó MUERTO — retirarlo del código en una versión futura para fail-closed),
+`COPILOT_DIAG_KEY` (v45, opcional — key aparte para `?selftest=`; si falta, el selftest acepta la WEBHOOK_KEY),
 **`SHOPIFY_ADMIN_TOKEN`** + **`SHOPIFY_ADMIN_API_BASE`**
 (v21 — inventario real vía Admin GraphQL; app de Shopify de **solo lectura** `read_products`+`read_inventory`;
 base `https://quick-service-supplies.myshopify.com/admin/api/2025-10`; si faltan, el `stock` cae a
