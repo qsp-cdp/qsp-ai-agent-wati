@@ -12,5 +12,8 @@ verify_jwt = false
 [functions.contacts-lookup]
 verify_jwt = false
 
+[functions.wati-address]
+verify_jwt = false
+
 [functions.shipday-status]
 verify_jwt = false

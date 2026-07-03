@@ -90,10 +90,28 @@ export interface WatiCapture {
   telefono?: string;
   direccion?: string;
   referencia?: string;
+  maps_url?: string;
   pedido?: string;
   total?: string | number;
   orderNumber?: string;
   items?: Array<{ name?: string; quantity?: number; unitPrice?: number } | string>;
+}
+
+// Extrae lat/lng de un link de Google Maps (formatos @lat,lng · ?q=lat,lng ·
+// ll=lat,lng · !3dlat!4dlng). Los links cortos (maps.app.goo.gl) no traen
+// coordenadas: devuelven null y el link viaja igual en las instrucciones.
+export function parseMapsCoords(url?: string): { lat: number; lng: number } | null {
+  if (!url) return null;
+  const s = String(url);
+  const m =
+    s.match(/@(-?\d{1,2}\.\d+),(-?\d{1,3}\.\d+)/) ||
+    s.match(/[?&](?:q|ll|query)=(-?\d{1,2}\.\d+),\s*(-?\d{1,3}\.\d+)/) ||
+    s.match(/!3d(-?\d{1,2}\.\d+)!4d(-?\d{1,3}\.\d+)/);
+  if (!m) return null;
+  const lat = Number(m[1]);
+  const lng = Number(m[2]);
+  if (!Number.isFinite(lat) || !Number.isFinite(lng) || Math.abs(lat) > 90 || Math.abs(lng) > 180) return null;
+  return { lat, lng };
 }
 
 export function watiCaptureToShipday(capture: WatiCapture, pickup: Pickup = defaultPickup()) {
@@ -111,6 +129,12 @@ export function watiCaptureToShipday(capture: WatiCapture, pickup: Pickup = defa
       )
     : undefined;
 
+  const instrucciones = [
+    capture.pedido ? `Pedido: ${capture.pedido}` : '',
+    capture.maps_url ? `📍 Mapa: ${capture.maps_url}` : '',
+  ].filter(Boolean).join('\n');
+  const coords = parseMapsCoords(capture.maps_url);
+
   return {
     orderNumber: capture.orderNumber || `WATI-${Date.now()}`,
     customerName: String(capture.nombre).trim(),
@@ -120,8 +144,9 @@ export function watiCaptureToShipday(capture: WatiCapture, pickup: Pickup = defa
     restaurantAddress: pickup.address,
     restaurantPhoneNumber: pickup.phone,
     totalOrderCost: capture.total != null ? Number(capture.total) : undefined,
-    deliveryInstruction: capture.pedido ? `Pedido: ${capture.pedido}` : undefined,
+    deliveryInstruction: instrucciones || undefined,
     orderSource: 'WATI',
+    ...(coords ? { deliveryLatitude: coords.lat, deliveryLongitude: coords.lng } : {}),
     ...(items ? { orderItem: items } : {}),
   };
 }

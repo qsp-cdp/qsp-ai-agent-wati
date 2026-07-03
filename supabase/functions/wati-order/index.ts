@@ -1,9 +1,16 @@
-// WATI → Shipday. El flujo de captura de dirección de WATI llama aquí:
-//   POST https://<PROJECT_REF>.supabase.co/functions/v1/wati-order
+// WATI → Shipday: despacho de un pedido.
+//   POST https://<REF>.supabase.co/functions/v1/wati-order
 //   Header: x-wati-token: <WATI_WEBHOOK_TOKEN>
-// Además de crear la orden, guarda/actualiza el contacto en la libreta.
+//   Body: { telefono | waId, nombre?, pedido?, total?,
+//           direccion?, referencia?, maps_url?,   ← opcionales: si faltan se
+//           notificar? }                            leen de la libreta
+//
+// Si la dirección no viene en el body, se busca en la libreta (capturada
+// antes por wati-address). Crea la orden en Shipday y, salvo notificar=false,
+// anuncia al cliente por WhatsApp que su pedido va a preparación para envío.
 import { createShipdayOrder, HttpError, json, watiCaptureToShipday } from '../_shared/shipday.ts';
-import { upsertContactByPhone } from '../_shared/db.ts';
+import { findContactByPhone, upsertContactByPhone } from '../_shared/db.ts';
+import { sendWatiSessionMessage } from '../_shared/watiapi.ts';
 
 Deno.serve(async (req) => {
   if (req.method !== 'POST') return json({ error: 'Método no permitido' }, 405);
@@ -13,21 +20,63 @@ Deno.serve(async (req) => {
   }
   try {
     const capture = await req.json();
+    capture.telefono = String(capture.telefono ?? capture.waId ?? capture.wa_id ?? '').trim();
+    if (!capture.telefono) throw new HttpError(400, 'Falta el teléfono (telefono o waId)');
+
+    // Completa desde la libreta lo que no venga en el body.
+    if (!String(capture.direccion ?? '').trim() || !String(capture.nombre ?? '').trim()) {
+      const contacto = await findContactByPhone(capture.telefono);
+      if (contacto) {
+        if (!String(capture.direccion ?? '').trim()) {
+          capture.direccion = contacto.address;
+          if (!capture.referencia && contacto.referencia) capture.referencia = contacto.referencia;
+          if (!capture.maps_url && contacto.maps_url) capture.maps_url = contacto.maps_url;
+        }
+        if (!String(capture.nombre ?? '').trim()) capture.nombre = contacto.name;
+      }
+      if (!String(capture.direccion ?? '').trim()) {
+        throw new HttpError(400, 'El cliente no tiene dirección registrada: captura la dirección primero (flujo wati-address)');
+      }
+    }
+
     const order = watiCaptureToShipday(capture);
     const result = await createShipdayOrder(order);
     console.log(`Pedido WATI ${order.orderNumber} enviado a Shipday`);
+
     try {
       await upsertContactByPhone({
         name: order.customerName as string,
         phone: order.customerPhoneNumber as string,
-        address: order.customerAddress as string,
+        address: capture.direccion,
+        referencia: capture.referencia || null,
+        maps_url: capture.maps_url || null,
         source: 'wati',
       });
     } catch (err) {
       // La orden ya salió; un fallo en la libreta no debe romper el flujo.
       console.error('No se pudo guardar el contacto:', (err as Error).message);
     }
-    return json({ ok: true, orderNumber: order.orderNumber, shipday: result });
+
+    // Anuncio al cliente (best-effort). Shipday enviará su propio tracking
+    // cuando el repartidor tome la orden; este mensaje cubre el "va a
+    // preparación", que Shipday no comunica.
+    let notificado = false;
+    if (capture.notificar !== false) {
+      try {
+        const nombre = String(capture.nombre || '').split(' ')[0] || '';
+        await sendWatiSessionMessage(
+          capture.telefono,
+          `🛠️ ${nombre ? nombre + ', tu' : 'Tu'} pedido ya está en preparación para envío 📦\n` +
+          `Entregaremos en: ${capture.direccion}\n` +
+          `Te avisaremos por aquí cuando salga en camino. 🚚`
+        );
+        notificado = true;
+      } catch (err) {
+        console.error('No se pudo enviar el anuncio por WATI:', (err as Error).message);
+      }
+    }
+
+    return json({ ok: true, orderNumber: order.orderNumber, notificado, shipday: result });
   } catch (err) {
     const status = err instanceof HttpError ? err.status : 500;
     console.error('Error WATI→Shipday:', (err as Error).message);

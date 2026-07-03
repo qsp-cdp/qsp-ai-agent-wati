@@ -77,9 +77,26 @@ export function shopifyOrderToShipday(shopifyOrder, pickup = defaultPickup()) {
   return order;
 }
 
+// Extrae lat/lng de un link de Google Maps (formatos @lat,lng · ?q=lat,lng ·
+// ll=lat,lng · !3dlat!4dlng). Los links cortos (maps.app.goo.gl) no traen
+// coordenadas: devuelven null y el link viaja igual en las instrucciones.
+export function parseMapsCoords(url) {
+  if (!url) return null;
+  const s = String(url);
+  const m =
+    s.match(/@(-?\d{1,2}\.\d+),(-?\d{1,3}\.\d+)/) ||
+    s.match(/[?&](?:q|ll|query)=(-?\d{1,2}\.\d+),\s*(-?\d{1,3}\.\d+)/) ||
+    s.match(/!3d(-?\d{1,2}\.\d+)!4d(-?\d{1,3}\.\d+)/);
+  if (!m) return null;
+  const lat = Number(m[1]);
+  const lng = Number(m[2]);
+  if (!Number.isFinite(lat) || !Number.isFinite(lng) || Math.abs(lat) > 90 || Math.abs(lng) > 180) return null;
+  return { lat, lng };
+}
+
 // Convierte los datos capturados por la plantilla de WATI al formato Shipday.
 // Campos esperados (ver docs/plantilla-wati.md): nombre, telefono, direccion,
-// referencia (opcional), pedido (texto o lista), total (opcional).
+// referencia (opcional), maps_url (opcional), pedido, total (opcionales).
 export function watiCaptureToShipday(capture, pickup = defaultPickup()) {
   const required = ['nombre', 'telefono', 'direccion'];
   const missing = required.filter((f) => !String(capture?.[f] ?? '').trim());
@@ -97,6 +114,12 @@ export function watiCaptureToShipday(capture, pickup = defaultPickup()) {
       }))
     : undefined;
 
+  const instrucciones = [
+    capture.pedido ? `Pedido: ${capture.pedido}` : '',
+    capture.maps_url ? `📍 Mapa: ${capture.maps_url}` : '',
+  ].filter(Boolean).join('\n');
+  const coords = parseMapsCoords(capture.maps_url);
+
   return {
     orderNumber: capture.orderNumber || `WATI-${Date.now()}`,
     customerName: String(capture.nombre).trim(),
@@ -106,8 +129,9 @@ export function watiCaptureToShipday(capture, pickup = defaultPickup()) {
     restaurantAddress: pickup.address,
     restaurantPhoneNumber: pickup.phone,
     totalOrderCost: capture.total != null ? Number(capture.total) : undefined,
-    deliveryInstruction: capture.pedido ? `Pedido: ${capture.pedido}` : undefined,
+    deliveryInstruction: instrucciones || undefined,
     orderSource: 'WATI',
+    ...(coords ? { deliveryLatitude: coords.lat, deliveryLongitude: coords.lng } : {}),
     ...(items ? { orderItem: items } : {}),
   };
 }

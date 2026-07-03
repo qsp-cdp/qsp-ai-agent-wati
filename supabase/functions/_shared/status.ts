@@ -45,13 +45,4 @@ export function statusMessageFor(event: StatusEvent): string | null {
   return msg;
 }
 
-export async function sendWatiSessionMessage(phone: string, text: string) {
-  const endpoint = Deno.env.get('WATI_API_ENDPOINT');
-  const token = Deno.env.get('WATI_API_TOKEN');
-  if (!endpoint || !token) throw new Error('Faltan WATI_API_ENDPOINT / WATI_API_TOKEN');
-  const number = String(phone).replace(/\D/g, '');
-  const url = `${endpoint.replace(/\/$/, '')}/api/v1/sendSessionMessage/${number}?messageText=${encodeURIComponent(text)}`;
-  const res = await fetch(url, { method: 'POST', headers: { Authorization: `Bearer ${token}` } });
-  if (!res.ok) throw new Error(`WATI respondió ${res.status}: ${await res.text()}`);
-  return res.json();
-}
+export { sendWatiSessionMessage } from './watiapi.ts';
