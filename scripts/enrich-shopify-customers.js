@@ -35,14 +35,19 @@ async function gql(query, variables) {
     await sleep(2000);
     return gql(query, variables);
   }
+  if (res.status === 401 || res.status === 403) {
+    throw new Error(`Autenticación rechazada (HTTP ${res.status}): revisa el token shpat_ y sus permisos read/write_customers`);
+  }
   const body = await res.json();
-  if (body.errors?.length) {
-    const throttled = body.errors.some((e) => e.extensions?.code === 'THROTTLED');
-    if (throttled) {
+  // Shopify devuelve `errors` como ARREGLO (errores GraphQL) o como TEXTO
+  // (p.ej. token inválido → "[API] Invalid API key or access token").
+  if (body.errors) {
+    if (Array.isArray(body.errors) && body.errors.some((e) => e.extensions?.code === 'THROTTLED')) {
       await sleep(2000);
       return gql(query, variables);
     }
-    throw new Error(JSON.stringify(body.errors).slice(0, 300));
+    const msg = typeof body.errors === 'string' ? body.errors : JSON.stringify(body.errors);
+    throw new Error(msg.slice(0, 300));
   }
   return body.data;
 }
@@ -113,6 +118,21 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 async function main() {
   if (!DOMAIN || !TOKEN) {
     console.error('Faltan SHOPIFY_STORE_DOMAIN y/o SHOPIFY_ADMIN_TOKEN en el entorno');
+    process.exit(1);
+  }
+  if (DOMAIN.includes('TU-TIENDA') || TOKEN.includes('TU_TOKEN')) {
+    console.error('Todavía están los valores de EJEMPLO. Reemplaza SHOPIFY_STORE_DOMAIN por tu\n' +
+      'dominio real (algo.myshopify.com) y SHOPIFY_ADMIN_TOKEN por el token real (shpat_...).');
+    process.exit(1);
+  }
+  // Preflight: una sola llamada para confirmar credenciales y permiso
+  // read_customers antes de recorrer miles de contactos.
+  try {
+    const test = await gql(`{ shop { name } customers(first: 1) { edges { node { id } } } }`, {});
+    console.log(`Conectado a Shopify: ${test.shop.name}`);
+  } catch (err) {
+    console.error(`No se pudo conectar a Shopify: ${err.message}`);
+    console.error('Verifica el dominio (.myshopify.com), el token (shpat_...) y sus permisos read/write_customers.');
     process.exit(1);
   }
   const args = process.argv.slice(2);
