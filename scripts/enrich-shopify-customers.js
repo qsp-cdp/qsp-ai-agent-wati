@@ -146,6 +146,8 @@ async function main() {
 
   const stats = { encontrados: 0, no_encontrados: 0, sin_direccion: 0, sin_tag: 0, etiquetados: 0, direcciones_agregadas: 0, errores: 0 };
   const pendientes = [];
+  const totalAProcesar = contacts.length - offset;
+  console.log(`Procesando ${totalAProcesar} contactos… muestra avance cada 25; NO cierres la ventana.\n`);
 
   for (let i = offset; i < contacts.length; i++) {
     const c = contacts[i];
@@ -173,8 +175,10 @@ async function main() {
       stats.errores++;
       console.error(`  [#${i}] ${c.name} (${phone}): ${err.message.slice(0, 160)}`);
     }
-    if ((i + 1) % 100 === 0) console.log(`  ${i + 1}/${contacts.length} procesados…  (reanudable con --offset ${i + 1})`);
-    await sleep(apply ? 350 : 250); // respeta el rate limit del API
+    if ((i + 1) % 25 === 0) {
+      console.log(`  ${i + 1}/${contacts.length} · en Shopify: ${stats.encontrados} · sin dirección: ${stats.sin_direccion} · sin etiqueta: ${stats.sin_tag} · errores: ${stats.errores}  (reanudable: --offset ${i + 1})`);
+    }
+    await sleep(apply ? 300 : 150); // respeta el rate limit del API
   }
 
   console.log('\n===== RESUMEN =====');
