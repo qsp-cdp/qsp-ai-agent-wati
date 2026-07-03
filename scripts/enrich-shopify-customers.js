@@ -78,26 +78,26 @@ async function addTags(id, tags) {
   if (errs?.length) throw new Error(errs[0].message);
 }
 
-// Solo se llama cuando el cliente NO tiene ninguna dirección, así que
-// escribir la lista completa de direcciones no borra nada.
+// Solo se llama cuando el cliente NO tiene ninguna dirección, así que crear
+// una nueva y marcarla por defecto no pisa nada. Usa customerAddressCreate
+// (mutación vigente); CustomerInput.addresses está deprecado. Se envía solo
+// address1 (la dirección libre de Tookan): es el campo estable y suficiente
+// para que el repartidor la vea; evitamos enums de país/provincia y teléfonos
+// mal formados que harían fallar toda la creación.
 async function setAddress(id, contact) {
   const data = await gql(
-    `mutation($input: CustomerInput!) {
-       customerUpdate(input: $input) { userErrors { field message } }
+    `mutation($customerId: ID!, $address: MailingAddressInput!) {
+       customerAddressCreate(customerId: $customerId, address: $address, setAsDefault: true) {
+         customerAddress { id }
+         userErrors { field message }
+       }
      }`,
     {
-      input: {
-        id,
-        addresses: [{
-          address1: (contact.address || '').slice(0, 255),
-          city: 'Panamá',
-          country: 'Panama',
-          phone: normalizePhone(contact.phone),
-        }],
-      },
+      customerId: id,
+      address: { address1: (contact.address || '').slice(0, 255) },
     },
   );
-  const errs = data.customerUpdate.userErrors;
+  const errs = data.customerAddressCreate.userErrors;
   if (errs?.length) throw new Error(errs.map((e) => e.message).join('; '));
 }
 
