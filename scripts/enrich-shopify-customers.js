@@ -93,7 +93,6 @@ async function setAddress(id, contact) {
   const data = await gql(
     `mutation($customerId: ID!, $address: MailingAddressInput!) {
        customerAddressCreate(customerId: $customerId, address: $address, setAsDefault: true) {
-         customerAddress { id }
          userErrors { field message }
        }
      }`,
