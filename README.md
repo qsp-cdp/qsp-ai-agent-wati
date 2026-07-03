@@ -97,12 +97,13 @@ npm start              # levanta el servicio en :3000
 
 ## Checklist de migración (apagar Tookan sin cortes)
 
-1. [ ] Crear cuenta/plan en Shipday y generar la API key (**Integrations → API**).
-2. [ ] Conectar la app nativa de Shipday en Shopify y probar con un pedido real.
-3. [ ] Exportar clientes de Tookan (CSV) y correr `migrate-tookan.js`; respaldar el CSV en Drive.
-4. [ ] Desplegar este servicio y configurar el flujo de WATI con la plantilla de dirección apuntando a `/webhooks/wati/order`.
-5. [ ] Invitar a los repartidores a Shipday (app Shipday Driver) y correr en paralelo con Tookan 3–5 días.
-6. [ ] Desactivar la integración de Tookan en Shopify y cancelar la suscripción de JungleWorks.
+1. [x] Cuenta Shipday (Branded Premium) con API key generada. *(01-jul)*
+2. [x] Shopify → Shipday **por webhook propio** (la app nativa se descartó y desinstaló por la fricción de su widget; ver `docs/despliegue-supabase.md`). Pedidos de prueba #8635/#8636 verificados. *(03-jul)*
+3. [x] 5,276 clientes de Tookan migrados a la tabla `contacts` de Supabase, lookup por teléfono verificado. *(02-jul)*
+4. [x] Webhook de estados de Shipday activo (`ORDER_INSERTED` verificado en logs). *(03-jul)*
+5. [x] Repartidores con la app Shipday Driver y simulacro de entrega completado. *(03-jul)*
+6. [ ] Flujo de compra asistida en WATI (plantilla de captura → `wati-order`; ver `docs/plantilla-wati.md`).
+7. [ ] Tras unos días estables, cancelar la suscripción de Tookan/JungleWorks.
 
 ## Estructura
 
