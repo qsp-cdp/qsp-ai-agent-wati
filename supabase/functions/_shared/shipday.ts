@@ -91,6 +91,8 @@ export interface WatiCapture {
   direccion?: string;
   referencia?: string;
   maps_url?: string;
+  lat?: number | null;   // coordenadas ya resueltas (tienen prioridad sobre maps_url)
+  lng?: number | null;
   pedido?: string;
   total?: string | number;
   orderNumber?: string;
@@ -98,20 +100,51 @@ export interface WatiCapture {
 }
 
 // Extrae lat/lng de un link de Google Maps (formatos @lat,lng · ?q=lat,lng ·
-// ll=lat,lng · !3dlat!4dlng). Los links cortos (maps.app.goo.gl) no traen
-// coordenadas: devuelven null y el link viaja igual en las instrucciones.
+// ll=lat,lng · !3dlat!4dlng · geo:lat,lng de la ubicación nativa de WhatsApp).
 export function parseMapsCoords(url?: string): { lat: number; lng: number } | null {
   if (!url) return null;
   const s = String(url);
   const m =
     s.match(/@(-?\d{1,2}\.\d+),(-?\d{1,3}\.\d+)/) ||
-    s.match(/[?&](?:q|ll|query)=(-?\d{1,2}\.\d+),\s*(-?\d{1,3}\.\d+)/) ||
-    s.match(/!3d(-?\d{1,2}\.\d+)!4d(-?\d{1,3}\.\d+)/);
+    s.match(/[?&](?:q|ll|query|daddr|destination)=(-?\d{1,2}\.\d+),\s*(-?\d{1,3}\.\d+)/) ||
+    s.match(/!3d(-?\d{1,2}\.\d+)!4d(-?\d{1,3}\.\d+)/) ||
+    s.match(/^geo:(-?\d{1,2}\.\d+),(-?\d{1,3}\.\d+)/i) ||
+    // último recurso: dos números tipo coordenada separados por coma
+    s.match(/(-?\d{1,2}\.\d{3,}),\s*(-?\d{1,3}\.\d{3,})/);
   if (!m) return null;
   const lat = Number(m[1]);
   const lng = Number(m[2]);
   if (!Number.isFinite(lat) || !Number.isFinite(lng) || Math.abs(lat) > 90 || Math.abs(lng) > 180) return null;
   return { lat, lng };
+}
+
+// Los links cortos (maps.app.goo.gl, goo.gl/maps) no traen coordenadas: hay
+// que seguir la redirección para llegar a la URL larga que sí las tiene.
+// Devuelve las coordenadas o null (nunca lanza: si falla, seguimos sin pin).
+export async function resolveMapsCoords(url?: string, fetchFn = fetch): Promise<{ lat: number; lng: number } | null> {
+  const direct = parseMapsCoords(url);
+  if (direct || !url) return direct;
+  if (!/^https?:\/\/(maps\.app\.goo\.gl|goo\.gl\/maps|g\.co\/kgs)/i.test(url)) return null;
+  try {
+    // manual: leemos el Location del 3xx sin seguirlo (más rápido y evita cargar la página)
+    let current = url;
+    for (let i = 0; i < 5; i++) {
+      const res = await fetchFn(current, { method: 'GET', redirect: 'manual', signal: AbortSignal.timeout(6000) });
+      const loc = res.headers.get('location');
+      if (loc) {
+        const coords = parseMapsCoords(loc);
+        if (coords) return coords;
+        current = new URL(loc, current).href;
+        continue;
+      }
+      // sin redirección: intentar parsear el cuerpo (algunos short links resuelven vía HTML)
+      const body = await res.text();
+      return parseMapsCoords(body);
+    }
+  } catch {
+    // red/timeout: seguimos sin coordenadas, el link igual viaja en instrucciones
+  }
+  return null;
 }
 
 export function watiCaptureToShipday(capture: WatiCapture, pickup: Pickup = defaultPickup()) {
@@ -133,7 +166,9 @@ export function watiCaptureToShipday(capture: WatiCapture, pickup: Pickup = defa
     capture.pedido ? `Pedido: ${capture.pedido}` : '',
     capture.maps_url ? `📍 Mapa: ${capture.maps_url}` : '',
   ].filter(Boolean).join('\n');
-  const coords = parseMapsCoords(capture.maps_url);
+  const coords = (capture.lat != null && capture.lng != null)
+    ? { lat: Number(capture.lat), lng: Number(capture.lng) }
+    : parseMapsCoords(capture.maps_url);
 
   return {
     orderNumber: capture.orderNumber || `WATI-${Date.now()}`,

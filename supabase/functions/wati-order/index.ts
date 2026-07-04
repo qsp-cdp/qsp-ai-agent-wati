@@ -8,7 +8,7 @@
 // Si la dirección no viene en el body, se busca en la libreta (capturada
 // antes por wati-address). Crea la orden en Shipday y, salvo notificar=false,
 // anuncia al cliente por WhatsApp que su pedido va a preparación para envío.
-import { createShipdayOrder, HttpError, json, watiCaptureToShipday } from '../_shared/shipday.ts';
+import { createShipdayOrder, HttpError, json, resolveMapsCoords, watiCaptureToShipday } from '../_shared/shipday.ts';
 import { findContactByPhone, upsertContactByPhone } from '../_shared/db.ts';
 import { sendWatiSessionMessage } from '../_shared/watiapi.ts';
 
@@ -31,12 +31,22 @@ Deno.serve(async (req) => {
           capture.direccion = contacto.address;
           if (!capture.referencia && contacto.referencia) capture.referencia = contacto.referencia;
           if (!capture.maps_url && contacto.maps_url) capture.maps_url = contacto.maps_url;
+          // La libreta ya guardó las coordenadas resueltas al capturar: úsalas.
+          if (capture.lat == null && contacto.latitude != null) capture.lat = contacto.latitude;
+          if (capture.lng == null && contacto.longitude != null) capture.lng = contacto.longitude;
         }
         if (!String(capture.nombre ?? '').trim()) capture.nombre = contacto.name;
       }
       if (!String(capture.direccion ?? '').trim()) {
         throw new HttpError(400, 'El cliente no tiene dirección registrada: captura la dirección primero (flujo wati-address)');
       }
+    }
+
+    // Si el pedido trae un link de mapa pero aún no tenemos coordenadas
+    // (p.ej. link corto pegado directo en el despacho), resuélvelas.
+    if ((capture.lat == null || capture.lng == null) && capture.maps_url) {
+      const coords = await resolveMapsCoords(capture.maps_url);
+      if (coords) { capture.lat = coords.lat; capture.lng = coords.lng; }
     }
 
     const order = watiCaptureToShipday(capture);

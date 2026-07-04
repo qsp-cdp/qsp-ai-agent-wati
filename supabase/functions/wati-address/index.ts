@@ -7,7 +7,7 @@
 // ATRIBUTOS del contacto en WATI, para que el agente vea en el perfil si el
 // cliente ya tiene datos de envío completos:
 //   direccion_envio · referencia_envio · maps_envio · envio_datos · envio_fecha
-import { HttpError, json, normalizePhone, parseMapsCoords } from '../_shared/shipday.ts';
+import { HttpError, json, normalizePhone, resolveMapsCoords } from '../_shared/shipday.ts';
 import { upsertContactByPhone } from '../_shared/db.ts';
 import { updateWatiAttributes } from '../_shared/watiapi.ts';
 
@@ -28,7 +28,12 @@ Deno.serve(async (req) => {
     const nombre = String(p.nombre ?? '').trim();
     const phone = normalizePhone(telefono);
 
-    const coords = parseMapsCoords(maps);
+    // Resuelve coordenadas: si el link es corto (maps.app.goo.gl) sigue la
+    // redirección para sacar el pin exacto. Si trae lat/lng directas (ubicación
+    // nativa de WhatsApp), las usa tal cual.
+    const coords = (p.lat != null && p.lng != null)
+      ? { lat: Number(p.lat), lng: Number(p.lng) }
+      : await resolveMapsCoords(maps);
     await upsertContactByPhone({
       name: nombre,
       phone,

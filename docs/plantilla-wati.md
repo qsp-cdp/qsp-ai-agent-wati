@@ -43,7 +43,9 @@ WATI → Chatbots/Flow Builder → nuevo flujo:
 1. *(Opcional)* **Webhook GET** a `contacts-lookup?phone={{waId}}`: si responde `found:true`, preguntar «¿Entregamos en *{{contact.address}}* como la vez pasada?» (botones **Sí** → saltar a despacho / **Actualizar** → seguir).
 2. Pregunta → variable `direccion`: «📍 ¿Cuál es la dirección exacta de entrega? (calle, edificio, piso/apto, barrio)»
 3. Pregunta → variable `referencia`: «🏠 ¿Alguna referencia? (frente a qué queda, color del edificio…)» — puede responder "ninguna".
-4. Pregunta → variable `maps` (opcional): «🗺️ Si quieres, pégame el link de Google Maps de tu ubicación (o escribe "no")». Si el cliente comparte ubicación de WhatsApp, WATI la entrega como link.
+4. Pregunta → variable `maps` (opcional): «🗺️ Para que el repartidor llegue exacto, lo ideal es que uses **📎 Adjuntar → Ubicación** de WhatsApp y compartas tu ubicación. También puedes pegar un link de Google Maps, o escribir "no".»
+   - **Ubicación nativa de WhatsApp** = lo más preciso: WATI entrega latitud/longitud directas → pin exacto en Shipday. Si el flujo las expone como variables, mándalas también en el body como `lat` y `lng`.
+   - **Link de Google Maps** (largo o corto tipo `maps.app.goo.gl`): la función lo resuelve sola siguiendo la redirección para sacar las coordenadas. Si no puede, el link igual viaja como instrucción tappable para el repartidor.
 5. **Webhook POST** a `.../wati-address`
    - Headers: `x-wati-token: <WATI_WEBHOOK_TOKEN>` · `Content-Type: application/json`
    - Body:
@@ -53,9 +55,12 @@ WATI → Chatbots/Flow Builder → nuevo flujo:
        "nombre": "{{name}}",
        "direccion": "{{direccion}}",
        "referencia": "{{referencia}}",
-       "maps_url": "{{maps}}"
+       "maps_url": "{{maps}}",
+     "lat": "{{latitud}}",
+     "lng": "{{longitud}}"
      }
      ```
+   (`lat`/`lng` solo si el flujo captó la ubicación nativa de WhatsApp; si no, se omiten y se resuelve desde `maps_url`.)
 6. Mensaje de cierre: «¡Listo! Guardamos tu dirección de entrega ✅».
 
 La función guarda el contacto en la libreta y actualiza los atributos; si el link de Maps trae coordenadas, también las guarda (y luego viajan a Shipday para clavar el pin del repartidor).

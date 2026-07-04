@@ -19,6 +19,25 @@ test('links cortos o inválidos devuelven null sin romper', () => {
   assert.equal(parseMapsCoords('https://x.com/@999.0,200.0'), null); // fuera de rango
 });
 
+test('extrae coordenadas de la ubicación nativa de WhatsApp (geo:) y de destination=', () => {
+  assert.deepEqual(parseMapsCoords('geo:8.9927,-79.5343'), { lat: 8.9927, lng: -79.5343 });
+  assert.deepEqual(
+    parseMapsCoords('https://www.google.com/maps/dir/?api=1&destination=8.9927,-79.5343'),
+    { lat: 8.9927, lng: -79.5343 }
+  );
+});
+
+test('coordenadas explícitas (lat/lng) tienen prioridad sobre el link', () => {
+  const pickup = { name: 'QSP', address: 'X', phone: 'Y' };
+  const order = watiCaptureToShipday(
+    { nombre: 'Ana', telefono: '61112233', direccion: 'PH Elmare', lat: 9.01, lng: -79.5,
+      maps_url: 'https://www.google.com/maps/@8.98,-79.52,17z' },
+    pickup
+  );
+  assert.equal(order.deliveryLatitude, 9.01);   // gana lat/lng, no el @8.98 del link
+  assert.equal(order.deliveryLongitude, -79.5);
+});
+
 test('el pedido WATI incluye el mapa en instrucciones y coordenadas si las hay', () => {
   const pickup = { name: 'QSP', address: 'X', phone: 'Y' };
   const order = watiCaptureToShipday(

@@ -85,8 +85,10 @@ export function parseMapsCoords(url) {
   const s = String(url);
   const m =
     s.match(/@(-?\d{1,2}\.\d+),(-?\d{1,3}\.\d+)/) ||
-    s.match(/[?&](?:q|ll|query)=(-?\d{1,2}\.\d+),\s*(-?\d{1,3}\.\d+)/) ||
-    s.match(/!3d(-?\d{1,2}\.\d+)!4d(-?\d{1,3}\.\d+)/);
+    s.match(/[?&](?:q|ll|query|daddr|destination)=(-?\d{1,2}\.\d+),\s*(-?\d{1,3}\.\d+)/) ||
+    s.match(/!3d(-?\d{1,2}\.\d+)!4d(-?\d{1,3}\.\d+)/) ||
+    s.match(/^geo:(-?\d{1,2}\.\d+),(-?\d{1,3}\.\d+)/i) ||
+    s.match(/(-?\d{1,2}\.\d{3,}),\s*(-?\d{1,3}\.\d{3,})/);
   if (!m) return null;
   const lat = Number(m[1]);
   const lng = Number(m[2]);
@@ -118,7 +120,9 @@ export function watiCaptureToShipday(capture, pickup = defaultPickup()) {
     capture.pedido ? `Pedido: ${capture.pedido}` : '',
     capture.maps_url ? `📍 Mapa: ${capture.maps_url}` : '',
   ].filter(Boolean).join('\n');
-  const coords = parseMapsCoords(capture.maps_url);
+  const coords = (capture.lat != null && capture.lng != null)
+    ? { lat: Number(capture.lat), lng: Number(capture.lng) }
+    : parseMapsCoords(capture.maps_url);
 
   return {
     orderNumber: capture.orderNumber || `WATI-${Date.now()}`,
