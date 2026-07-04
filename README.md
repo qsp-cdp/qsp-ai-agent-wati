@@ -102,8 +102,13 @@ npm start              # levanta el servicio en :3000
 3. [x] 5,276 clientes de Tookan migrados a la tabla `contacts` de Supabase, lookup por teléfono verificado. *(02-jul)*
 4. [x] Webhook de estados de Shipday activo (`ORDER_INSERTED` verificado en logs). *(03-jul)*
 5. [x] Repartidores con la app Shipday Driver y simulacro de entrega completado. *(03-jul)*
-6. [ ] Flujo de compra asistida en WATI (plantilla de captura → `wati-order`; ver `docs/plantilla-wati.md`).
-7. [ ] Tras unos días estables, cancelar la suscripción de Tookan/JungleWorks.
+6. [x] Backend del flujo WATI desplegado y probado end-to-end (04-jul): captura de
+   dirección con atributos en el perfil (`wati-address`), despacho que toma la
+   dirección de la libreta + anuncio al cliente + orden en Shipday (`wati-order`).
+   Pendiente: armar el flujo/plantilla en el panel de WATI (ver `docs/plantilla-wati.md`).
+7. [x] ~5,100 clientes de Tookan enriquecidos en Shopify (dirección + etiquetas
+   `tookan/delivery`) para pedidos asistidos por asesor (04-jul).
+8. [ ] Tras unos días estables, cancelar la suscripción de Tookan/JungleWorks.
 
 ## Estructura
 
