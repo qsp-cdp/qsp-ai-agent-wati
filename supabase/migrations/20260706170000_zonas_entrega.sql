@@ -1,0 +1,562 @@
+-- v47 — Fuente ÚNICA de verdad de ENVÍOS (zonas + sectores + resolver).
+-- Reemplaza el dato disperso (store_facts genérico + Excel + memoria del bot) por una tabla editable en
+-- Supabase que consume el bot HOY y, después, el callback de Carrier Service de Shopify y el ruteo a
+-- Shipday/Servientrega. La columna `metodo` es el ENRUTADOR: 'propia' -> motorizado/Shipday (mismo día,
+-- Z1/Z2/Z3/Z6); 'servientrega' -> Servientrega día siguiente (Z4/Z5). Guardrail del proyecto: RLS on +
+-- GRANT manual a service_role (auto-expose OFF). Idempotente: create-if-not-exists + reseed (truncate+insert)
+-- desde el snapshot del Excel (Actualizado 2026-07-03). Aplicar en el SQL Editor.
+-- Fuente: corregimientos_barrios_tarifas_panama_sanmiguelito_servientrega_ancon.xlsx (Panamá + San Miguelito).
+
+-- ================= ZONAS (6) =================
+create table if not exists public.zonas_entrega (
+  zona            text primary key,
+  descripcion     text,
+  tarifa_base_usd numeric(6,2) not null,
+  metodo          text not null check (metodo in ('propia','servientrega')),
+  plazo           text,
+  observaciones   text,
+  updated_at      timestamptz not null default now()
+);
+
+-- ================= SECTORES (barrio -> zona) =================
+create table if not exists public.sectores_entrega (
+  id            bigint generated always as identity primary key,
+  corregimiento text not null,
+  barrio        text not null,
+  distrito      text,
+  sector_macro  text,
+  tipo_zona     text,
+  alias         text,
+  zona          text not null references public.zonas_entrega(zona),
+  validacion    text check (validacion in ('Alta','Media')),
+  nota          text,
+  barrio_norm   text not null,   -- barrio sin acentos/minúsculas (para match determinista sin extensión unaccent)
+  alias_norm    text,
+  updated_at    timestamptz not null default now()
+);
+create index if not exists sectores_barrio_norm_idx on public.sectores_entrega (barrio_norm);
+create index if not exists sectores_correg_idx      on public.sectores_entrega (corregimiento);
+
+-- RLS on, solo service_role (la edge function). Auto-expose OFF => GRANT manual obligatorio.
+alter table public.zonas_entrega    enable row level security;
+alter table public.sectores_entrega enable row level security;
+grant select, insert, update, delete on public.zonas_entrega    to service_role;
+grant select, insert, update, delete on public.sectores_entrega to service_role;
+grant usage, select on all sequences in schema public to service_role;
+
+-- Reseed limpio desde el snapshot del Excel. (Tras go-live, si se edita a mano en Supabase, dejar de
+-- truncar y pasar a upsert; por ahora la fuente es el Excel y se regenera completo.)
+truncate public.sectores_entrega;
+truncate public.zonas_entrega cascade;
+
+insert into public.zonas_entrega (zona,descripcion,tarifa_base_usd,metodo,plazo,observaciones) values
+  ('Z1 Centro','Centro urbano / alto volumen',6.00,'propia','Mismo día si el pedido entra antes de las 3:00 p.m.; después, al día hábil siguiente.','Tarifa definida para plan operativo actual.'),
+  ('Z2 Este cercano','Urbano este cercano',7.00,'propia','Mismo día si el pedido entra antes de las 3:00 p.m.; después, al día hábil siguiente.','Tarifa definida para plan operativo actual.'),
+  ('Z3 San Miguelito','San Miguelito con acceso principal',7.00,'propia','Mismo día si el pedido entra antes de las 3:00 p.m.; después, al día hábil siguiente.','Tarifa definida para plan operativo actual.'),
+  ('Z4 Este extendido','Panamá Este / áreas extendidas con Servientrega',9.00,'servientrega','Al día hábil siguiente (vía Servientrega). Confirmar dirección y punto de referencia.','Entrega el día siguiente. Confirmar dirección, teléfono y punto de referencia.'),
+  ('Z5 Norte','Panamá Norte',9.00,'servientrega','Al día hábil siguiente (vía Servientrega). Confirmar dirección y punto de referencia.','Entrega el día siguiente. Confirmar dirección, teléfono y punto de referencia.'),
+  ('Z6 San Miguelito interno','San Miguelito interno / accesos variables',7.00,'propia','Mismo día si el pedido entra antes de las 3:00 p.m.; después, al día hábil siguiente.','Pedir pin y punto de referencia antes de confirmar tarifa.');
+
+insert into public.sectores_entrega (corregimiento,barrio,distrito,sector_macro,tipo_zona,alias,zona,validacion,nota,barrio_norm,alias_norm) values
+  ('San Felipe','Casco Antiguo / Casco Viejo','Panamá','Centro histórico','Barrio turístico/residencial','Casco, Casco Viejo','Z1 Centro','Alta',NULL,'casco antiguo / casco viejo','casco, casco viejo'),
+  ('San Felipe','Plaza Catedral','Panamá','Centro histórico','Barrio/sector',NULL,'Z1 Centro','Alta',NULL,'plaza catedral',NULL),
+  ('San Felipe','Plaza Herrera','Panamá','Centro histórico','Barrio/sector',NULL,'Z1 Centro','Alta',NULL,'plaza herrera',NULL),
+  ('San Felipe','Plaza Bolívar','Panamá','Centro histórico','Barrio/sector',NULL,'Z1 Centro','Alta',NULL,'plaza bolivar',NULL),
+  ('San Felipe','Las Bóvedas / Paseo Esteban Huertas','Panamá','Centro histórico','Barrio/sector',NULL,'Z1 Centro','Alta',NULL,'las bovedas / paseo esteban huertas',NULL),
+  ('San Felipe','Avenida A','Panamá','Centro histórico','Barrio/sector',NULL,'Z1 Centro','Alta',NULL,'avenida a',NULL),
+  ('San Felipe','Santa Familia','Panamá','Centro histórico','Barrio/sector',NULL,'Z1 Centro','Alta',NULL,'santa familia',NULL),
+  ('El Chorrillo','El Chorrillo centro','Panamá','Centro histórico','Barrio/sector',NULL,'Z1 Centro','Media','Validar punto exacto y acceso del motorizado.','el chorrillo centro',NULL),
+  ('El Chorrillo','Barraza','Panamá','Centro histórico','Barrio/sector',NULL,'Z1 Centro','Media','Validar punto exacto y acceso del motorizado.','barraza',NULL),
+  ('El Chorrillo','Calle 21 / Calle 22 / Calle 23','Panamá','Centro histórico','Barrio/sector',NULL,'Z1 Centro','Media','Validar punto exacto y acceso del motorizado.','calle 21 / calle 22 / calle 23',NULL),
+  ('El Chorrillo','Patio Pinel','Panamá','Centro histórico','Barrio/sector',NULL,'Z1 Centro','Media','Validar punto exacto y acceso del motorizado.','patio pinel',NULL),
+  ('El Chorrillo','Sector Estadio Maracaná','Panamá','Centro histórico','Barrio/sector',NULL,'Z1 Centro','Media','Validar punto exacto y acceso del motorizado.','sector estadio maracana',NULL),
+  ('El Chorrillo','Avenida de los Mártires sector El Chorrillo','Panamá','Centro histórico','Barrio/sector',NULL,'Z1 Centro','Media','Validar punto exacto y acceso del motorizado.','avenida de los martires sector el chorrillo',NULL),
+  ('Santa Ana','Santa Ana centro','Panamá','Centro histórico','Barrio/sector',NULL,'Z1 Centro','Media','Algunos puntos tienen restricciones de parqueo; pedir referencia.','santa ana centro',NULL),
+  ('Santa Ana','Plaza Santa Ana','Panamá','Centro histórico','Barrio/sector',NULL,'Z1 Centro','Media','Algunos puntos tienen restricciones de parqueo; pedir referencia.','plaza santa ana',NULL),
+  ('Santa Ana','Avenida Central / Peatonal','Panamá','Centro histórico','Barrio/sector',NULL,'Z1 Centro','Media','Algunos puntos tienen restricciones de parqueo; pedir referencia.','avenida central / peatonal',NULL),
+  ('Santa Ana','Calle 12 Oeste','Panamá','Centro histórico','Barrio/sector',NULL,'Z1 Centro','Media','Algunos puntos tienen restricciones de parqueo; pedir referencia.','calle 12 oeste',NULL),
+  ('Santa Ana','Calle 13 Oeste','Panamá','Centro histórico','Barrio/sector',NULL,'Z1 Centro','Media','Algunos puntos tienen restricciones de parqueo; pedir referencia.','calle 13 oeste',NULL),
+  ('Santa Ana','San Miguel','Panamá','Centro histórico','Barrio/sector',NULL,'Z1 Centro','Media','Algunos puntos tienen restricciones de parqueo; pedir referencia.','san miguel',NULL),
+  ('Santa Ana','La Cuchilla','Panamá','Centro histórico','Barrio/sector',NULL,'Z1 Centro','Media','Algunos puntos tienen restricciones de parqueo; pedir referencia.','la cuchilla',NULL),
+  ('Santa Ana','El Terraplén','Panamá','Centro histórico','Barrio/sector',NULL,'Z1 Centro','Media','Algunos puntos tienen restricciones de parqueo; pedir referencia.','el terraplen',NULL),
+  ('Calidonia','Calidonia centro','Panamá','Centro histórico','Barrio/sector',NULL,'Z1 Centro','Media','Zona de alto tráfico; separar horario pico si aplica.','calidonia centro',NULL),
+  ('Calidonia','La Exposición','Panamá','Centro histórico','Barrio/sector',NULL,'Z1 Centro','Media','Zona de alto tráfico; separar horario pico si aplica.','la exposicion',NULL),
+  ('Calidonia','Perejil','Panamá','Centro histórico','Barrio/sector',NULL,'Z1 Centro','Media','Zona de alto tráfico; separar horario pico si aplica.','perejil',NULL),
+  ('Calidonia','Marañón','Panamá','Centro histórico','Barrio/sector',NULL,'Z1 Centro','Media','Zona de alto tráfico; separar horario pico si aplica.','maranon',NULL),
+  ('Calidonia','Avenida Perú','Panamá','Centro histórico','Barrio/sector',NULL,'Z1 Centro','Media','Zona de alto tráfico; separar horario pico si aplica.','avenida peru',NULL),
+  ('Calidonia','Avenida Cuba','Panamá','Centro histórico','Barrio/sector',NULL,'Z1 Centro','Media','Zona de alto tráfico; separar horario pico si aplica.','avenida cuba',NULL),
+  ('Calidonia','Avenida Balboa sector Calidonia','Panamá','Centro histórico','Barrio/sector',NULL,'Z1 Centro','Media','Zona de alto tráfico; separar horario pico si aplica.','avenida balboa sector calidonia',NULL),
+  ('Calidonia','5 de Mayo','Panamá','Centro histórico','Barrio/sector',NULL,'Z1 Centro','Media','Zona de alto tráfico; separar horario pico si aplica.','5 de mayo',NULL),
+  ('Calidonia','Cinta Costera sector Mercado del Marisco','Panamá','Centro histórico','Barrio/sector',NULL,'Z1 Centro','Media','Zona de alto tráfico; separar horario pico si aplica.','cinta costera sector mercado del marisco',NULL),
+  ('Curundú','Curundú centro','Panamá','Centro histórico','Barrio/sector',NULL,'Z1 Centro','Media','Validar dirección y seguridad/horario de entrega.','curundu centro',NULL),
+  ('Curundú','Brooklincito','Panamá','Centro histórico','Barrio/sector',NULL,'Z1 Centro','Media','Validar dirección y seguridad/horario de entrega.','brooklincito',NULL),
+  ('Curundú','Viejo Veranillo','Panamá','Centro histórico','Barrio/sector',NULL,'Z1 Centro','Media','Validar dirección y seguridad/horario de entrega.','viejo veranillo',NULL),
+  ('Curundú','Llanos de Curundú','Panamá','Centro histórico','Barrio/sector',NULL,'Z1 Centro','Media','Validar dirección y seguridad/horario de entrega.','llanos de curundu',NULL),
+  ('Curundú','Ciudad del Saber límite Curundú','Panamá','Centro histórico','Barrio/sector',NULL,'Z1 Centro','Media','Validar dirección y seguridad/horario de entrega.','ciudad del saber limite curundu',NULL),
+  ('Curundú','Sector estadio Juan Demóstenes Arosemena','Panamá','Centro histórico','Barrio/sector',NULL,'Z1 Centro','Media','Validar dirección y seguridad/horario de entrega.','sector estadio juan demostenes arosemena',NULL),
+  ('Ancón','Ancón centro','Panamá','Centro urbano','Sector',NULL,'Z1 Centro','Media','Para Summit/Gamboa/áreas alejadas, revisar si conviene pasar a zona extendida.','ancon centro',NULL),
+  ('Ancón','Balboa','Panamá','Centro urbano','Barrio/sector',NULL,'Z1 Centro','Media','Para Summit/Gamboa/áreas alejadas, revisar si conviene pasar a zona extendida.','balboa',NULL),
+  ('Ancón','Albrook','Panamá','Centro urbano','Barrio/sector',NULL,'Z1 Centro','Media','Para Summit/Gamboa/áreas alejadas, revisar si conviene pasar a zona extendida.','albrook',NULL),
+  ('Ancón','Clayton','Panamá','Centro urbano','Barrio/sector',NULL,'Z1 Centro','Media','Para Summit/Gamboa/áreas alejadas, revisar si conviene pasar a zona extendida.','clayton',NULL),
+  ('Ancón','Ciudad del Saber','Panamá','Centro urbano','Barrio/sector',NULL,'Z1 Centro','Media','Para Summit/Gamboa/áreas alejadas, revisar si conviene pasar a zona extendida.','ciudad del saber',NULL),
+  ('Ancón','Diablo','Panamá','Centro urbano','Barrio/sector',NULL,'Z1 Centro','Media','Para Summit/Gamboa/áreas alejadas, revisar si conviene pasar a zona extendida.','diablo',NULL),
+  ('Ancón','Los Ríos','Panamá','Centro urbano','Barrio/sector',NULL,'Z1 Centro','Media','Para Summit/Gamboa/áreas alejadas, revisar si conviene pasar a zona extendida.','los rios',NULL),
+  ('Ancón','La Boca','Panamá','Centro urbano','Barrio/sector',NULL,'Z1 Centro','Media','Para Summit/Gamboa/áreas alejadas, revisar si conviene pasar a zona extendida.','la boca',NULL),
+  ('Ancón','Amador / Calzada de Amador','Panamá','Centro urbano','Barrio/sector',NULL,'Z1 Centro','Media','Para Summit/Gamboa/áreas alejadas, revisar si conviene pasar a zona extendida.','amador / calzada de amador',NULL),
+  ('Ancón','Causeway','Panamá','Centro urbano','Barrio/sector',NULL,'Z1 Centro','Media','Para Summit/Gamboa/áreas alejadas, revisar si conviene pasar a zona extendida.','causeway',NULL),
+  ('Ancón','Quarry Heights','Panamá','Centro urbano','Barrio/sector',NULL,'Z1 Centro','Media','Para Summit/Gamboa/áreas alejadas, revisar si conviene pasar a zona extendida.','quarry heights',NULL),
+  ('Ancón','Corozal','Panamá','Centro urbano','Barrio/sector',NULL,'Z1 Centro','Media','Para Summit/Gamboa/áreas alejadas, revisar si conviene pasar a zona extendida.','corozal',NULL),
+  ('Ancón','Cárdenas','Panamá','Centro urbano','Barrio/sector',NULL,'Z1 Centro','Media','Para Summit/Gamboa/áreas alejadas, revisar si conviene pasar a zona extendida.','cardenas',NULL),
+  ('Ancón','Paraíso','Panamá','Centro urbano','Barrio/sector',NULL,'Z4 Este extendido','Alta','Regla operativa Quick Service: utilizar Servientrega; confirmar dirección, teléfono y punto de referencia.','paraiso',NULL),
+  ('Ancón','Pedro Miguel','Panamá','Centro urbano','Barrio/sector',NULL,'Z4 Este extendido','Alta','Regla operativa Quick Service: utilizar Servientrega; confirmar dirección, teléfono y punto de referencia.','pedro miguel',NULL),
+  ('Ancón','Summit','Panamá','Centro urbano','Barrio/sector',NULL,'Z4 Este extendido','Alta','Regla operativa Quick Service: utilizar Servientrega; confirmar dirección, teléfono y punto de referencia.','summit',NULL),
+  ('Ancón','Gamboa','Panamá','Centro urbano','Barrio/sector',NULL,'Z4 Este extendido','Alta','Regla operativa Quick Service: utilizar Servientrega; confirmar dirección, teléfono y punto de referencia.','gamboa',NULL),
+  ('Bella Vista','Bella Vista','Panamá','Centro urbano','Barrio/sector',NULL,'Z1 Centro','Alta',NULL,'bella vista',NULL),
+  ('Bella Vista','Obarrio','Panamá','Centro urbano','Barrio/sector',NULL,'Z1 Centro','Alta',NULL,'obarrio',NULL),
+  ('Bella Vista','Marbella','Panamá','Centro urbano','Barrio/sector',NULL,'Z1 Centro','Alta',NULL,'marbella',NULL),
+  ('Bella Vista','El Cangrejo','Panamá','Centro urbano','Barrio/sector',NULL,'Z1 Centro','Alta',NULL,'el cangrejo',NULL),
+  ('Bella Vista','Campo Alegre','Panamá','Centro urbano','Barrio/sector',NULL,'Z1 Centro','Alta',NULL,'campo alegre',NULL),
+  ('Bella Vista','La Cresta','Panamá','Centro urbano','Barrio/sector',NULL,'Z1 Centro','Alta',NULL,'la cresta',NULL),
+  ('Bella Vista','El Carmen','Panamá','Centro urbano','Barrio/sector',NULL,'Z1 Centro','Alta',NULL,'el carmen',NULL),
+  ('Bella Vista','Área Bancaria','Panamá','Centro urbano','Barrio/sector',NULL,'Z1 Centro','Alta',NULL,'area bancaria',NULL),
+  ('Bella Vista','Avenida Balboa','Panamá','Centro urbano','Barrio/sector',NULL,'Z1 Centro','Alta',NULL,'avenida balboa',NULL),
+  ('Bella Vista','Calle 50 sector Bella Vista','Panamá','Centro urbano','Barrio/sector',NULL,'Z1 Centro','Alta',NULL,'calle 50 sector bella vista',NULL),
+  ('Bella Vista','Vía España sector Bella Vista','Panamá','Centro urbano','Barrio/sector',NULL,'Z1 Centro','Alta',NULL,'via espana sector bella vista',NULL),
+  ('Bella Vista','Cinta Costera sector Bella Vista','Panamá','Centro urbano','Barrio/sector',NULL,'Z1 Centro','Alta',NULL,'cinta costera sector bella vista',NULL),
+  ('Betania','Betania','Panamá','Centro urbano','Barrio/sector',NULL,'Z1 Centro','Media',NULL,'betania',NULL),
+  ('Betania','El Dorado','Panamá','Centro urbano','Barrio/sector',NULL,'Z1 Centro','Media',NULL,'el dorado',NULL),
+  ('Betania','Dos Mares','Panamá','Centro urbano','Barrio/sector',NULL,'Z1 Centro','Media',NULL,'dos mares',NULL),
+  ('Betania','Los Ángeles','Panamá','Centro urbano','Barrio/sector',NULL,'Z1 Centro','Media',NULL,'los angeles',NULL),
+  ('Betania','Altos de Miraflores','Panamá','Centro urbano','Barrio/sector',NULL,'Z1 Centro','Media',NULL,'altos de miraflores',NULL),
+  ('Betania','Miraflores','Panamá','Centro urbano','Barrio/sector',NULL,'Z1 Centro','Media',NULL,'miraflores',NULL),
+  ('Betania','La Alameda','Panamá','Centro urbano','Barrio/sector',NULL,'Z1 Centro','Media',NULL,'la alameda',NULL),
+  ('Betania','Villa Cáceres','Panamá','Centro urbano','Barrio/sector',NULL,'Z1 Centro','Media',NULL,'villa caceres',NULL),
+  ('Betania','Villa de las Fuentes','Panamá','Centro urbano','Barrio/sector',NULL,'Z1 Centro','Media',NULL,'villa de las fuentes',NULL),
+  ('Betania','Camino Real','Panamá','Centro urbano','Barrio/sector',NULL,'Z1 Centro','Media',NULL,'camino real',NULL),
+  ('Betania','Altos de Betania','Panamá','Centro urbano','Barrio/sector',NULL,'Z1 Centro','Media',NULL,'altos de betania',NULL),
+  ('Betania','Linda Vista','Panamá','Centro urbano','Barrio/sector',NULL,'Z1 Centro','Media',NULL,'linda vista',NULL),
+  ('Betania','Los Libertadores','Panamá','Centro urbano','Barrio/sector',NULL,'Z1 Centro','Media',NULL,'los libertadores',NULL),
+  ('Betania','Club X','Panamá','Centro urbano','Barrio/sector',NULL,'Z1 Centro','Media',NULL,'club x',NULL),
+  ('Betania','Transístmica sector Betania','Panamá','Centro urbano','Barrio/sector',NULL,'Z1 Centro','Media',NULL,'transistmica sector betania',NULL),
+  ('Pueblo Nuevo','Pueblo Nuevo centro','Panamá','Centro urbano','Barrio/sector',NULL,'Z1 Centro','Media',NULL,'pueblo nuevo centro',NULL),
+  ('Pueblo Nuevo','Hato Pintado','Panamá','Centro urbano','Barrio/sector',NULL,'Z1 Centro','Media',NULL,'hato pintado',NULL),
+  ('Pueblo Nuevo','12 de Octubre','Panamá','Centro urbano','Barrio/sector',NULL,'Z1 Centro','Media',NULL,'12 de octubre',NULL),
+  ('Pueblo Nuevo','Vista Hermosa','Panamá','Centro urbano','Barrio/sector',NULL,'Z1 Centro','Media',NULL,'vista hermosa',NULL),
+  ('Pueblo Nuevo','Los Guayacanes','Panamá','Centro urbano','Barrio/sector',NULL,'Z1 Centro','Media',NULL,'los guayacanes',NULL),
+  ('Pueblo Nuevo','Vía España sector Pueblo Nuevo','Panamá','Centro urbano','Barrio/sector',NULL,'Z1 Centro','Media',NULL,'via espana sector pueblo nuevo',NULL),
+  ('Pueblo Nuevo','Vía Brasil sector Pueblo Nuevo','Panamá','Centro urbano','Barrio/sector',NULL,'Z1 Centro','Media',NULL,'via brasil sector pueblo nuevo',NULL),
+  ('Pueblo Nuevo','Avenida La Pulida límite Pueblo Nuevo','Panamá','Centro urbano','Barrio/sector',NULL,'Z1 Centro','Media',NULL,'avenida la pulida limite pueblo nuevo',NULL),
+  ('San Francisco','San Francisco','Panamá','Centro urbano','Barrio/sector',NULL,'Z1 Centro','Alta',NULL,'san francisco',NULL),
+  ('San Francisco','Punta Pacífica','Panamá','Centro urbano','Barrio/sector',NULL,'Z1 Centro','Alta',NULL,'punta pacifica',NULL),
+  ('San Francisco','Punta Paitilla','Panamá','Centro urbano','Barrio/sector',NULL,'Z1 Centro','Alta',NULL,'punta paitilla',NULL),
+  ('San Francisco','Coco del Mar','Panamá','Centro urbano','Barrio/sector',NULL,'Z1 Centro','Alta',NULL,'coco del mar',NULL),
+  ('San Francisco','Carrasquilla','Panamá','Centro urbano','Barrio/sector',NULL,'Z1 Centro','Alta',NULL,'carrasquilla',NULL),
+  ('San Francisco','Altos del Golf','Panamá','Centro urbano','Barrio/sector',NULL,'Z1 Centro','Alta',NULL,'altos del golf',NULL),
+  ('San Francisco','Vía Porras','Panamá','Centro urbano','Barrio/sector',NULL,'Z1 Centro','Alta',NULL,'via porras',NULL),
+  ('San Francisco','Parque Omar','Panamá','Centro urbano','Barrio/sector',NULL,'Z1 Centro','Alta',NULL,'parque omar',NULL),
+  ('San Francisco','Calle 50 sector San Francisco','Panamá','Centro urbano','Barrio/sector',NULL,'Z1 Centro','Alta',NULL,'calle 50 sector san francisco',NULL),
+  ('San Francisco','Vía Israel','Panamá','Centro urbano','Barrio/sector',NULL,'Z1 Centro','Alta',NULL,'via israel',NULL),
+  ('San Francisco','ATLAPA','Panamá','Centro urbano','Barrio/sector',NULL,'Z1 Centro','Alta',NULL,'atlapa',NULL),
+  ('San Francisco','Boca La Caja','Panamá','Centro urbano','Barrio/sector',NULL,'Z1 Centro','Alta',NULL,'boca la caja',NULL),
+  ('San Francisco','San Sebastián','Panamá','Centro urbano','Barrio/sector',NULL,'Z1 Centro','Alta',NULL,'san sebastian',NULL),
+  ('Parque Lefevre','Parque Lefevre','Panamá','Centro urbano','Barrio/sector',NULL,'Z1 Centro','Media',NULL,'parque lefevre',NULL),
+  ('Parque Lefevre','Chanis','Panamá','Centro urbano','Barrio/sector',NULL,'Z1 Centro','Media',NULL,'chanis',NULL),
+  ('Parque Lefevre','Campo Limberg','Panamá','Centro urbano','Barrio/sector',NULL,'Z1 Centro','Media',NULL,'campo limberg',NULL),
+  ('Parque Lefevre','Santa Elena','Panamá','Centro urbano','Barrio/sector',NULL,'Z1 Centro','Media',NULL,'santa elena',NULL),
+  ('Parque Lefevre','Panamá Viejo','Panamá','Centro urbano','Barrio/sector',NULL,'Z1 Centro','Media',NULL,'panama viejo',NULL),
+  ('Parque Lefevre','Vía Cincuentenario','Panamá','Centro urbano','Barrio/sector',NULL,'Z1 Centro','Media',NULL,'via cincuentenario',NULL),
+  ('Parque Lefevre','Vía España sector Parque Lefevre','Panamá','Centro urbano','Barrio/sector',NULL,'Z1 Centro','Media',NULL,'via espana sector parque lefevre',NULL),
+  ('Parque Lefevre','Vía Santa Elena','Panamá','Centro urbano','Barrio/sector',NULL,'Z1 Centro','Media',NULL,'via santa elena',NULL),
+  ('Parque Lefevre','Carrasquilla límite Parque Lefevre','Panamá','Centro urbano','Barrio/sector',NULL,'Z1 Centro','Media',NULL,'carrasquilla limite parque lefevre',NULL),
+  ('Río Abajo','Río Abajo','Panamá','Centro urbano','Barrio/sector',NULL,'Z1 Centro','Media',NULL,'rio abajo',NULL),
+  ('Río Abajo','Altos de Río Abajo','Panamá','Centro urbano','Barrio/sector',NULL,'Z1 Centro','Media',NULL,'altos de rio abajo',NULL),
+  ('Río Abajo','Calle 13 Río Abajo','Panamá','Centro urbano','Barrio/sector',NULL,'Z1 Centro','Media',NULL,'calle 13 rio abajo',NULL),
+  ('Río Abajo','Vía España sector Río Abajo','Panamá','Centro urbano','Barrio/sector',NULL,'Z1 Centro','Media',NULL,'via espana sector rio abajo',NULL),
+  ('Río Abajo','Urbanización Río Abajo','Panamá','Centro urbano','Barrio/sector',NULL,'Z1 Centro','Media',NULL,'urbanizacion rio abajo',NULL),
+  ('Río Abajo','Avenida Cincuentenario límite Río Abajo','Panamá','Centro urbano','Barrio/sector',NULL,'Z1 Centro','Media',NULL,'avenida cincuentenario limite rio abajo',NULL),
+  ('Juan Díaz','Juan Díaz centro','Panamá','Este cercano','Barrio/sector',NULL,'Z2 Este cercano','Media','Costa del Este y Costa Sur pueden manejar tarifa distinta por acceso/edificios.','juan diaz centro',NULL),
+  ('Juan Díaz','Costa del Este','Panamá','Este cercano','Barrio/sector',NULL,'Z2 Este cercano','Media','Costa del Este y Costa Sur pueden manejar tarifa distinta por acceso/edificios.','costa del este',NULL),
+  ('Juan Díaz','Costa Sur','Panamá','Este cercano','Barrio/sector',NULL,'Z2 Este cercano','Media','Costa del Este y Costa Sur pueden manejar tarifa distinta por acceso/edificios.','costa sur',NULL),
+  ('Juan Díaz','Llano Bonito','Panamá','Este cercano','Barrio/sector',NULL,'Z2 Este cercano','Media','Costa del Este y Costa Sur pueden manejar tarifa distinta por acceso/edificios.','llano bonito',NULL),
+  ('Juan Díaz','San Pedro','Panamá','Este cercano','Barrio/sector',NULL,'Z2 Este cercano','Media','Costa del Este y Costa Sur pueden manejar tarifa distinta por acceso/edificios.','san pedro',NULL),
+  ('Juan Díaz','Los Pueblos','Panamá','Este cercano','Barrio/sector',NULL,'Z2 Este cercano','Media','Costa del Este y Costa Sur pueden manejar tarifa distinta por acceso/edificios.','los pueblos',NULL),
+  ('Juan Díaz','Industrial Juan Díaz','Panamá','Este cercano','Barrio/sector',NULL,'Z2 Este cercano','Media','Costa del Este y Costa Sur pueden manejar tarifa distinta por acceso/edificios.','industrial juan diaz',NULL),
+  ('Juan Díaz','San Cristóbal','Panamá','Este cercano','Barrio/sector',NULL,'Z2 Este cercano','Media','Costa del Este y Costa Sur pueden manejar tarifa distinta por acceso/edificios.','san cristobal',NULL),
+  ('Juan Díaz','Villa Catalina','Panamá','Este cercano','Barrio/sector',NULL,'Z2 Este cercano','Media','Costa del Este y Costa Sur pueden manejar tarifa distinta por acceso/edificios.','villa catalina',NULL),
+  ('Juan Díaz','Ciudad Radial','Panamá','Este cercano','Barrio/sector',NULL,'Z2 Este cercano','Media','Costa del Este y Costa Sur pueden manejar tarifa distinta por acceso/edificios.','ciudad radial',NULL),
+  ('Juan Díaz','Santa Clara','Panamá','Este cercano','Barrio/sector',NULL,'Z2 Este cercano','Media','Costa del Este y Costa Sur pueden manejar tarifa distinta por acceso/edificios.','santa clara',NULL),
+  ('Juan Díaz','Campo Limberg límite Juan Díaz','Panamá','Este cercano','Barrio/sector',NULL,'Z2 Este cercano','Media','Costa del Este y Costa Sur pueden manejar tarifa distinta por acceso/edificios.','campo limberg limite juan diaz',NULL),
+  ('Juan Díaz','Corredor Sur acceso Costa del Este','Panamá','Este cercano','Barrio/sector',NULL,'Z2 Este cercano','Media','Costa del Este y Costa Sur pueden manejar tarifa distinta por acceso/edificios.','corredor sur acceso costa del este',NULL),
+  ('Don Bosco','Don Bosco','Panamá','Este cercano','Barrio/sector',NULL,'Z2 Este cercano','Media',NULL,'don bosco',NULL),
+  ('Don Bosco','Versalles','Panamá','Este cercano','Barrio/sector',NULL,'Z2 Este cercano','Media',NULL,'versalles',NULL),
+  ('Don Bosco','Las Acacias','Panamá','Este cercano','Barrio/sector',NULL,'Z2 Este cercano','Media',NULL,'las acacias',NULL),
+  ('Don Bosco','Altos de Las Acacias','Panamá','Este cercano','Barrio/sector',NULL,'Z2 Este cercano','Media',NULL,'altos de las acacias',NULL),
+  ('Don Bosco','Los Robles Sur','Panamá','Este cercano','Barrio/sector',NULL,'Z2 Este cercano','Media',NULL,'los robles sur',NULL),
+  ('Don Bosco','Jardines de Don Bosco','Panamá','Este cercano','Barrio/sector',NULL,'Z2 Este cercano','Media',NULL,'jardines de don bosco',NULL),
+  ('Don Bosco','Teremar','Panamá','Este cercano','Barrio/sector',NULL,'Z2 Este cercano','Media',NULL,'teremar',NULL),
+  ('Don Bosco','Villa de las Acacias','Panamá','Este cercano','Barrio/sector',NULL,'Z2 Este cercano','Media',NULL,'villa de las acacias',NULL),
+  ('Don Bosco','Residencial Don Bosco','Panamá','Este cercano','Barrio/sector',NULL,'Z2 Este cercano','Media',NULL,'residencial don bosco',NULL),
+  ('Don Bosco','Plaza Tocumen sector Don Bosco','Panamá','Este cercano','Barrio/sector',NULL,'Z2 Este cercano','Media',NULL,'plaza tocumen sector don bosco',NULL),
+  ('Don Bosco','Avenida Domingo Díaz sector Don Bosco','Panamá','Este cercano','Barrio/sector',NULL,'Z2 Este cercano','Media',NULL,'avenida domingo diaz sector don bosco',NULL),
+  ('Pedregal','Pedregal','Panamá','Este cercano','Barrio/sector',NULL,'Z2 Este cercano','Media','Validar si la dirección cae en Pedregal o Juan Díaz.','pedregal',NULL),
+  ('Pedregal','San Joaquín','Panamá','Este cercano','Barrio/sector',NULL,'Z2 Este cercano','Media','Validar si la dirección cae en Pedregal o Juan Díaz.','san joaquin',NULL),
+  ('Pedregal','Villa Lobos / Villalobos','Panamá','Este cercano','Barrio/sector',NULL,'Z2 Este cercano','Media','Validar si la dirección cae en Pedregal o Juan Díaz.','villa lobos / villalobos',NULL),
+  ('Pedregal','Rana de Oro','Panamá','Este cercano','Barrio/sector',NULL,'Z2 Este cercano','Media','Validar si la dirección cae en Pedregal o Juan Díaz.','rana de oro',NULL),
+  ('Pedregal','Los Pinos','Panamá','Este cercano','Barrio/sector',NULL,'Z2 Este cercano','Media','Validar si la dirección cae en Pedregal o Juan Díaz.','los pinos',NULL),
+  ('Pedregal','La Riviera','Panamá','Este cercano','Barrio/sector',NULL,'Z2 Este cercano','Media','Validar si la dirección cae en Pedregal o Juan Díaz.','la riviera',NULL),
+  ('Pedregal','El Porvenir sector Pedregal','Panamá','Este cercano','Barrio/sector',NULL,'Z2 Este cercano','Media','Validar si la dirección cae en Pedregal o Juan Díaz.','el porvenir sector pedregal',NULL),
+  ('Pedregal','Santa Marta sector Pedregal','Panamá','Este cercano','Barrio/sector',NULL,'Z2 Este cercano','Media','Validar si la dirección cae en Pedregal o Juan Díaz.','santa marta sector pedregal',NULL),
+  ('Pedregal','Avenida José Agustín Arango sector Pedregal','Panamá','Este cercano','Barrio/sector',NULL,'Z2 Este cercano','Media','Validar si la dirección cae en Pedregal o Juan Díaz.','avenida jose agustin arango sector pedregal',NULL),
+  ('Las Mañanitas','Las Mañanitas','Panamá','Este','Barrio/sector',NULL,'Z4 Este extendido','Alta','Servientrega - entrega el día siguiente. Confirmar dirección, teléfono y punto de referencia. Base tomada de mapa MUPA; revisar accesos por sectores.','las mananitas',NULL),
+  ('Las Mañanitas','Ciudad Jardín Las Mañanitas','Panamá','Este','Barrio/sector',NULL,'Z4 Este extendido','Alta','Servientrega - entrega el día siguiente. Confirmar dirección, teléfono y punto de referencia. Base tomada de mapa MUPA; revisar accesos por sectores.','ciudad jardin las mananitas',NULL),
+  ('Las Mañanitas','Tapia barriada','Panamá','Este','Barrio/sector',NULL,'Z4 Este extendido','Alta','Servientrega - entrega el día siguiente. Confirmar dirección, teléfono y punto de referencia. Base tomada de mapa MUPA; revisar accesos por sectores.','tapia barriada',NULL),
+  ('Las Mañanitas','Génesis barriada','Panamá','Este','Barrio/sector',NULL,'Z4 Este extendido','Alta','Servientrega - entrega el día siguiente. Confirmar dirección, teléfono y punto de referencia. Base tomada de mapa MUPA; revisar accesos por sectores.','genesis barriada',NULL),
+  ('Las Mañanitas','Barriada Los Nogales','Panamá','Este','Barrio/sector',NULL,'Z4 Este extendido','Alta','Servientrega - entrega el día siguiente. Confirmar dirección, teléfono y punto de referencia. Base tomada de mapa MUPA; revisar accesos por sectores.','barriada los nogales',NULL),
+  ('Las Mañanitas','Parque Real','Panamá','Este','Barrio/sector',NULL,'Z4 Este extendido','Alta','Servientrega - entrega el día siguiente. Confirmar dirección, teléfono y punto de referencia. Base tomada de mapa MUPA; revisar accesos por sectores.','parque real',NULL),
+  ('Las Mañanitas','Barriada Santa Mónica','Panamá','Este','Barrio/sector',NULL,'Z4 Este extendido','Alta','Servientrega - entrega el día siguiente. Confirmar dirección, teléfono y punto de referencia. Base tomada de mapa MUPA; revisar accesos por sectores.','barriada santa monica',NULL),
+  ('Las Mañanitas','Las Américas residencial','Panamá','Este','Barrio/sector',NULL,'Z4 Este extendido','Alta','Servientrega - entrega el día siguiente. Confirmar dirección, teléfono y punto de referencia. Base tomada de mapa MUPA; revisar accesos por sectores.','las americas residencial',NULL),
+  ('Las Mañanitas','Parque de Alicante','Panamá','Este','Barrio/sector',NULL,'Z4 Este extendido','Alta','Servientrega - entrega el día siguiente. Confirmar dirección, teléfono y punto de referencia. Base tomada de mapa MUPA; revisar accesos por sectores.','parque de alicante',NULL),
+  ('Las Mañanitas','Villa Daniela','Panamá','Este','Barrio/sector',NULL,'Z4 Este extendido','Alta','Servientrega - entrega el día siguiente. Confirmar dirección, teléfono y punto de referencia. Base tomada de mapa MUPA; revisar accesos por sectores.','villa daniela',NULL),
+  ('Las Mañanitas','Villa de Amor','Panamá','Este','Barrio/sector',NULL,'Z4 Este extendido','Alta','Servientrega - entrega el día siguiente. Confirmar dirección, teléfono y punto de referencia. Base tomada de mapa MUPA; revisar accesos por sectores.','villa de amor',NULL),
+  ('Las Mañanitas','Altos del Río Tapia','Panamá','Este','Barrio/sector',NULL,'Z4 Este extendido','Alta','Servientrega - entrega el día siguiente. Confirmar dirección, teléfono y punto de referencia. Base tomada de mapa MUPA; revisar accesos por sectores.','altos del rio tapia',NULL),
+  ('Las Mañanitas','Asentamientos Campesinos','Panamá','Este','Barrio/sector',NULL,'Z4 Este extendido','Alta','Servientrega - entrega el día siguiente. Confirmar dirección, teléfono y punto de referencia. Base tomada de mapa MUPA; revisar accesos por sectores.','asentamientos campesinos',NULL),
+  ('Las Mañanitas','16 de Julio','Panamá','Este','Barrio/sector',NULL,'Z4 Este extendido','Alta','Servientrega - entrega el día siguiente. Confirmar dirección, teléfono y punto de referencia. Base tomada de mapa MUPA; revisar accesos por sectores.','16 de julio',NULL),
+  ('Las Mañanitas','Villa Oti','Panamá','Este','Barrio/sector',NULL,'Z4 Este extendido','Alta','Servientrega - entrega el día siguiente. Confirmar dirección, teléfono y punto de referencia. Base tomada de mapa MUPA; revisar accesos por sectores.','villa oti',NULL),
+  ('Las Mañanitas','Altos de Génesis','Panamá','Este','Barrio/sector',NULL,'Z4 Este extendido','Alta','Servientrega - entrega el día siguiente. Confirmar dirección, teléfono y punto de referencia. Base tomada de mapa MUPA; revisar accesos por sectores.','altos de genesis',NULL),
+  ('Las Mañanitas','Nuevo Amanecer','Panamá','Este','Barrio/sector',NULL,'Z4 Este extendido','Alta','Servientrega - entrega el día siguiente. Confirmar dirección, teléfono y punto de referencia. Base tomada de mapa MUPA; revisar accesos por sectores.','nuevo amanecer',NULL),
+  ('Las Mañanitas','El Valle de la Primavera','Panamá','Este','Barrio/sector',NULL,'Z4 Este extendido','Alta','Servientrega - entrega el día siguiente. Confirmar dirección, teléfono y punto de referencia. Base tomada de mapa MUPA; revisar accesos por sectores.','el valle de la primavera',NULL),
+  ('Las Mañanitas','La Esperanza','Panamá','Este','Barrio/sector',NULL,'Z4 Este extendido','Alta','Servientrega - entrega el día siguiente. Confirmar dirección, teléfono y punto de referencia. Base tomada de mapa MUPA; revisar accesos por sectores.','la esperanza',NULL),
+  ('Las Mañanitas','La Primavera','Panamá','Este','Barrio/sector',NULL,'Z4 Este extendido','Alta','Servientrega - entrega el día siguiente. Confirmar dirección, teléfono y punto de referencia. Base tomada de mapa MUPA; revisar accesos por sectores.','la primavera',NULL),
+  ('Las Mañanitas','Monte Martínez No. 1','Panamá','Este','Barrio/sector',NULL,'Z4 Este extendido','Alta','Servientrega - entrega el día siguiente. Confirmar dirección, teléfono y punto de referencia. Base tomada de mapa MUPA; revisar accesos por sectores.','monte martinez no. 1',NULL),
+  ('Las Mañanitas','Monte Martínez No. 2','Panamá','Este','Barrio/sector',NULL,'Z4 Este extendido','Alta','Servientrega - entrega el día siguiente. Confirmar dirección, teléfono y punto de referencia. Base tomada de mapa MUPA; revisar accesos por sectores.','monte martinez no. 2',NULL),
+  ('Las Mañanitas','San José','Panamá','Este','Barrio/sector',NULL,'Z4 Este extendido','Alta','Servientrega - entrega el día siguiente. Confirmar dirección, teléfono y punto de referencia. Base tomada de mapa MUPA; revisar accesos por sectores.','san jose',NULL),
+  ('Las Mañanitas','San Lorenzo','Panamá','Este','Barrio/sector',NULL,'Z4 Este extendido','Alta','Servientrega - entrega el día siguiente. Confirmar dirección, teléfono y punto de referencia. Base tomada de mapa MUPA; revisar accesos por sectores.','san lorenzo',NULL),
+  ('Las Mañanitas','Sector Norte','Panamá','Este','Barrio/sector',NULL,'Z4 Este extendido','Alta','Servientrega - entrega el día siguiente. Confirmar dirección, teléfono y punto de referencia. Base tomada de mapa MUPA; revisar accesos por sectores.','sector norte',NULL),
+  ('Las Mañanitas','Villa Nazareno','Panamá','Este','Barrio/sector',NULL,'Z4 Este extendido','Alta','Servientrega - entrega el día siguiente. Confirmar dirección, teléfono y punto de referencia. Base tomada de mapa MUPA; revisar accesos por sectores.','villa nazareno',NULL),
+  ('Las Mañanitas','3 de Mayo','Panamá','Este','Barrio/sector',NULL,'Z4 Este extendido','Alta','Servientrega - entrega el día siguiente. Confirmar dirección, teléfono y punto de referencia. Base tomada de mapa MUPA; revisar accesos por sectores.','3 de mayo',NULL),
+  ('Las Mañanitas','Divino Niño','Panamá','Este','Barrio/sector',NULL,'Z4 Este extendido','Alta','Servientrega - entrega el día siguiente. Confirmar dirección, teléfono y punto de referencia. Base tomada de mapa MUPA; revisar accesos por sectores.','divino nino',NULL),
+  ('Las Mañanitas','La Unión','Panamá','Este','Barrio/sector',NULL,'Z4 Este extendido','Alta','Servientrega - entrega el día siguiente. Confirmar dirección, teléfono y punto de referencia. Base tomada de mapa MUPA; revisar accesos por sectores.','la union',NULL),
+  ('Las Mañanitas','8 de Septiembre','Panamá','Este','Barrio/sector',NULL,'Z4 Este extendido','Alta','Servientrega - entrega el día siguiente. Confirmar dirección, teléfono y punto de referencia. Base tomada de mapa MUPA; revisar accesos por sectores.','8 de septiembre',NULL),
+  ('Las Mañanitas','La Colorada','Panamá','Este','Barrio/sector',NULL,'Z4 Este extendido','Alta','Servientrega - entrega el día siguiente. Confirmar dirección, teléfono y punto de referencia. Base tomada de mapa MUPA; revisar accesos por sectores.','la colorada',NULL),
+  ('Las Mañanitas','Río Tapia Arriba','Panamá','Este','Barrio/sector',NULL,'Z4 Este extendido','Alta','Servientrega - entrega el día siguiente. Confirmar dirección, teléfono y punto de referencia. Base tomada de mapa MUPA; revisar accesos por sectores.','rio tapia arriba',NULL),
+  ('Tocumen','Tocumen','Panamá','Este','Barrio/sector',NULL,'Z4 Este extendido','Alta','Servientrega - entrega el día siguiente. Confirmar dirección, teléfono y punto de referencia. Separar si aplica entrega a aeropuerto/carga.','tocumen',NULL),
+  ('Tocumen','La Siesta','Panamá','Este','Barrio/sector',NULL,'Z4 Este extendido','Alta','Servientrega - entrega el día siguiente. Confirmar dirección, teléfono y punto de referencia. Separar si aplica entrega a aeropuerto/carga.','la siesta',NULL),
+  ('Tocumen','Urbanización La Siesta','Panamá','Este','Barrio/sector',NULL,'Z4 Este extendido','Alta','Servientrega - entrega el día siguiente. Confirmar dirección, teléfono y punto de referencia. Separar si aplica entrega a aeropuerto/carga.','urbanizacion la siesta',NULL),
+  ('Tocumen','Ciudad Belén','Panamá','Este','Barrio/sector',NULL,'Z4 Este extendido','Alta','Servientrega - entrega el día siguiente. Confirmar dirección, teléfono y punto de referencia. Separar si aplica entrega a aeropuerto/carga.','ciudad belen',NULL),
+  ('Tocumen','Villa Belén','Panamá','Este','Barrio/sector',NULL,'Z4 Este extendido','Alta','Servientrega - entrega el día siguiente. Confirmar dirección, teléfono y punto de referencia. Separar si aplica entrega a aeropuerto/carga.','villa belen',NULL),
+  ('Tocumen','Nuevo Belén','Panamá','Este','Barrio/sector',NULL,'Z4 Este extendido','Alta','Servientrega - entrega el día siguiente. Confirmar dirección, teléfono y punto de referencia. Separar si aplica entrega a aeropuerto/carga.','nuevo belen',NULL),
+  ('Tocumen','Belén','Panamá','Este','Barrio/sector',NULL,'Z4 Este extendido','Alta','Servientrega - entrega el día siguiente. Confirmar dirección, teléfono y punto de referencia. Separar si aplica entrega a aeropuerto/carga.','belen',NULL),
+  ('Tocumen','Santa Eduviges','Panamá','Este','Barrio/sector',NULL,'Z4 Este extendido','Alta','Servientrega - entrega el día siguiente. Confirmar dirección, teléfono y punto de referencia. Separar si aplica entrega a aeropuerto/carga.','santa eduviges',NULL),
+  ('Tocumen','Cabuyita','Panamá','Este','Barrio/sector',NULL,'Z4 Este extendido','Alta','Servientrega - entrega el día siguiente. Confirmar dirección, teléfono y punto de referencia. Separar si aplica entrega a aeropuerto/carga.','cabuyita',NULL),
+  ('Tocumen','Cabuya','Panamá','Este','Barrio/sector',NULL,'Z4 Este extendido','Alta','Servientrega - entrega el día siguiente. Confirmar dirección, teléfono y punto de referencia. Separar si aplica entrega a aeropuerto/carga.','cabuya',NULL),
+  ('Tocumen','Altos de Cabuya','Panamá','Este','Barrio/sector',NULL,'Z4 Este extendido','Alta','Servientrega - entrega el día siguiente. Confirmar dirección, teléfono y punto de referencia. Separar si aplica entrega a aeropuerto/carga.','altos de cabuya',NULL),
+  ('Tocumen','Altos de Tocumen','Panamá','Este','Barrio/sector',NULL,'Z4 Este extendido','Alta','Servientrega - entrega el día siguiente. Confirmar dirección, teléfono y punto de referencia. Separar si aplica entrega a aeropuerto/carga.','altos de tocumen',NULL),
+  ('Tocumen','Altos de Tocumen III','Panamá','Este','Barrio/sector',NULL,'Z4 Este extendido','Alta','Servientrega - entrega el día siguiente. Confirmar dirección, teléfono y punto de referencia. Separar si aplica entrega a aeropuerto/carga.','altos de tocumen iii',NULL),
+  ('Tocumen','Brisas del Río','Panamá','Este','Barrio/sector',NULL,'Z4 Este extendido','Alta','Servientrega - entrega el día siguiente. Confirmar dirección, teléfono y punto de referencia. Separar si aplica entrega a aeropuerto/carga.','brisas del rio',NULL),
+  ('Tocumen','Villa Luchín','Panamá','Este','Barrio/sector',NULL,'Z4 Este extendido','Alta','Servientrega - entrega el día siguiente. Confirmar dirección, teléfono y punto de referencia. Separar si aplica entrega a aeropuerto/carga.','villa luchin',NULL),
+  ('Tocumen','Residencial El Lago','Panamá','Este','Barrio/sector',NULL,'Z4 Este extendido','Alta','Servientrega - entrega el día siguiente. Confirmar dirección, teléfono y punto de referencia. Separar si aplica entrega a aeropuerto/carga.','residencial el lago',NULL),
+  ('Tocumen','Los Pilones','Panamá','Este','Barrio/sector',NULL,'Z4 Este extendido','Alta','Servientrega - entrega el día siguiente. Confirmar dirección, teléfono y punto de referencia. Separar si aplica entrega a aeropuerto/carga.','los pilones',NULL),
+  ('Tocumen','San Antonio sector Tocumen','Panamá','Este','Barrio/sector',NULL,'Z4 Este extendido','Alta','Servientrega - entrega el día siguiente. Confirmar dirección, teléfono y punto de referencia. Separar si aplica entrega a aeropuerto/carga.','san antonio sector tocumen',NULL),
+  ('Tocumen','Pantanales / Pantanal','Panamá','Este','Barrio/sector',NULL,'Z4 Este extendido','Alta','Servientrega - entrega el día siguiente. Confirmar dirección, teléfono y punto de referencia. Separar si aplica entrega a aeropuerto/carga.','pantanales / pantanal',NULL),
+  ('Tocumen','La Candelaria','Panamá','Este','Barrio/sector',NULL,'Z4 Este extendido','Alta','Servientrega - entrega el día siguiente. Confirmar dirección, teléfono y punto de referencia. Separar si aplica entrega a aeropuerto/carga.','la candelaria',NULL),
+  ('Tocumen','16 de Diciembre','Panamá','Este','Barrio/sector',NULL,'Z4 Este extendido','Alta','Servientrega - entrega el día siguiente. Confirmar dirección, teléfono y punto de referencia. Separar si aplica entrega a aeropuerto/carga.','16 de diciembre',NULL),
+  ('Tocumen','Villas Santa Bárbara','Panamá','Este','Barrio/sector',NULL,'Z4 Este extendido','Alta','Servientrega - entrega el día siguiente. Confirmar dirección, teléfono y punto de referencia. Separar si aplica entrega a aeropuerto/carga.','villas santa barbara',NULL),
+  ('Tocumen','Dos Ríos','Panamá','Este','Barrio/sector',NULL,'Z4 Este extendido','Alta','Servientrega - entrega el día siguiente. Confirmar dirección, teléfono y punto de referencia. Separar si aplica entrega a aeropuerto/carga.','dos rios',NULL),
+  ('Tocumen','Altos de Villa Marta','Panamá','Este','Barrio/sector',NULL,'Z4 Este extendido','Alta','Servientrega - entrega el día siguiente. Confirmar dirección, teléfono y punto de referencia. Separar si aplica entrega a aeropuerto/carga.','altos de villa marta',NULL),
+  ('Tocumen','Urbanización Villa Marta','Panamá','Este','Barrio/sector',NULL,'Z4 Este extendido','Alta','Servientrega - entrega el día siguiente. Confirmar dirección, teléfono y punto de referencia. Separar si aplica entrega a aeropuerto/carga.','urbanizacion villa marta',NULL),
+  ('Tocumen','Puerta del Este','Panamá','Este','Barrio/sector',NULL,'Z4 Este extendido','Alta','Servientrega - entrega el día siguiente. Confirmar dirección, teléfono y punto de referencia. Separar si aplica entrega a aeropuerto/carga.','puerta del este',NULL),
+  ('Tocumen','Torre Molino','Panamá','Este','Barrio/sector',NULL,'Z4 Este extendido','Alta','Servientrega - entrega el día siguiente. Confirmar dirección, teléfono y punto de referencia. Separar si aplica entrega a aeropuerto/carga.','torre molino',NULL),
+  ('Tocumen','La Alborada','Panamá','Este','Barrio/sector',NULL,'Z4 Este extendido','Alta','Servientrega - entrega el día siguiente. Confirmar dirección, teléfono y punto de referencia. Separar si aplica entrega a aeropuerto/carga.','la alborada',NULL),
+  ('Tocumen','Santa Teresita','Panamá','Este','Barrio/sector',NULL,'Z4 Este extendido','Alta','Servientrega - entrega el día siguiente. Confirmar dirección, teléfono y punto de referencia. Separar si aplica entrega a aeropuerto/carga.','santa teresita',NULL),
+  ('Tocumen','Tocumen sector Sur','Panamá','Este','Barrio/sector',NULL,'Z4 Este extendido','Alta','Servientrega - entrega el día siguiente. Confirmar dirección, teléfono y punto de referencia. Separar si aplica entrega a aeropuerto/carga.','tocumen sector sur',NULL),
+  ('Tocumen','Punta del Este','Panamá','Este','Barrio/sector',NULL,'Z4 Este extendido','Alta','Servientrega - entrega el día siguiente. Confirmar dirección, teléfono y punto de referencia. Separar si aplica entrega a aeropuerto/carga.','punta del este',NULL),
+  ('Tocumen','Barriada Jorge Illueca','Panamá','Este','Barrio/sector',NULL,'Z4 Este extendido','Alta','Servientrega - entrega el día siguiente. Confirmar dirección, teléfono y punto de referencia. Separar si aplica entrega a aeropuerto/carga.','barriada jorge illueca',NULL),
+  ('24 de Diciembre','24 de Diciembre','Panamá','Este','Barrio/sector',NULL,'Z4 Este extendido','Alta','Servientrega - entrega el día siguiente. Confirmar dirección, teléfono y punto de referencia. Cerro Azul/Altos de Cerro Azul debería cotizarse como extendido por distancia.','24 de diciembre',NULL),
+  ('24 de Diciembre','Urbanización Nuevo Tocumen','Panamá','Este','Barrio/sector',NULL,'Z4 Este extendido','Alta','Servientrega - entrega el día siguiente. Confirmar dirección, teléfono y punto de referencia. Cerro Azul/Altos de Cerro Azul debería cotizarse como extendido por distancia.','urbanizacion nuevo tocumen',NULL),
+  ('24 de Diciembre','Ciudad de Dios','Panamá','Este','Barrio/sector',NULL,'Z4 Este extendido','Alta','Servientrega - entrega el día siguiente. Confirmar dirección, teléfono y punto de referencia. Cerro Azul/Altos de Cerro Azul debería cotizarse como extendido por distancia.','ciudad de dios',NULL),
+  ('24 de Diciembre','El Valle de Cerro Azul','Panamá','Este','Barrio/sector',NULL,'Z4 Este extendido','Alta','Servientrega - entrega el día siguiente. Confirmar dirección, teléfono y punto de referencia. Cerro Azul/Altos de Cerro Azul debería cotizarse como extendido por distancia.','el valle de cerro azul',NULL),
+  ('24 de Diciembre','Buena Vista No. 1','Panamá','Este','Barrio/sector',NULL,'Z4 Este extendido','Alta','Servientrega - entrega el día siguiente. Confirmar dirección, teléfono y punto de referencia. Cerro Azul/Altos de Cerro Azul debería cotizarse como extendido por distancia.','buena vista no. 1',NULL),
+  ('24 de Diciembre','Vista Hermosa','Panamá','Este','Barrio/sector',NULL,'Z4 Este extendido','Alta','Servientrega - entrega el día siguiente. Confirmar dirección, teléfono y punto de referencia. Cerro Azul/Altos de Cerro Azul debería cotizarse como extendido por distancia.','vista hermosa',NULL),
+  ('24 de Diciembre','Los Llanos','Panamá','Este','Barrio/sector',NULL,'Z4 Este extendido','Alta','Servientrega - entrega el día siguiente. Confirmar dirección, teléfono y punto de referencia. Cerro Azul/Altos de Cerro Azul debería cotizarse como extendido por distancia.','los llanos',NULL),
+  ('24 de Diciembre','Felipillo','Panamá','Este','Barrio/sector',NULL,'Z4 Este extendido','Alta','Servientrega - entrega el día siguiente. Confirmar dirección, teléfono y punto de referencia. Cerro Azul/Altos de Cerro Azul debería cotizarse como extendido por distancia.','felipillo',NULL),
+  ('24 de Diciembre','Urbanización Los Cántaros','Panamá','Este','Barrio/sector',NULL,'Z4 Este extendido','Alta','Servientrega - entrega el día siguiente. Confirmar dirección, teléfono y punto de referencia. Cerro Azul/Altos de Cerro Azul debería cotizarse como extendido por distancia.','urbanizacion los cantaros',NULL),
+  ('24 de Diciembre','Cabuyita / Altos de Cabuya','Panamá','Este','Barrio/sector',NULL,'Z4 Este extendido','Alta','Servientrega - entrega el día siguiente. Confirmar dirección, teléfono y punto de referencia. Cerro Azul/Altos de Cerro Azul debería cotizarse como extendido por distancia.','cabuyita / altos de cabuya',NULL),
+  ('24 de Diciembre','Altos del Ángel','Panamá','Este','Barrio/sector',NULL,'Z4 Este extendido','Alta','Servientrega - entrega el día siguiente. Confirmar dirección, teléfono y punto de referencia. Cerro Azul/Altos de Cerro Azul debería cotizarse como extendido por distancia.','altos del angel',NULL),
+  ('24 de Diciembre','Altos de Utivé','Panamá','Este','Barrio/sector',NULL,'Z4 Este extendido','Alta','Servientrega - entrega el día siguiente. Confirmar dirección, teléfono y punto de referencia. Cerro Azul/Altos de Cerro Azul debería cotizarse como extendido por distancia.','altos de utive',NULL),
+  ('24 de Diciembre','Cerro Azul','Panamá','Este','Barrio/sector',NULL,'Z4 Este extendido','Alta','Servientrega - entrega el día siguiente. Confirmar dirección, teléfono y punto de referencia. Cerro Azul/Altos de Cerro Azul debería cotizarse como extendido por distancia.','cerro azul',NULL),
+  ('24 de Diciembre','Altos de Cerro Azul','Panamá','Este','Barrio/sector',NULL,'Z4 Este extendido','Alta','Servientrega - entrega el día siguiente. Confirmar dirección, teléfono y punto de referencia. Cerro Azul/Altos de Cerro Azul debería cotizarse como extendido por distancia.','altos de cerro azul',NULL),
+  ('24 de Diciembre','Sector El Bajo','Panamá','Este','Barrio/sector',NULL,'Z4 Este extendido','Alta','Servientrega - entrega el día siguiente. Confirmar dirección, teléfono y punto de referencia. Cerro Azul/Altos de Cerro Azul debería cotizarse como extendido por distancia.','sector el bajo',NULL),
+  ('24 de Diciembre','Nuevo Progreso','Panamá','Este','Barrio/sector',NULL,'Z4 Este extendido','Alta','Servientrega - entrega el día siguiente. Confirmar dirección, teléfono y punto de referencia. Cerro Azul/Altos de Cerro Azul debería cotizarse como extendido por distancia.','nuevo progreso',NULL),
+  ('24 de Diciembre','Nueva Esperanza','Panamá','Este','Barrio/sector',NULL,'Z4 Este extendido','Alta','Servientrega - entrega el día siguiente. Confirmar dirección, teléfono y punto de referencia. Cerro Azul/Altos de Cerro Azul debería cotizarse como extendido por distancia.','nueva esperanza',NULL),
+  ('24 de Diciembre','Rancho Café','Panamá','Este','Barrio/sector',NULL,'Z4 Este extendido','Alta','Servientrega - entrega el día siguiente. Confirmar dirección, teléfono y punto de referencia. Cerro Azul/Altos de Cerro Azul debería cotizarse como extendido por distancia.','rancho cafe',NULL),
+  ('24 de Diciembre','Urbanización Villa Aurora','Panamá','Este','Barrio/sector',NULL,'Z4 Este extendido','Alta','Servientrega - entrega el día siguiente. Confirmar dirección, teléfono y punto de referencia. Cerro Azul/Altos de Cerro Azul debería cotizarse como extendido por distancia.','urbanizacion villa aurora',NULL),
+  ('24 de Diciembre','Rubén Darío Paredes','Panamá','Este','Barrio/sector',NULL,'Z4 Este extendido','Alta','Servientrega - entrega el día siguiente. Confirmar dirección, teléfono y punto de referencia. Cerro Azul/Altos de Cerro Azul debería cotizarse como extendido por distancia.','ruben dario paredes',NULL),
+  ('24 de Diciembre','Monte Rico','Panamá','Este','Barrio/sector',NULL,'Z4 Este extendido','Alta','Servientrega - entrega el día siguiente. Confirmar dirección, teléfono y punto de referencia. Cerro Azul/Altos de Cerro Azul debería cotizarse como extendido por distancia.','monte rico',NULL),
+  ('24 de Diciembre','Barriada 24 de Diciembre','Panamá','Este','Barrio/sector',NULL,'Z4 Este extendido','Alta','Servientrega - entrega el día siguiente. Confirmar dirección, teléfono y punto de referencia. Cerro Azul/Altos de Cerro Azul debería cotizarse como extendido por distancia.','barriada 24 de diciembre',NULL),
+  ('Pacora','Pacora centro','Panamá','Este','Barrio/sector',NULL,'Z4 Este extendido','Media','Servientrega - entrega el día siguiente. Confirmar dirección, teléfono y punto de referencia. Confirmar si la dirección pertenece a Las Garzas o Pacora.','pacora centro',NULL),
+  ('Pacora','San Diego','Panamá','Este','Barrio/sector',NULL,'Z4 Este extendido','Media','Servientrega - entrega el día siguiente. Confirmar dirección, teléfono y punto de referencia. Confirmar si la dirección pertenece a Las Garzas o Pacora.','san diego',NULL),
+  ('Pacora','Tataré','Panamá','Este','Barrio/sector',NULL,'Z4 Este extendido','Media','Servientrega - entrega el día siguiente. Confirmar dirección, teléfono y punto de referencia. Confirmar si la dirección pertenece a Las Garzas o Pacora.','tatare',NULL),
+  ('Pacora','Utivé','Panamá','Este','Barrio/sector',NULL,'Z4 Este extendido','Media','Servientrega - entrega el día siguiente. Confirmar dirección, teléfono y punto de referencia. Confirmar si la dirección pertenece a Las Garzas o Pacora.','utive',NULL),
+  ('Pacora','Paso Blanco','Panamá','Este','Barrio/sector',NULL,'Z4 Este extendido','Media','Servientrega - entrega el día siguiente. Confirmar dirección, teléfono y punto de referencia. Confirmar si la dirección pertenece a Las Garzas o Pacora.','paso blanco',NULL),
+  ('Pacora','Los Lotes de Pacora','Panamá','Este','Barrio/sector',NULL,'Z4 Este extendido','Media','Servientrega - entrega el día siguiente. Confirmar dirección, teléfono y punto de referencia. Confirmar si la dirección pertenece a Las Garzas o Pacora.','los lotes de pacora',NULL),
+  ('Pacora','Pacora Arriba','Panamá','Este','Barrio/sector',NULL,'Z4 Este extendido','Media','Servientrega - entrega el día siguiente. Confirmar dirección, teléfono y punto de referencia. Confirmar si la dirección pertenece a Las Garzas o Pacora.','pacora arriba',NULL),
+  ('Pacora','Nueva Esperanza sector Pacora','Panamá','Este','Barrio/sector',NULL,'Z4 Este extendido','Media','Servientrega - entrega el día siguiente. Confirmar dirección, teléfono y punto de referencia. Confirmar si la dirección pertenece a Las Garzas o Pacora.','nueva esperanza sector pacora',NULL),
+  ('Pacora','La Mesa de Pacora','Panamá','Este','Barrio/sector',NULL,'Z4 Este extendido','Media','Servientrega - entrega el día siguiente. Confirmar dirección, teléfono y punto de referencia. Confirmar si la dirección pertenece a Las Garzas o Pacora.','la mesa de pacora',NULL),
+  ('Pacora','Calle Primera de Pacora','Panamá','Este','Barrio/sector',NULL,'Z4 Este extendido','Media','Servientrega - entrega el día siguiente. Confirmar dirección, teléfono y punto de referencia. Confirmar si la dirección pertenece a Las Garzas o Pacora.','calle primera de pacora',NULL),
+  ('Pacora','El Naranjal','Panamá','Este','Barrio/sector',NULL,'Z4 Este extendido','Media','Servientrega - entrega el día siguiente. Confirmar dirección, teléfono y punto de referencia. Confirmar si la dirección pertenece a Las Garzas o Pacora.','el naranjal',NULL),
+  ('Pacora','San Juan de Pacora','Panamá','Este','Barrio/sector',NULL,'Z4 Este extendido','Media','Servientrega - entrega el día siguiente. Confirmar dirección, teléfono y punto de referencia. Confirmar si la dirección pertenece a Las Garzas o Pacora.','san juan de pacora',NULL),
+  ('Las Garzas','Las Garzas','Panamá','Este','Barrio/sector',NULL,'Z4 Este extendido','Media','Servientrega - entrega el día siguiente. Confirmar dirección, teléfono y punto de referencia. Requiere validación por expansión urbana.','las garzas',NULL),
+  ('Las Garzas','Las Garzas de Pacora','Panamá','Este','Barrio/sector',NULL,'Z4 Este extendido','Media','Servientrega - entrega el día siguiente. Confirmar dirección, teléfono y punto de referencia. Requiere validación por expansión urbana.','las garzas de pacora',NULL),
+  ('Las Garzas','Altos de Las Garzas','Panamá','Este','Barrio/sector',NULL,'Z4 Este extendido','Media','Servientrega - entrega el día siguiente. Confirmar dirección, teléfono y punto de referencia. Requiere validación por expansión urbana.','altos de las garzas',NULL),
+  ('Las Garzas','Altos de la Torre','Panamá','Este','Barrio/sector',NULL,'Z4 Este extendido','Media','Servientrega - entrega el día siguiente. Confirmar dirección, teléfono y punto de referencia. Requiere validación por expansión urbana.','altos de la torre',NULL),
+  ('Las Garzas','Altos de Pacora','Panamá','Este','Barrio/sector',NULL,'Z4 Este extendido','Media','Servientrega - entrega el día siguiente. Confirmar dirección, teléfono y punto de referencia. Requiere validación por expansión urbana.','altos de pacora',NULL),
+  ('Las Garzas','Las Nubes','Panamá','Este','Barrio/sector',NULL,'Z4 Este extendido','Media','Servientrega - entrega el día siguiente. Confirmar dirección, teléfono y punto de referencia. Requiere validación por expansión urbana.','las nubes',NULL),
+  ('Las Garzas','Santa Isabel','Panamá','Este','Barrio/sector',NULL,'Z4 Este extendido','Media','Servientrega - entrega el día siguiente. Confirmar dirección, teléfono y punto de referencia. Requiere validación por expansión urbana.','santa isabel',NULL),
+  ('Las Garzas','El Trébol','Panamá','Este','Barrio/sector',NULL,'Z4 Este extendido','Media','Servientrega - entrega el día siguiente. Confirmar dirección, teléfono y punto de referencia. Requiere validación por expansión urbana.','el trebol',NULL),
+  ('Las Garzas','Villa Belén límite Las Garzas','Panamá','Este','Barrio/sector',NULL,'Z4 Este extendido','Media','Servientrega - entrega el día siguiente. Confirmar dirección, teléfono y punto de referencia. Requiere validación por expansión urbana.','villa belen limite las garzas',NULL),
+  ('Las Garzas','Sector La Mireya','Panamá','Este','Barrio/sector',NULL,'Z4 Este extendido','Media','Servientrega - entrega el día siguiente. Confirmar dirección, teléfono y punto de referencia. Requiere validación por expansión urbana.','sector la mireya',NULL),
+  ('San Martín','San Martín','Panamá','Este','Barrio/sector',NULL,'Z4 Este extendido','Media','Servientrega - entrega el día siguiente. Confirmar dirección, teléfono y punto de referencia. Normalmente debe cotizarse por distancia/recorrido.','san martin',NULL),
+  ('San Martín','San Martín de Pacora','Panamá','Este','Barrio/sector',NULL,'Z4 Este extendido','Media','Servientrega - entrega el día siguiente. Confirmar dirección, teléfono y punto de referencia. Normalmente debe cotizarse por distancia/recorrido.','san martin de pacora',NULL),
+  ('San Martín','La Mesa','Panamá','Este','Barrio/sector',NULL,'Z4 Este extendido','Media','Servientrega - entrega el día siguiente. Confirmar dirección, teléfono y punto de referencia. Normalmente debe cotizarse por distancia/recorrido.','la mesa',NULL),
+  ('San Martín','Los Lotes','Panamá','Este','Barrio/sector',NULL,'Z4 Este extendido','Media','Servientrega - entrega el día siguiente. Confirmar dirección, teléfono y punto de referencia. Normalmente debe cotizarse por distancia/recorrido.','los lotes',NULL),
+  ('San Martín','El Progreso sector San Martín','Panamá','Este','Barrio/sector',NULL,'Z4 Este extendido','Media','Servientrega - entrega el día siguiente. Confirmar dirección, teléfono y punto de referencia. Normalmente debe cotizarse por distancia/recorrido.','el progreso sector san martin',NULL),
+  ('San Martín','Los Llanos sector San Martín','Panamá','Este','Barrio/sector',NULL,'Z4 Este extendido','Media','Servientrega - entrega el día siguiente. Confirmar dirección, teléfono y punto de referencia. Normalmente debe cotizarse por distancia/recorrido.','los llanos sector san martin',NULL),
+  ('San Martín','San Miguel sector San Martín','Panamá','Este','Barrio/sector',NULL,'Z4 Este extendido','Media','Servientrega - entrega el día siguiente. Confirmar dirección, teléfono y punto de referencia. Normalmente debe cotizarse por distancia/recorrido.','san miguel sector san martin',NULL),
+  ('Las Cumbres','Las Cumbres','Panamá','Norte','Barrio/sector',NULL,'Z5 Norte','Media','Servientrega - entrega el día siguiente. Confirmar dirección, teléfono y punto de referencia. Validar acceso desde Transístmica o Corredor Norte.','las cumbres',NULL),
+  ('Las Cumbres','Milla 8','Panamá','Norte','Barrio/sector',NULL,'Z5 Norte','Media','Servientrega - entrega el día siguiente. Confirmar dirección, teléfono y punto de referencia. Validar acceso desde Transístmica o Corredor Norte.','milla 8',NULL),
+  ('Las Cumbres','Villa Zaita','Panamá','Norte','Barrio/sector',NULL,'Z5 Norte','Media','Servientrega - entrega el día siguiente. Confirmar dirección, teléfono y punto de referencia. Validar acceso desde Transístmica o Corredor Norte.','villa zaita',NULL),
+  ('Las Cumbres','Las Lajas','Panamá','Norte','Barrio/sector',NULL,'Z5 Norte','Media','Servientrega - entrega el día siguiente. Confirmar dirección, teléfono y punto de referencia. Validar acceso desde Transístmica o Corredor Norte.','las lajas',NULL),
+  ('Las Cumbres','Villa Grecia','Panamá','Norte','Barrio/sector',NULL,'Z5 Norte','Media','Servientrega - entrega el día siguiente. Confirmar dirección, teléfono y punto de referencia. Validar acceso desde Transístmica o Corredor Norte.','villa grecia',NULL),
+  ('Las Cumbres','El Lago','Panamá','Norte','Barrio/sector',NULL,'Z5 Norte','Media','Servientrega - entrega el día siguiente. Confirmar dirección, teléfono y punto de referencia. Validar acceso desde Transístmica o Corredor Norte.','el lago',NULL),
+  ('Las Cumbres','Brisas del Lago','Panamá','Norte','Barrio/sector',NULL,'Z5 Norte','Media','Servientrega - entrega el día siguiente. Confirmar dirección, teléfono y punto de referencia. Validar acceso desde Transístmica o Corredor Norte.','brisas del lago',NULL),
+  ('Las Cumbres','Villa Esperanza sector Las Cumbres','Panamá','Norte','Barrio/sector',NULL,'Z5 Norte','Media','Servientrega - entrega el día siguiente. Confirmar dirección, teléfono y punto de referencia. Validar acceso desde Transístmica o Corredor Norte.','villa esperanza sector las cumbres',NULL),
+  ('Las Cumbres','Altos de Las Cumbres','Panamá','Norte','Barrio/sector',NULL,'Z5 Norte','Media','Servientrega - entrega el día siguiente. Confirmar dirección, teléfono y punto de referencia. Validar acceso desde Transístmica o Corredor Norte.','altos de las cumbres',NULL),
+  ('Las Cumbres','Transístmica sector Las Cumbres','Panamá','Norte','Barrio/sector',NULL,'Z5 Norte','Media','Servientrega - entrega el día siguiente. Confirmar dirección, teléfono y punto de referencia. Validar acceso desde Transístmica o Corredor Norte.','transistmica sector las cumbres',NULL),
+  ('Alcalde Díaz','Alcalde Díaz','Panamá','Norte','Barrio/sector',NULL,'Z5 Norte','Media','Servientrega - entrega el día siguiente. Confirmar dirección, teléfono y punto de referencia.','alcalde diaz',NULL),
+  ('Alcalde Díaz','Ciudad Bolívar','Panamá','Norte','Barrio/sector',NULL,'Z5 Norte','Media','Servientrega - entrega el día siguiente. Confirmar dirección, teléfono y punto de referencia.','ciudad bolivar',NULL),
+  ('Alcalde Díaz','Milla 9','Panamá','Norte','Barrio/sector',NULL,'Z5 Norte','Media','Servientrega - entrega el día siguiente. Confirmar dirección, teléfono y punto de referencia.','milla 9',NULL),
+  ('Alcalde Díaz','Las Gaitas','Panamá','Norte','Barrio/sector',NULL,'Z5 Norte','Media','Servientrega - entrega el día siguiente. Confirmar dirección, teléfono y punto de referencia.','las gaitas',NULL),
+  ('Alcalde Díaz','El Progreso sector Alcalde Díaz','Panamá','Norte','Barrio/sector',NULL,'Z5 Norte','Media','Servientrega - entrega el día siguiente. Confirmar dirección, teléfono y punto de referencia.','el progreso sector alcalde diaz',NULL),
+  ('Alcalde Díaz','Santa Rita sector Alcalde Díaz','Panamá','Norte','Barrio/sector',NULL,'Z5 Norte','Media','Servientrega - entrega el día siguiente. Confirmar dirección, teléfono y punto de referencia.','santa rita sector alcalde diaz',NULL),
+  ('Alcalde Díaz','San José sector Alcalde Díaz','Panamá','Norte','Barrio/sector',NULL,'Z5 Norte','Media','Servientrega - entrega el día siguiente. Confirmar dirección, teléfono y punto de referencia.','san jose sector alcalde diaz',NULL),
+  ('Alcalde Díaz','Avenida Boyd-Roosevelt sector Alcalde Díaz','Panamá','Norte','Barrio/sector',NULL,'Z5 Norte','Media','Servientrega - entrega el día siguiente. Confirmar dirección, teléfono y punto de referencia.','avenida boyd-roosevelt sector alcalde diaz',NULL),
+  ('Ernesto Córdoba Campos','Ernesto Córdoba Campos','Panamá','Norte','Barrio/sector',NULL,'Z5 Norte','Media','Servientrega - entrega el día siguiente. Confirmar dirección, teléfono y punto de referencia. Corregimiento con límites que generan confusión; pedir pin de ubicación.','ernesto cordoba campos',NULL),
+  ('Ernesto Córdoba Campos','Gonzalillo','Panamá','Norte','Barrio/sector',NULL,'Z5 Norte','Media','Servientrega - entrega el día siguiente. Confirmar dirección, teléfono y punto de referencia. Corregimiento con límites que generan confusión; pedir pin de ubicación.','gonzalillo',NULL),
+  ('Ernesto Córdoba Campos','Las Lajas sector norte','Panamá','Norte','Barrio/sector',NULL,'Z5 Norte','Media','Servientrega - entrega el día siguiente. Confirmar dirección, teléfono y punto de referencia. Corregimiento con límites que generan confusión; pedir pin de ubicación.','las lajas sector norte',NULL),
+  ('Ernesto Córdoba Campos','San Lorenzo sector norte','Panamá','Norte','Barrio/sector',NULL,'Z5 Norte','Media','Servientrega - entrega el día siguiente. Confirmar dirección, teléfono y punto de referencia. Corregimiento con límites que generan confusión; pedir pin de ubicación.','san lorenzo sector norte',NULL),
+  ('Ernesto Córdoba Campos','Villa Grecia límite norte','Panamá','Norte','Barrio/sector',NULL,'Z5 Norte','Media','Servientrega - entrega el día siguiente. Confirmar dirección, teléfono y punto de referencia. Corregimiento con límites que generan confusión; pedir pin de ubicación.','villa grecia limite norte',NULL),
+  ('Ernesto Córdoba Campos','Sector La Cabima límite este','Panamá','Norte','Barrio/sector',NULL,'Z5 Norte','Media','Servientrega - entrega el día siguiente. Confirmar dirección, teléfono y punto de referencia. Corregimiento con límites que generan confusión; pedir pin de ubicación.','sector la cabima limite este',NULL),
+  ('Caimitillo','Caimitillo','Panamá','Norte','Barrio/sector',NULL,'Z5 Norte','Media','Servientrega - entrega el día siguiente. Confirmar dirección, teléfono y punto de referencia. Área extendida; cotizar según ruta.','caimitillo',NULL),
+  ('Caimitillo','Caimitillo Centro','Panamá','Norte','Barrio/sector',NULL,'Z5 Norte','Media','Servientrega - entrega el día siguiente. Confirmar dirección, teléfono y punto de referencia. Área extendida; cotizar según ruta.','caimitillo centro',NULL),
+  ('Caimitillo','Nuevo Caimitillo','Panamá','Norte','Barrio/sector',NULL,'Z5 Norte','Media','Servientrega - entrega el día siguiente. Confirmar dirección, teléfono y punto de referencia. Área extendida; cotizar según ruta.','nuevo caimitillo',NULL),
+  ('Caimitillo','La Cabima','Panamá','Norte','Barrio/sector',NULL,'Z5 Norte','Media','Servientrega - entrega el día siguiente. Confirmar dirección, teléfono y punto de referencia. Área extendida; cotizar según ruta.','la cabima',NULL),
+  ('Caimitillo','Santa Rita sector Caimitillo','Panamá','Norte','Barrio/sector',NULL,'Z5 Norte','Media','Servientrega - entrega el día siguiente. Confirmar dirección, teléfono y punto de referencia. Área extendida; cotizar según ruta.','santa rita sector caimitillo',NULL),
+  ('Caimitillo','San José sector Caimitillo','Panamá','Norte','Barrio/sector',NULL,'Z5 Norte','Media','Servientrega - entrega el día siguiente. Confirmar dirección, teléfono y punto de referencia. Área extendida; cotizar según ruta.','san jose sector caimitillo',NULL),
+  ('Caimitillo','El Limón','Panamá','Norte','Barrio/sector',NULL,'Z5 Norte','Media','Servientrega - entrega el día siguiente. Confirmar dirección, teléfono y punto de referencia. Área extendida; cotizar según ruta.','el limon',NULL),
+  ('Caimitillo','La Esperanza sector Caimitillo','Panamá','Norte','Barrio/sector',NULL,'Z5 Norte','Media','Servientrega - entrega el día siguiente. Confirmar dirección, teléfono y punto de referencia. Área extendida; cotizar según ruta.','la esperanza sector caimitillo',NULL),
+  ('Chilibre','Chilibre','Panamá','Norte','Barrio/sector',NULL,'Z5 Norte','Media','Servientrega - entrega el día siguiente. Confirmar dirección, teléfono y punto de referencia. Área extendida; confirmar punto en mapa.','chilibre',NULL),
+  ('Chilibre','Agua Bendita','Panamá','Norte','Barrio/sector',NULL,'Z5 Norte','Media','Servientrega - entrega el día siguiente. Confirmar dirección, teléfono y punto de referencia. Área extendida; confirmar punto en mapa.','agua bendita',NULL),
+  ('Chilibre','Chilibrillo','Panamá','Norte','Barrio/sector',NULL,'Z5 Norte','Media','Servientrega - entrega el día siguiente. Confirmar dirección, teléfono y punto de referencia. Área extendida; confirmar punto en mapa.','chilibrillo',NULL),
+  ('Chilibre','San Vicente','Panamá','Norte','Barrio/sector',NULL,'Z5 Norte','Media','Servientrega - entrega el día siguiente. Confirmar dirección, teléfono y punto de referencia. Área extendida; confirmar punto en mapa.','san vicente',NULL),
+  ('Chilibre','Buenos Aires','Panamá','Norte','Barrio/sector',NULL,'Z5 Norte','Media','Servientrega - entrega el día siguiente. Confirmar dirección, teléfono y punto de referencia. Área extendida; confirmar punto en mapa.','buenos aires',NULL),
+  ('Chilibre','Las Albinas','Panamá','Norte','Barrio/sector',NULL,'Z5 Norte','Media','Servientrega - entrega el día siguiente. Confirmar dirección, teléfono y punto de referencia. Área extendida; confirmar punto en mapa.','las albinas',NULL),
+  ('Chilibre','Quebrada Ancha','Panamá','Norte','Barrio/sector',NULL,'Z5 Norte','Media','Servientrega - entrega el día siguiente. Confirmar dirección, teléfono y punto de referencia. Área extendida; confirmar punto en mapa.','quebrada ancha',NULL),
+  ('Chilibre','María Henríquez','Panamá','Norte','Barrio/sector',NULL,'Z5 Norte','Media','Servientrega - entrega el día siguiente. Confirmar dirección, teléfono y punto de referencia. Área extendida; confirmar punto en mapa.','maria henriquez',NULL),
+  ('Chilibre','Las Vegas','Panamá','Norte','Barrio/sector',NULL,'Z5 Norte','Media','Servientrega - entrega el día siguiente. Confirmar dirección, teléfono y punto de referencia. Área extendida; confirmar punto en mapa.','las vegas',NULL),
+  ('Chilibre','Villa Unida','Panamá','Norte','Barrio/sector',NULL,'Z5 Norte','Media','Servientrega - entrega el día siguiente. Confirmar dirección, teléfono y punto de referencia. Área extendida; confirmar punto en mapa.','villa unida',NULL),
+  ('Chilibre','El Ñajú','Panamá','Norte','Barrio/sector',NULL,'Z5 Norte','Media','Servientrega - entrega el día siguiente. Confirmar dirección, teléfono y punto de referencia. Área extendida; confirmar punto en mapa.','el naju',NULL),
+  ('José Domingo Espinar','La Pulida','San Miguelito','San Miguelito acceso principal','Barrio/sector',NULL,'Z3 San Miguelito','Media','Validar si cae en Panamá/Pueblo Nuevo o San Miguelito por límites.','la pulida',NULL),
+  ('José Domingo Espinar','Villa Guadalupe','San Miguelito','San Miguelito acceso principal','Barrio/sector',NULL,'Z3 San Miguelito','Media','Validar si cae en Panamá/Pueblo Nuevo o San Miguelito por límites.','villa guadalupe',NULL),
+  ('José Domingo Espinar','Villa Lucre','San Miguelito','San Miguelito acceso principal','Barrio/sector',NULL,'Z3 San Miguelito','Media','Validar si cae en Panamá/Pueblo Nuevo o San Miguelito por límites.','villa lucre',NULL),
+  ('José Domingo Espinar','El Crisol','San Miguelito','San Miguelito acceso principal','Barrio/sector',NULL,'Z3 San Miguelito','Media','Validar si cae en Panamá/Pueblo Nuevo o San Miguelito por límites.','el crisol',NULL),
+  ('José Domingo Espinar','Altos del Crisol','San Miguelito','San Miguelito acceso principal','Barrio/sector',NULL,'Z3 San Miguelito','Media','Validar si cae en Panamá/Pueblo Nuevo o San Miguelito por límites.','altos del crisol',NULL),
+  ('José Domingo Espinar','Colinas de Nazaret','San Miguelito','San Miguelito acceso principal','Barrio/sector',NULL,'Z3 San Miguelito','Media','Validar si cae en Panamá/Pueblo Nuevo o San Miguelito por límites.','colinas de nazaret',NULL),
+  ('José Domingo Espinar','Dorasol','San Miguelito','San Miguelito acceso principal','Barrio/sector',NULL,'Z3 San Miguelito','Media','Validar si cae en Panamá/Pueblo Nuevo o San Miguelito por límites.','dorasol',NULL),
+  ('José Domingo Espinar','El Pináculo','San Miguelito','San Miguelito acceso principal','Barrio/sector',NULL,'Z3 San Miguelito','Media','Validar si cae en Panamá/Pueblo Nuevo o San Miguelito por límites.','el pinaculo',NULL),
+  ('José Domingo Espinar','Cristo Rey','San Miguelito','San Miguelito acceso principal','Barrio/sector',NULL,'Z3 San Miguelito','Media','Validar si cae en Panamá/Pueblo Nuevo o San Miguelito por límites.','cristo rey',NULL),
+  ('José Domingo Espinar','Santa Pera','San Miguelito','San Miguelito acceso principal','Barrio/sector',NULL,'Z3 San Miguelito','Media','Validar si cae en Panamá/Pueblo Nuevo o San Miguelito por límites.','santa pera',NULL),
+  ('José Domingo Espinar','Los Caciques','San Miguelito','San Miguelito acceso principal','Barrio/sector',NULL,'Z3 San Miguelito','Media','Validar si cae en Panamá/Pueblo Nuevo o San Miguelito por límites.','los caciques',NULL),
+  ('José Domingo Espinar','Las Lomas','San Miguelito','San Miguelito acceso principal','Barrio/sector',NULL,'Z3 San Miguelito','Media','Validar si cae en Panamá/Pueblo Nuevo o San Miguelito por límites.','las lomas',NULL),
+  ('José Domingo Espinar','La Primavera','San Miguelito','San Miguelito acceso principal','Barrio/sector',NULL,'Z3 San Miguelito','Media','Validar si cae en Panamá/Pueblo Nuevo o San Miguelito por límites.','la primavera',NULL),
+  ('José Domingo Espinar','Auto Motor','San Miguelito','San Miguelito acceso principal','Barrio/sector',NULL,'Z3 San Miguelito','Media','Validar si cae en Panamá/Pueblo Nuevo o San Miguelito por límites.','auto motor',NULL),
+  ('Rufina Alfaro','San Antonio','San Miguelito','San Miguelito acceso principal','Barrio/sector',NULL,'Z3 San Miguelito','Alta','San Antonio/Brisas puede manejar tarifa rápida por acceso.','san antonio',NULL),
+  ('Rufina Alfaro','Brisas del Golf','San Miguelito','San Miguelito acceso principal','Barrio/sector',NULL,'Z3 San Miguelito','Alta','San Antonio/Brisas puede manejar tarifa rápida por acceso.','brisas del golf',NULL),
+  ('Rufina Alfaro','Cerro Viento rural','San Miguelito','San Miguelito acceso principal','Barrio/sector',NULL,'Z3 San Miguelito','Alta','San Antonio/Brisas puede manejar tarifa rápida por acceso.','cerro viento rural',NULL),
+  ('Rufina Alfaro','Altos de Cerro Viento','San Miguelito','San Miguelito acceso principal','Barrio/sector',NULL,'Z3 San Miguelito','Alta','San Antonio/Brisas puede manejar tarifa rápida por acceso.','altos de cerro viento',NULL),
+  ('Rufina Alfaro','Las Trancas','San Miguelito','San Miguelito acceso principal','Barrio/sector',NULL,'Z3 San Miguelito','Alta','San Antonio/Brisas puede manejar tarifa rápida por acceso.','las trancas',NULL),
+  ('Rufina Alfaro','Villa Flor','San Miguelito','San Miguelito acceso principal','Barrio/sector',NULL,'Z3 San Miguelito','Alta','San Antonio/Brisas puede manejar tarifa rápida por acceso.','villa flor',NULL),
+  ('Rufina Alfaro','Villa Internacional','San Miguelito','San Miguelito acceso principal','Barrio/sector',NULL,'Z3 San Miguelito','Alta','San Antonio/Brisas puede manejar tarifa rápida por acceso.','villa internacional',NULL),
+  ('Rufina Alfaro','Boulevard San Antonio','San Miguelito','San Miguelito acceso principal','Barrio/sector',NULL,'Z3 San Miguelito','Alta','San Antonio/Brisas puede manejar tarifa rápida por acceso.','boulevard san antonio',NULL),
+  ('Rufina Alfaro','Ciudad Jardín San Antonio','San Miguelito','San Miguelito acceso principal','Barrio/sector',NULL,'Z3 San Miguelito','Alta','San Antonio/Brisas puede manejar tarifa rápida por acceso.','ciudad jardin san antonio',NULL),
+  ('Rufina Alfaro','Praderas de San Antonio','San Miguelito','San Miguelito acceso principal','Barrio/sector',NULL,'Z3 San Miguelito','Alta','San Antonio/Brisas puede manejar tarifa rápida por acceso.','praderas de san antonio',NULL),
+  ('Rufina Alfaro','Club de Golf de Panamá','San Miguelito','San Miguelito acceso principal','Barrio/sector',NULL,'Z3 San Miguelito','Alta','San Antonio/Brisas puede manejar tarifa rápida por acceso.','club de golf de panama',NULL),
+  ('Amelia Denis de Icaza','Pan de Azúcar','San Miguelito','San Miguelito acceso principal','Barrio/sector',NULL,'Z3 San Miguelito','Media','Confirmar límites con Victoriano Lorenzo y José Domingo Espinar.','pan de azucar',NULL),
+  ('Amelia Denis de Icaza','Nuevo Veranillo','San Miguelito','San Miguelito acceso principal','Barrio/sector',NULL,'Z3 San Miguelito','Media','Confirmar límites con Victoriano Lorenzo y José Domingo Espinar.','nuevo veranillo',NULL),
+  ('Amelia Denis de Icaza','Veranillo','San Miguelito','San Miguelito acceso principal','Barrio/sector',NULL,'Z3 San Miguelito','Media','Confirmar límites con Victoriano Lorenzo y José Domingo Espinar.','veranillo',NULL),
+  ('Amelia Denis de Icaza','Los Andes No. 1','San Miguelito','San Miguelito acceso principal','Barrio/sector',NULL,'Z3 San Miguelito','Media','Confirmar límites con Victoriano Lorenzo y José Domingo Espinar.','los andes no. 1',NULL),
+  ('Amelia Denis de Icaza','El Bosque','San Miguelito','San Miguelito acceso principal','Barrio/sector',NULL,'Z3 San Miguelito','Media','Confirmar límites con Victoriano Lorenzo y José Domingo Espinar.','el bosque',NULL),
+  ('Amelia Denis de Icaza','Altos del Bosque','San Miguelito','San Miguelito acceso principal','Barrio/sector',NULL,'Z3 San Miguelito','Media','Confirmar límites con Victoriano Lorenzo y José Domingo Espinar.','altos del bosque',NULL),
+  ('Amelia Denis de Icaza','Avenida Transístmica sector Pan de Azúcar','San Miguelito','San Miguelito acceso principal','Barrio/sector',NULL,'Z3 San Miguelito','Media','Confirmar límites con Victoriano Lorenzo y José Domingo Espinar.','avenida transistmica sector pan de azucar',NULL),
+  ('Amelia Denis de Icaza','Monte Oscuro límite Amelia Denis','San Miguelito','San Miguelito acceso principal','Barrio/sector',NULL,'Z3 San Miguelito','Media','Confirmar límites con Victoriano Lorenzo y José Domingo Espinar.','monte oscuro limite amelia denis',NULL),
+  ('Victoriano Lorenzo','Monte Oscuro','San Miguelito','San Miguelito interno','Barrio/sector',NULL,'Z6 San Miguelito interno','Media','Pedir pin por límite con Río Abajo/Pueblo Nuevo.','monte oscuro',NULL),
+  ('Victoriano Lorenzo','Victoriano Lorenzo','San Miguelito','San Miguelito interno','Barrio/sector',NULL,'Z6 San Miguelito interno','Media','Pedir pin por límite con Río Abajo/Pueblo Nuevo.','victoriano lorenzo',NULL),
+  ('Victoriano Lorenzo','El Bosque sector Victoriano Lorenzo','San Miguelito','San Miguelito interno','Barrio/sector',NULL,'Z6 San Miguelito interno','Media','Pedir pin por límite con Río Abajo/Pueblo Nuevo.','el bosque sector victoriano lorenzo',NULL),
+  ('Victoriano Lorenzo','Altos del Bosque sector Victoriano Lorenzo','San Miguelito','San Miguelito interno','Barrio/sector',NULL,'Z6 San Miguelito interno','Media','Pedir pin por límite con Río Abajo/Pueblo Nuevo.','altos del bosque sector victoriano lorenzo',NULL),
+  ('Victoriano Lorenzo','San Isidro límite Victoriano Lorenzo','San Miguelito','San Miguelito interno','Barrio/sector',NULL,'Z6 San Miguelito interno','Media','Pedir pin por límite con Río Abajo/Pueblo Nuevo.','san isidro limite victoriano lorenzo',NULL),
+  ('Victoriano Lorenzo','Vía Transístmica sector Monte Oscuro','San Miguelito','San Miguelito interno','Barrio/sector',NULL,'Z6 San Miguelito interno','Media','Pedir pin por límite con Río Abajo/Pueblo Nuevo.','via transistmica sector monte oscuro',NULL),
+  ('Mateo Iturralde','Paraíso','San Miguelito','San Miguelito interno','Barrio/sector',NULL,'Z6 San Miguelito interno','Media',NULL,'paraiso',NULL),
+  ('Mateo Iturralde','San Miguel','San Miguelito','San Miguelito interno','Barrio/sector',NULL,'Z6 San Miguelito interno','Media',NULL,'san miguel',NULL),
+  ('Mateo Iturralde','Mateo Iturralde centro','San Miguelito','San Miguelito interno','Barrio/sector',NULL,'Z6 San Miguelito interno','Media',NULL,'mateo iturralde centro',NULL),
+  ('Mateo Iturralde','Avenida Domingo Díaz sector Paraíso','San Miguelito','San Miguelito interno','Barrio/sector',NULL,'Z6 San Miguelito interno','Media',NULL,'avenida domingo diaz sector paraiso',NULL),
+  ('Mateo Iturralde','Avenida Transístmica sector Paraíso','San Miguelito','San Miguelito interno','Barrio/sector',NULL,'Z6 San Miguelito interno','Media',NULL,'avenida transistmica sector paraiso',NULL),
+  ('Belisario Porras','Samaria','San Miguelito','San Miguelito interno','Barrio/sector',NULL,'Z6 San Miguelito interno','Media','Validar seguridad/horario y punto exacto.','samaria',NULL),
+  ('Belisario Porras','Samaria Sinaí','San Miguelito','San Miguelito interno','Barrio/sector',NULL,'Z6 San Miguelito interno','Media','Validar seguridad/horario y punto exacto.','samaria sinai',NULL),
+  ('Belisario Porras','El Poderoso','San Miguelito','San Miguelito interno','Barrio/sector',NULL,'Z6 San Miguelito interno','Media','Validar seguridad/horario y punto exacto.','el poderoso',NULL),
+  ('Belisario Porras','Nueva Libia','San Miguelito','San Miguelito interno','Barrio/sector',NULL,'Z6 San Miguelito interno','Media','Validar seguridad/horario y punto exacto.','nueva libia',NULL),
+  ('Belisario Porras','Belisario Porras centro','San Miguelito','San Miguelito interno','Barrio/sector',NULL,'Z6 San Miguelito interno','Media','Validar seguridad/horario y punto exacto.','belisario porras centro',NULL),
+  ('Belisario Porras','Roberto Durán parte Belisario Porras','San Miguelito','San Miguelito interno','Barrio/sector',NULL,'Z6 San Miguelito interno','Media','Validar seguridad/horario y punto exacto.','roberto duran parte belisario porras',NULL),
+  ('Belisario Porras','La Fula','San Miguelito','San Miguelito interno','Barrio/sector',NULL,'Z6 San Miguelito interno','Media','Validar seguridad/horario y punto exacto.','la fula',NULL),
+  ('Belisario Porras','Sector 4 de Samaria','San Miguelito','San Miguelito interno','Barrio/sector',NULL,'Z6 San Miguelito interno','Media','Validar seguridad/horario y punto exacto.','sector 4 de samaria',NULL),
+  ('Belisario Frías','Santa Marta','San Miguelito','San Miguelito interno','Barrio/sector',NULL,'Z6 San Miguelito interno','Alta','Comunidades tomadas de Ley 21; confirmar sector exacto.','santa marta',NULL),
+  ('Belisario Frías','Las Colinas','San Miguelito','San Miguelito interno','Barrio/sector',NULL,'Z6 San Miguelito interno','Alta','Comunidades tomadas de Ley 21; confirmar sector exacto.','las colinas',NULL),
+  ('Belisario Frías','20 de Diciembre','San Miguelito','San Miguelito interno','Barrio/sector',NULL,'Z6 San Miguelito interno','Alta','Comunidades tomadas de Ley 21; confirmar sector exacto.','20 de diciembre',NULL),
+  ('Belisario Frías','Torrijos Carter','San Miguelito','San Miguelito interno','Barrio/sector',NULL,'Z6 San Miguelito interno','Alta','Comunidades tomadas de Ley 21; confirmar sector exacto.','torrijos carter',NULL),
+  ('Belisario Frías','El Esfuerzo','San Miguelito','San Miguelito interno','Barrio/sector',NULL,'Z6 San Miguelito interno','Alta','Comunidades tomadas de Ley 21; confirmar sector exacto.','el esfuerzo',NULL),
+  ('Belisario Frías','El Mirador','San Miguelito','San Miguelito interno','Barrio/sector',NULL,'Z6 San Miguelito interno','Alta','Comunidades tomadas de Ley 21; confirmar sector exacto.','el mirador',NULL),
+  ('Belisario Frías','Roberto Durán parte Belisario Frías','San Miguelito','San Miguelito interno','Barrio/sector',NULL,'Z6 San Miguelito interno','Alta','Comunidades tomadas de Ley 21; confirmar sector exacto.','roberto duran parte belisario frias',NULL),
+  ('Belisario Frías','Barriada 2000','San Miguelito','San Miguelito interno','Barrio/sector',NULL,'Z6 San Miguelito interno','Alta','Comunidades tomadas de Ley 21; confirmar sector exacto.','barriada 2000',NULL),
+  ('Belisario Frías','Rogelio Sinán','San Miguelito','San Miguelito interno','Barrio/sector',NULL,'Z6 San Miguelito interno','Alta','Comunidades tomadas de Ley 21; confirmar sector exacto.','rogelio sinan',NULL),
+  ('Belisario Frías','Cerro Batea','San Miguelito','San Miguelito interno','Barrio/sector',NULL,'Z6 San Miguelito interno','Alta','Comunidades tomadas de Ley 21; confirmar sector exacto.','cerro batea',NULL),
+  ('Omar Torrijos','Santa Librada parte','San Miguelito','San Miguelito interno','Barrio/sector',NULL,'Z6 San Miguelito interno','Alta','Comunidades tomadas de Ley 21; zona con accesos variables.','santa librada parte',NULL),
+  ('Omar Torrijos','Villa Cárdenas','San Miguelito','San Miguelito interno','Barrio/sector',NULL,'Z6 San Miguelito interno','Alta','Comunidades tomadas de Ley 21; zona con accesos variables.','villa cardenas',NULL),
+  ('Omar Torrijos','El Porvenir','San Miguelito','San Miguelito interno','Barrio/sector',NULL,'Z6 San Miguelito interno','Alta','Comunidades tomadas de Ley 21; zona con accesos variables.','el porvenir',NULL),
+  ('Omar Torrijos','Villa Esperanza','San Miguelito','San Miguelito interno','Barrio/sector',NULL,'Z6 San Miguelito interno','Alta','Comunidades tomadas de Ley 21; zona con accesos variables.','villa esperanza',NULL),
+  ('Omar Torrijos','Los Andes No. 2','San Miguelito','San Miguelito interno','Barrio/sector',NULL,'Z6 San Miguelito interno','Alta','Comunidades tomadas de Ley 21; zona con accesos variables.','los andes no. 2',NULL),
+  ('Omar Torrijos','Chivo Chivo','San Miguelito','San Miguelito interno','Barrio/sector',NULL,'Z6 San Miguelito interno','Alta','Comunidades tomadas de Ley 21; zona con accesos variables.','chivo chivo',NULL),
+  ('Omar Torrijos','Mocambo Abajo parte sur','San Miguelito','San Miguelito interno','Barrio/sector',NULL,'Z6 San Miguelito interno','Alta','Comunidades tomadas de Ley 21; zona con accesos variables.','mocambo abajo parte sur',NULL),
+  ('Omar Torrijos','El Valle','San Miguelito','San Miguelito interno','Barrio/sector',NULL,'Z6 San Miguelito interno','Alta','Comunidades tomadas de Ley 21; zona con accesos variables.','el valle',NULL),
+  ('Omar Torrijos','El Valle de San Isidro','San Miguelito','San Miguelito interno','Barrio/sector',NULL,'Z6 San Miguelito interno','Alta','Comunidades tomadas de Ley 21; zona con accesos variables.','el valle de san isidro',NULL),
+  ('Omar Torrijos','San Isidro','San Miguelito','San Miguelito interno','Barrio/sector',NULL,'Z6 San Miguelito interno','Alta','Comunidades tomadas de Ley 21; zona con accesos variables.','san isidro',NULL),
+  ('Omar Torrijos','Sonsonate','San Miguelito','San Miguelito interno','Barrio/sector',NULL,'Z6 San Miguelito interno','Alta','Comunidades tomadas de Ley 21; zona con accesos variables.','sonsonate',NULL),
+  ('Omar Torrijos','Tinajitas','San Miguelito','San Miguelito interno','Barrio/sector',NULL,'Z6 San Miguelito interno','Alta','Comunidades tomadas de Ley 21; zona con accesos variables.','tinajitas',NULL),
+  ('Omar Torrijos','Villa Georgina','San Miguelito','San Miguelito interno','Barrio/sector',NULL,'Z6 San Miguelito interno','Alta','Comunidades tomadas de Ley 21; zona con accesos variables.','villa georgina',NULL),
+  ('Omar Torrijos','Los Cipreses','San Miguelito','San Miguelito interno','Barrio/sector',NULL,'Z6 San Miguelito interno','Alta','Comunidades tomadas de Ley 21; zona con accesos variables.','los cipreses',NULL),
+  ('Omar Torrijos','Campo Verde','San Miguelito','San Miguelito interno','Barrio/sector',NULL,'Z6 San Miguelito interno','Alta','Comunidades tomadas de Ley 21; zona con accesos variables.','campo verde',NULL),
+  ('Arnulfo Arias','Roberto Durán parte Arnulfo Arias','San Miguelito','San Miguelito interno','Barrio/sector',NULL,'Z6 San Miguelito interno','Alta','Comunidades tomadas de Ley 21; confirmar ruta.','roberto duran parte arnulfo arias',NULL),
+  ('Arnulfo Arias','El Valle de Urracá','San Miguelito','San Miguelito interno','Barrio/sector',NULL,'Z6 San Miguelito interno','Alta','Comunidades tomadas de Ley 21; confirmar ruta.','el valle de urraca',NULL),
+  ('Arnulfo Arias','Loma Bonita','San Miguelito','San Miguelito interno','Barrio/sector',NULL,'Z6 San Miguelito interno','Alta','Comunidades tomadas de Ley 21; confirmar ruta.','loma bonita',NULL),
+  ('Arnulfo Arias','El Vallecito','San Miguelito','San Miguelito interno','Barrio/sector',NULL,'Z6 San Miguelito interno','Alta','Comunidades tomadas de Ley 21; confirmar ruta.','el vallecito',NULL),
+  ('Arnulfo Arias','La Paz','San Miguelito','San Miguelito interno','Barrio/sector',NULL,'Z6 San Miguelito interno','Alta','Comunidades tomadas de Ley 21; confirmar ruta.','la paz',NULL),
+  ('Arnulfo Arias','Buena Vista','San Miguelito','San Miguelito interno','Barrio/sector',NULL,'Z6 San Miguelito interno','Alta','Comunidades tomadas de Ley 21; confirmar ruta.','buena vista',NULL),
+  ('Arnulfo Arias','La Felicidad','San Miguelito','San Miguelito interno','Barrio/sector',NULL,'Z6 San Miguelito interno','Alta','Comunidades tomadas de Ley 21; confirmar ruta.','la felicidad',NULL),
+  ('Arnulfo Arias','El Futuro','San Miguelito','San Miguelito interno','Barrio/sector',NULL,'Z6 San Miguelito interno','Alta','Comunidades tomadas de Ley 21; confirmar ruta.','el futuro',NULL),
+  ('Arnulfo Arias','Colinas del Golf','San Miguelito','San Miguelito interno','Barrio/sector',NULL,'Z6 San Miguelito interno','Alta','Comunidades tomadas de Ley 21; confirmar ruta.','colinas del golf',NULL),
+  ('Arnulfo Arias','Cerro Cocobolo','San Miguelito','San Miguelito interno','Barrio/sector',NULL,'Z6 San Miguelito interno','Alta','Comunidades tomadas de Ley 21; confirmar ruta.','cerro cocobolo',NULL),
+  ('Arnulfo Arias','Comarca Emberá','San Miguelito','San Miguelito interno','Barrio/sector',NULL,'Z6 San Miguelito interno','Alta','Comunidades tomadas de Ley 21; confirmar ruta.','comarca embera',NULL),
+  ('Arnulfo Arias','Altos del Sol','San Miguelito','San Miguelito interno','Barrio/sector',NULL,'Z6 San Miguelito interno','Alta','Comunidades tomadas de Ley 21; confirmar ruta.','altos del sol',NULL),
+  ('Arnulfo Arias','Palma de Oro','San Miguelito','San Miguelito interno','Barrio/sector',NULL,'Z6 San Miguelito interno','Alta','Comunidades tomadas de Ley 21; confirmar ruta.','palma de oro',NULL),
+  ('Betania','Nuevo Paraíso','Panamá','Centro','Barrio/urbanización',NULL,'Z1 Centro','Media','Barrio agregado (granularidad Betania); validar dirección exacta.','nuevo paraiso',NULL),
+  ('Betania','Pribanco','Panamá','Centro','Barrio/urbanización',NULL,'Z1 Centro','Media','Barrio agregado (granularidad Betania); validar dirección exacta.','pribanco',NULL),
+  ('Betania','Residencial Sara Sotillo','Panamá','Centro','Barrio/urbanización',NULL,'Z1 Centro','Media','Barrio agregado (granularidad Betania); validar dirección exacta.','residencial sara sotillo',NULL),
+  ('Betania','San Antonio','Panamá','Centro','Barrio/urbanización',NULL,'Z1 Centro','Media','Barrio agregado (granularidad Betania). OJO: existe otro sector con este nombre en otra zona/tarifa; el resolver lo marca ambiguo si el cliente no da el corregimiento.','san antonio',NULL),
+  ('Betania','San José','Panamá','Centro','Barrio/urbanización',NULL,'Z1 Centro','Media','Barrio agregado (granularidad Betania). OJO: existe otro sector con este nombre en otra zona/tarifa; el resolver lo marca ambiguo si el cliente no da el corregimiento.','san jose',NULL),
+  ('Betania','Santa María','Panamá','Centro','Barrio/urbanización',NULL,'Z1 Centro','Media','Barrio agregado (granularidad Betania); validar dirección exacta.','santa maria',NULL),
+  ('Betania','Urbanización Colonial','Panamá','Centro','Barrio/urbanización',NULL,'Z1 Centro','Media','Barrio agregado (granularidad Betania); validar dirección exacta.','urbanizacion colonial',NULL),
+  ('Betania','Urbanización Industrial','Panamá','Centro','Barrio/urbanización',NULL,'Z1 Centro','Media','Barrio agregado (granularidad Betania); validar dirección exacta.','urbanizacion industrial',NULL),
+  ('Betania','Urbanización Las Mercedes','Panamá','Centro','Barrio/urbanización',NULL,'Z1 Centro','Media','Barrio agregado (granularidad Betania); validar dirección exacta.','urbanizacion las mercedes',NULL),
+  ('Betania','Villa de las Fuentes No. 1','Panamá','Centro','Barrio/urbanización',NULL,'Z1 Centro','Media','Barrio agregado (granularidad Betania); validar dirección exacta.','villa de las fuentes no. 1',NULL),
+  ('Betania','Villa de las Fuentes No. 2','Panamá','Centro','Barrio/urbanización',NULL,'Z1 Centro','Media','Barrio agregado (granularidad Betania); validar dirección exacta.','villa de las fuentes no. 2',NULL),
+  ('Betania','Villa Soberanía','Panamá','Centro','Barrio/urbanización',NULL,'Z1 Centro','Media','Barrio agregado (granularidad Betania); validar dirección exacta.','villa soberania',NULL),
+  ('Betania','Altos del Chase','Panamá','Centro','Barrio/urbanización',NULL,'Z1 Centro','Media','Barrio agregado (granularidad Betania); validar dirección exacta.','altos del chase',NULL),
+  ('Betania','Colinas de Miraflores','Panamá','Centro','Barrio/urbanización',NULL,'Z1 Centro','Media','Barrio agregado (granularidad Betania); validar dirección exacta.','colinas de miraflores',NULL),
+  ('Betania','Condado del Rey','Panamá','Centro','Barrio/urbanización',NULL,'Z1 Centro','Media','Barrio agregado (granularidad Betania). Condado del Rey se extiende al norte; validar si la parte lejana (hacia Transístmica) debe ir a zona extendida/Servientrega.','condado del rey',NULL),
+  ('Betania','Corona Gardens','Panamá','Centro','Barrio/urbanización',NULL,'Z1 Centro','Media','Barrio agregado (granularidad Betania); validar dirección exacta.','corona gardens',NULL),
+  ('Betania','Correza 1','Panamá','Centro','Barrio/urbanización',NULL,'Z1 Centro','Media','Barrio agregado (granularidad Betania); validar dirección exacta.','correza 1',NULL),
+  ('Betania','Correza 2','Panamá','Centro','Barrio/urbanización',NULL,'Z1 Centro','Media','Barrio agregado (granularidad Betania); validar dirección exacta.','correza 2',NULL),
+  ('Betania','El Ingenio','Panamá','Centro','Barrio/urbanización',NULL,'Z1 Centro','Media','Barrio agregado (granularidad Betania); validar dirección exacta.','el ingenio',NULL),
+  ('Betania','El Milagro','Panamá','Centro','Barrio/urbanización',NULL,'Z1 Centro','Media','Barrio agregado (granularidad Betania); validar dirección exacta.','el milagro',NULL),
+  ('Betania','La Gloria','Panamá','Centro','Barrio/urbanización',NULL,'Z1 Centro','Media','Barrio agregado (granularidad Betania); validar dirección exacta.','la gloria',NULL),
+  ('Betania','La Locería','Panamá','Centro','Barrio/urbanización',NULL,'Z1 Centro','Media','Barrio agregado (granularidad Betania); validar dirección exacta.','la loceria',NULL);
+
+
+-- ================= RESOLVER — una sola lógica para todos los consumidores =================
+-- resolver_tarifa(p_lugar) normaliza el texto del cliente (mismas reglas que barrio_norm), matchea contra
+-- barrio y alias, y devuelve un VEREDICTO en jsonb. El bot lo llama vía sb.rpc('resolver_tarifa',...); el
+-- futuro Carrier Service de Shopify llamará el MISMO. security definer + solo service_role.
+--   estado 'ok'       -> todos los matches comparten tarifa/método: {tarifa_usd, metodo, plazo, zona, confianza, sectores[]}
+--   estado 'ambiguo'  -> el nombre cae en >1 tarifa (ej. "San José": Betania $6 vs Mañanitas $9) -> {opciones[]}
+--   estado 'sin_match'-> no se encontró -> el bot cae al genérico ("desde B/.6.00, un asesor confirma")
+create or replace function public.resolver_tarifa(p_lugar text)
+returns jsonb
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  q text;
+  v jsonb;
+begin
+  -- normaliza el input igual que barrio_norm (minúsculas + sin acentos, sin depender de la extensión unaccent)
+  q := lower(translate(coalesce(p_lugar,''),
+        'áàäâéèëêíìïîóòöôúùüûñ','aaaaeeeeiiiioooouuuun'));
+  q := btrim(regexp_replace(q, '\s+', ' ', 'g'));
+  if length(q) < 2 then
+    return jsonb_build_object('estado','sin_match','consulta',q);
+  end if;
+
+  -- CTE (no temp table): evita el 'on commit drop' que choca si se corren varias consultas en un batch.
+  -- Ranking por relevancia: un match EXACTO de corregimiento/barrio/alias (score 3) le gana al parcial
+  -- (score 1). Así "tocumen" resuelve al corregimiento Tocumen ($9) y no queda ambiguo por el barrio
+  -- "Plaza Tocumen sector Don Bosco". Solo se conserva el tier más alto que haya matcheado.
+  with base as (
+    select s.corregimiento, s.barrio, s.zona, z.tarifa_base_usd, z.metodo, z.plazo, s.validacion,
+           lower(translate(s.corregimiento,'áàäâéèëêíìïîóòöôúùüûñ','aaaaeeeeiiiioooouuuun')) as correg_norm,
+           s.barrio_norm as bn, coalesce(s.alias_norm,'') as an
+    from public.sectores_entrega s
+    join public.zonas_entrega z on z.zona = s.zona
+  ),
+  scored as (
+    select base.*,
+      case
+        when correg_norm = q or bn = q or an = q then 3
+        when bn like '%'||q||'%' or q like '%'||bn||'%'
+             or (an <> '' and (an like '%'||q||'%' or q like '%'||an||'%')) then 1
+        else 0
+      end as score
+    from base
+  ),
+  m as (
+    select * from scored where score = (select max(score) from scored where score > 0)
+  )
+  select
+    case
+      when not exists (select 1 from m) then
+        jsonb_build_object('estado','sin_match','consulta',q)
+      -- todos los matches comparten tarifa (y por ende método/plazo, que derivan de la zona) -> veredicto único
+      when (select count(distinct tarifa_base_usd) from m) = 1 then
+        (select jsonb_build_object(
+          'estado','ok','consulta',q,
+          'tarifa_usd', min(tarifa_base_usd), 'metodo', min(metodo), 'plazo', min(plazo), 'zona', min(zona),
+          'confianza', case when bool_or(validacion = 'Media') then 'Media' else 'Alta' end,
+          'sectores', (select jsonb_agg(distinct corregimiento || ': ' || barrio) from m))
+         from m)
+      -- el nombre cae en >1 tarifa (ej. "San José": Betania $6 vs Mañanitas $9) -> pedir desambiguación
+      else
+        jsonb_build_object('estado','ambiguo','consulta',q,
+          'opciones', (select jsonb_agg(distinct jsonb_build_object(
+            'corregimiento',corregimiento,'zona',zona,'tarifa_usd',tarifa_base_usd,'metodo',metodo,'plazo',plazo)) from m))
+    end
+  into v;
+  return v;
+end;
+$$;
+
+revoke all on function public.resolver_tarifa(text) from public;
+grant execute on function public.resolver_tarifa(text) to service_role;
+
+-- Verificación rápida (correr aparte y comparar):
+--   select public.resolver_tarifa('el dorado');          -- ok  $6 propia (Betania)
+--   select public.resolver_tarifa('tocumen');            -- ok  $9 servientrega
+--   select public.resolver_tarifa('san jose');           -- ambiguo ($6 Betania vs $9 Mañanitas)
+--   select public.resolver_tarifa('chilibre');           -- ok  $9 servientrega (Norte)
+--   select public.resolver_tarifa('coronado');           -- sin_match (Oeste no está: un asesor cotiza)
