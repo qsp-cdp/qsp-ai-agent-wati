@@ -1,9 +1,9 @@
 # CLAUDE.md — Copiloto AI de WhatsApp (WATI) · Quick Service Panamá
 
 > Contexto base para Claude Code trabajando en ESTE repo. Lee esto primero.
-> Generado 2026-06-15; actualizado 2026-07-02 (v45 en el repo —endurecimiento quirúrgico: fix eco de
-> despedida, políticas comerciales, SKU sueltos fuerzan tool, garantía general→info_tienda, PII fuera de
-> job_log, golden tests—; v44 EN VIVO —inventario confirmado con clientes reales—, probando Sonnet 5) +
+> Generado 2026-06-15; actualizado 2026-07-02 (v46 en el repo —sucursales del interior: explicar el
+> PROCESO de envío+retiro por Servientrega, no soltar el dato; v45 EN VIVO —endurecimiento quirúrgico,
+> `COPILOT_WEBHOOK_KEY` ya endurecida—, probando Sonnet 5) +
 > esquema del proyecto Supabase. Docs de diseño originales en el repo
 > `qsp-cdp/qsp-cdp-docs` (`docs/design/2026-06-12-proyecto-copilot-wati.md` y
 > `docs/design/2026-06-13-copilot-analisis-sombra-prompt-v2.md`).
@@ -14,10 +14,12 @@ equipo humano: contesta preguntas generales, indica disponibilidad/stock y da pr
 con certeza, y calla/deriva cuando es mejor que responda un humano. Tienda:
 **quickservicepanama.com** (suministros de impresión y tecnología en Panamá).
 
-## Estado actual (2026-07-01)
-- **EN VIVO: `copilot-webhook` v44 (`v44-inv-selftest-antifuga`), ACTIVE.** Desplegado con `verify_jwt=false`
-  (incluye v40–v43: `.trim()` a secretos, trato de usted, guardrails, sucursales del interior; + v44 autotest
-  de inventario y guard anti-fuga de tool-call). **INVENTARIO RESUELTO (01-jul):** el stock derivaba en TODOS
+## Estado actual (2026-07-02)
+- **EN VIVO: `copilot-webhook` v45 (`v45-endurecimiento-quirurgico`), ACTIVE.** Desplegado con `verify_jwt=false`
+  (incluye v40–v44: `.trim()` a secretos, trato de usted, guardrails, sucursales del interior, autotest de
+  inventario y guard anti-fuga; + v45 endurecimiento quirúrgico — ver detalle abajo). **`COPILOT_WEBHOOK_KEY`
+  YA ENDURECIDA** (02-jul): secreto aleatorio + URL actualizada en WATI, verificado con tráfico real
+  (`webhook_key_es_default:false`). **INVENTARIO RESUELTO (01-jul):** el stock derivaba en TODOS
   los productos por un token de Shopify viejo; se subió un token nuevo (15:39) y el deploy de v44 (16:05)
   reinició la instancia y lo cargó. El autotest lo confirmó desde adentro (`diagnostico:ok_inventario_visible`,
   HTTP 200, PG-145XL `totalInventory:87`); como el bot usa el MISMO token y la MISMA consulta, ya muestra la
@@ -39,7 +41,22 @@ con certeza, y calla/deriva cuando es mejor que responda un humano. Tienda:
   autotest (`?selftest=inventario`) dio `ok_inventario_visible` con PG-145XL `totalInventory:87` → el token
   nuevo funciona y el inventario ya se muestra. (Hallazgo aparte: `COPILOT_WEBHOOK_KEY` no estaba en secrets
   → ✅ **endurecido el 02-jul** tras desplegar v45: secreto aleatorio + WATI actualizado + verificado.)
-- **EN EL REPO, LISTO PARA DESPLEGAR: v45 (`v45-endurecimiento-quirurgico`).** Paquete quirúrgico de la
+- **EN EL REPO, LISTO PARA DESPLEGAR: v46 (`v46-sucursales-proceso`).** Reporte real de un cliente en
+  Santiago: el bot respondió *"Sí, en Santiago tenemos el punto CDS Santiago, teléfono…"* — sonaba a que
+  QSP tiene tienda propia ahí, en vez de explicar que el pedido SE ENVÍA por Servientrega y se retira en
+  ese punto. Causa: el prompt (desde v43) decía "responde SOLO con los puntos que devuelva" — dato suelto,
+  sin el proceso; la tool `sucursales_interior` ya traía todo lo necesario (provincia/nombre/datos), no
+  hacía falta tocar código. Fix de PROMPT: nueva instrucción explícita — arma la respuesta como "puede
+  enviarlo a [ciudad] ([provincia]) y retirarlo en el punto Servientrega [nombre]" + teléfono/horario;
+  PROHÍBE decir "tenemos el punto/sucursal en [ciudad]"; aclara que QSP NO tiene tiendas en el interior;
+  combina con `info_tienda` (`plazo_interior`) en la misma respuesta si aporta. De paso, la página web
+  (`web/envios-interior-sucursal.html`) tenía el MISMO "tenemos 45 puntos" → corregido a "trabajamos con
+  la red Servientrega, que tiene 45 puntos…" (la página NO la lee el bot, pero un cliente que la abra
+  tendría la misma confusión un piso más arriba del texto que ya explica el proceso en 4 pasos). 2 golden
+  tests nuevos (112 en total) que verifican que la frase prohibida esté explícitamente vetada en el prompt
+  y que la explicación del proceso (Servientrega) esté presente — regresión imposible de colar en silencio.
+  Solo prompt + copy; sin cambios de lógica/esquema. Reescribe el caché de v35 (re-warm puntual).
+- **DESPLEGADO (02-jul): v45 (`v45-endurecimiento-quirurgico`).** Paquete quirúrgico de la
   auditoría del 02-jul (día completo: 205 msgs, 44 convs, inventario ya mostrando cantidades, 0 críticos)
   + una consultoría externa (ChatGPT) CONTRASTADA contra el código — se adoptó lo verificado, se difirió lo
   riesgoso. Adoptado: (1) **fix eco de despedida de handoff** (bug real, 2 casos: se insertaba después de

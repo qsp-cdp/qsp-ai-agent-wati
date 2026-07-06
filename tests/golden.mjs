@@ -1,4 +1,4 @@
-// tests/golden.mjs — golden tests del copilot-webhook (v45).
+// tests/golden.mjs — golden tests del copilot-webhook (v46).
 // Extrae los REGEX y helpers puros del index.ts REAL (no copias que se desactualicen) y corre casos
 // dorados. Así el deploy sigue siendo de UN solo archivo (el dashboard/Browse pega index.ts tal cual)
 // y aun así hay una suite que corre antes de cada deploy:  node tests/golden.mjs
@@ -46,6 +46,14 @@ function extraerFuncion(nombre) {
   return eval(`(${fn})`);
 }
 
+function extraerSystemPrompt() {
+  const ini = src.indexOf("const SYSTEM_PROMPT = `");
+  if (ini < 0) throw new Error("no encontré la const SYSTEM_PROMPT");
+  const fin = src.indexOf("`;", ini);
+  if (fin < 0) throw new Error("no encontré el cierre de SYSTEM_PROMPT");
+  return src.slice(ini + "const SYSTEM_PROMPT = `".length, fin);
+}
+
 const NEEDS_TOOL_RE = extraerConst("NEEDS_TOOL_RE");
 const HANDOFF_RE = extraerConst("HANDOFF_RE");
 const INTERRUPT_RE = extraerConst("INTERRUPT_RE");
@@ -56,6 +64,7 @@ const conItbms = extraerFuncion("conItbms");
 const stockTexto = extraerFuncion("stockTexto");
 const pareceFuncionEnTexto = extraerFuncion("pareceFuncionEnTexto");
 const limpiarWhatsApp = extraerFuncion("limpiarWhatsApp");
+const SYSTEM_PROMPT = extraerSystemPrompt();
 
 // --- harness -------------------------------------------------------------------------------------
 let ok = 0, mal = 0;
@@ -149,6 +158,17 @@ caso("pareceFuncionEnTexto detecta name=tool", pareceFuncionEnTexto('llamo a nam
 caso("pareceFuncionEnTexto ignora texto normal", !pareceFuncionEnTexto("Sí, tenemos el TN-730 a $70.00 + ITBMS."));
 caso("limpiarWhatsApp link md → URL", limpiarWhatsApp("[ver](https://x.com/a)") === "https://x.com/a");
 caso("limpiarWhatsApp ** → *", limpiarWhatsApp("**hola**") === "*hola*");
+
+// --- SYSTEM_PROMPT: guards de contenido (v46) ------------------------------------------------------
+console.log("SYSTEM_PROMPT");
+// v46: bug real — el bot decía "tenemos el punto/sucursal en [ciudad]" (suena a tienda propia de QSP)
+// en vez de explicar que el pedido se ENVÍA por Servientrega. Guard de regresión: la frase prohibida no
+// debe reaparecer, y la instrucción del proceso sí debe estar.
+// (la frase SÍ aparece una vez, dentro de la instrucción "NUNCA digas..." — eso es lo que se verifica)
+caso('SYSTEM_PROMPT prohíbe explícitamente "tenemos el punto/sucursal"', /NUNCA digas "tenemos el punto/i.test(SYSTEM_PROMPT));
+caso('SYSTEM_PROMPT explica el proceso de envío (Servientrega)', /red de Servientrega/i.test(SYSTEM_PROMPT));
+caso('SYSTEM_PROMPT dice trato de usted (no tutea)', /TRATO DE USTED/i.test(SYSTEM_PROMPT));
+caso('SYSTEM_PROMPT NO tiene el tuteo viejo de v41 ("te la mandamos")', !/te la mandamos/i.test(SYSTEM_PROMPT));
 
 // --- resumen --------------------------------------------------------------------------------------
 console.log(`\n${ok} OK, ${mal} FALLA${mal === 1 ? "" : "S"}`);

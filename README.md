@@ -21,7 +21,7 @@ sombra por seguridad.
 CLAUDE.md                                  # contexto autoritativo (leer primero)
 docs/base-conocimiento-qsp.md              # base de conocimiento del negocio (fuente → prompt + store_facts)
 supabase/
-  functions/copilot-webhook/index.ts       # la edge function (v45 en repo; v44 EN VIVO, probando Sonnet 5)
+  functions/copilot-webhook/index.ts       # la edge function (v46 en repo; v45 EN VIVO, probando Sonnet 5)
 tests/golden.mjs                            # golden tests (regex + helpers, extraídos del index.ts real) — node tests/golden.mjs
   migrations/*.sql                          # esquema reproducible (8 migraciones)
 deploy.ps1                                  # deploy byte-exacto por CLI + verificación de healthcheck
@@ -30,12 +30,12 @@ web/
 ```
 
 ## Estado
-- Edge function `copilot-webhook` **v44 (`v44-inv-selftest-antifuga`), ACTIVE** — EN VIVO a todos (incluye
-  v40–v43: `.trim()` a secretos, trato de usted, guardrails, sucursales del interior). Coexistencia validada
-  (v15) · visión (v19) · endurecimiento anti-duplicado / anti-carrera / MODE-seguro (v20). **Probando Claude
-  Sonnet 5** (`COPILOT_MODEL=claude-sonnet-5`; revertir = flipear a 4.6). **Inventario RESUELTO (01-jul):** el
-  stock derivaba por un token de Shopify viejo; se subió un token nuevo y el deploy de v44 lo cargó, y el
-  autotest (`?selftest=inventario`) lo confirmó (`ok_inventario_visible`, PG-145XL=87).
+- Edge function `copilot-webhook` **v45 (`v45-endurecimiento-quirurgico`), ACTIVE** — EN VIVO a todos (incluye
+  v40–v44: `.trim()` a secretos, trato de usted, guardrails, sucursales del interior, autotest de inventario,
+  guard anti-fuga). Coexistencia validada (v15) · visión (v19) · endurecimiento anti-duplicado / anti-carrera /
+  MODE-seguro (v20). **Probando Claude Sonnet 5** (`COPILOT_MODEL=claude-sonnet-5`; revertir = flipear a 4.6).
+  **Inventario RESUELTO (01-jul):** confirmado con clientes reales. **`COPILOT_WEBHOOK_KEY` endurecida (02-jul):**
+  secreto real + WATI actualizado, verificado con tráfico en vivo. **v46 en repo, listo para desplegar.**
 - **v21:** ITBMS (precio + 7% + total, calculado en código) + inventario real (Shopify Admin
   `totalInventory`; ≤3 → "un asesor verifica") + anti-eco duro (se acabaron los handoffs falsos).
 - **v22:** conciencia de horario (atención Lun-Vie 9am-5pm, Panamá) — fuera de horario aclara
@@ -92,13 +92,19 @@ web/
   PG-145XL=87 → el problema era un token viejo; el nuevo + el restart del deploy lo resolvió). (b) **guard
   anti-fuga de tool-call** — si el modelo escribe la llamada como texto (visto en Sonnet 5), no se envía el
   XML: va la respuesta de respaldo.
-- **v45 (listo para desplegar):** endurecimiento quirúrgico (auditoría 02-jul + consultoría externa
+- **v45 (desplegado 02-jul):** endurecimiento quirúrgico (auditoría 02-jul + consultoría externa
   contrastada): fix del eco de la despedida de handoff (asesor fantasma), políticas comerciales sin fuente ni
   se afirman ni se niegan, SKU sueltos (W1105A, BA1U5LA#ABM…) fuerzan `buscar_producto`, garantía/devolución
   GENERAL → `info_tienda` (el reclamo sigue a humano, sesgo conservador), `.trim()` a todos los secretos,
-  menos PII en `job_log`, tope de payload, `tests/golden.mjs` (108 casos verdes). Endurecido con una revisión
-  adversarial pre-deploy (2 regresiones mayores halladas y corregidas). Correr `node tests/golden.mjs` antes
-  de cada deploy.
+  menos PII en `job_log`, tope de payload, `tests/golden.mjs`. Endurecido con una revisión
+  adversarial pre-deploy (2 regresiones mayores halladas y corregidas).
+- **v46 (listo para desplegar):** un cliente en Santiago preguntó por sucursal y el bot dijo *"tenemos el
+  punto CDS Santiago…"* — sonaba a tienda propia de QSP en vez de explicar el envío por Servientrega. Fix de
+  PROMPT (no de código: la tool ya traía todo): arma la respuesta como "puede enviarlo a [ciudad] y
+  retirarlo en el punto Servientrega [nombre]"; prohíbe explícitamente "tenemos el punto/sucursal en…". De
+  paso, la página `web/envios-interior-sucursal.html` tenía el mismo "tenemos 45 puntos" → corregido.
+  `tests/golden.mjs` (112 casos verdes, 2 nuevos que guardan esta regresión). Correr `node tests/golden.mjs`
+  antes de cada deploy.
 - Auditorías diarias: coexistencia perfecta (0 clientes pisados, 0 ecos falsos). Con Sonnet 5 + caching:
   ~$0.01/turno, ~8 s (02-jul: 119 turnos = $1.17).
 

@@ -1,3 +1,18 @@
+// === copilot-webhook v46 — Copiloto AI de WATI — sucursales del interior: explicar el PROCESO, no el dato ===
+// v46 (2026-07-02): reporte real de un cliente en Santiago — el bot respondió "Sí, en Santiago tenemos el
+//   punto CDS Santiago, teléfono…" y sonaba a que QSP tiene tienda propia ahí, en vez de explicar que el
+//   pedido SE ENVÍA por Servientrega y se retira en ese punto. Causa: el prompt (v43) decía "responde SOLO
+//   con los puntos que devuelva (nombre, teléfono, horario)" — dato suelto, sin el proceso. Fix de PROMPT
+//   (la tool sucursales_interior ya traía provincia/nombre/datos; no hacía falta cambiar el código): nueva
+//   instrucción explícita — arma la respuesta como "puede enviarlo a [ciudad] ([provincia]) y retirarlo en
+//   el punto Servientrega [nombre]" + teléfono/horario; PROHÍBE decir "tenemos el punto/sucursal en
+//   [ciudad]" (implica tienda propia); deja claro que QSP NO tiene tiendas en el interior. También
+//   combina con info_tienda (plazo_interior) en la misma respuesta si aporta. De paso, la página web
+//   (web/envios-interior-sucursal.html) tenía el MISMO "tenemos 45 puntos" — corregido a "trabajamos con
+//   la red Servientrega, que tiene 45 puntos…" (la página NO la lee el bot — WhatsApp usa solo la tool en
+//   código — pero un cliente que la abra tendría la misma confusión un piso más arriba del texto que ya
+//   explica el proceso en 4 pasos). Solo prompt + copy de la página; sin cambios de lógica/esquema.
+//   Reescribe el caché de v35 (re-warm puntual).
 // === copilot-webhook v45 — Copiloto AI de WATI — endurecimiento quirúrgico (auditoría 02-jul + consultoría externa) ===
 // v45 (2026-07-02): paquete quirúrgico, sin tocar lógica de handoff/anti-carrera/caché. De la AUDITORÍA del
 //   02-jul: (1) FIX eco de la despedida fija de handoff — se insertaba DESPUÉS de enviar y SIN `model` (null)
@@ -550,7 +565,7 @@ LOGÍSTICA, PAGOS Y DATOS DE LA TIENDA (envíos, ubicación, horarios, métodos 
 - DISTINGUE métodos vs trámite EN CURSO: explicar QUÉ formas de pago aceptamos o las tarifas de envío (vía info_tienda) está bien; pero COORDINAR el pago o la entrega de un pedido concreto (cuándo paga, a qué cuenta transfiere, cuándo le llega) es un trámite de un asesor. NUNCA te comprometas con "puede pagar hoy", "le llega mañana" ni des una cuenta para transferir: deriva esa coordinación a un asesor.
 - Si info_tienda no tiene el dato (devuelve "sin datos disponibles"): dilo con honestidad y deriva a un asesor para confirmarlo. No prometas plazos ni costos específicos.
 - POLÍTICAS COMERCIALES (descuentos, precios especiales, cliente frecuente, mayoreo/revendedor, crédito): si info_tienda NO trae el dato, NO las afirmes NI las niegues — nada de "no manejamos descuentos" ni "el precio es el mismo para todos" (solo un asesor decide precios especiales, y a veces los da). Di que un asesor le confirma si hay alguna opción para su caso.
-- SUCURSALES DEL INTERIOR (recogida): si el cliente del interior pregunta dónde recoger/retirar o si hay sucursal/agencia en su zona, usa la herramienta sucursales_interior con su provincia o ciudad (ej. "David", "Chiriquí", "Penonomé") y responde SOLO con los puntos que devuelva (nombre, teléfono, horario). NUNCA inventes una sucursal, dirección ni teléfono. Si la ciudad exacta no aparece, deduce la provincia (sabes la geografía de Panamá) y vuelve a consultar por la provincia; si aun así no hay punto, dilo y comparte el listado completo. Para tarifas/plazos del interior usa info_tienda.
+- SUCURSALES DEL INTERIOR (recogida) — EXPLICA EL PROCESO, no sueltes solo el dato: QSP NO tiene tiendas propias en el interior; el envío va por la red de Servientrega (sucursales y agentes/aliados autorizados). Si el cliente del interior pregunta dónde recoger/retirar o si hay sucursal/agencia en su zona, usa la herramienta sucursales_interior con su provincia o ciudad (ej. "David", "Chiriquí", "Penonomé") y arma la respuesta como PROCESO: "puede optar por enviarlo a [ciudad] ([provincia]) y retirarlo en el punto Servientrega [nombre]" + el teléfono y horario que devuelva la tool. NUNCA digas "tenemos el punto/sucursal en [ciudad]" (suena a tienda propia de QSP) — deja claro que el pedido SE ENVÍA ahí para que el cliente lo retire (con su cédula). NUNCA inventes una sucursal, dirección ni teléfono: usa solo lo que devuelva la tool. Si la ciudad exacta no aparece, deduce la provincia (sabes la geografía de Panamá) y vuelve a consultar por la provincia; si aun así no hay punto, dilo y comparte el listado completo. Para tarifas y plazos del interior (cuándo llega) usa info_tienda y súmalo a la misma respuesta si aporta.
 
 SOPORTE TÉCNICO Y REPARACIONES
 - QSP NO ofrece soporte técnico ni servicios de reparación. Si preguntan por reparar/arreglar un equipo, soporte técnico, o que algo "no enciende/no imprime", usa info_tienda y sugiere la empresa de la marca correspondiente que ahí figure; NUNCA inventes teléfonos ni empresas, y si no hay dato, deriva a un asesor.
@@ -1261,7 +1276,7 @@ Deno.serve(async (req) => {
       const diag = await inventarioSelfTest(pid);
       return Response.json({ selftest: "inventario", ...diag, ts: new Date().toISOString() });
     }
-    return Response.json({ status: "ok", function: "copilot-webhook", version: "v45-endurecimiento-quirurgico", mode: MODE, mode_raw: MODE_RAW, model: MODEL, llm_configured: !!anthropic, wati_send_configured: !!(WATI_API_TOKEN && WATI_API_BASE), inventario_configurado: !!(SHOPIFY_ADMIN_TOKEN && SHOPIFY_ADMIN_API_BASE), resolve_configured: !!RESOLVE_SECRET, webhook_key_es_default: WEBHOOK_KEY_ES_DEFAULT, handoff_assist_min: HANDOFF_ASSIST_MIN, handoff_cold_hours: HANDOFF_COLD_HOURS, live_targets: MODE === "live" ? (LIVE_ALL ? "all" : LIVE_ALLOWLIST.length) : 0, ts: new Date().toISOString() });
+    return Response.json({ status: "ok", function: "copilot-webhook", version: "v46-sucursales-proceso", mode: MODE, mode_raw: MODE_RAW, model: MODEL, llm_configured: !!anthropic, wati_send_configured: !!(WATI_API_TOKEN && WATI_API_BASE), inventario_configurado: !!(SHOPIFY_ADMIN_TOKEN && SHOPIFY_ADMIN_API_BASE), resolve_configured: !!RESOLVE_SECRET, webhook_key_es_default: WEBHOOK_KEY_ES_DEFAULT, handoff_assist_min: HANDOFF_ASSIST_MIN, handoff_cold_hours: HANDOFF_COLD_HOURS, live_targets: MODE === "live" ? (LIVE_ALL ? "all" : LIVE_ALLOWLIST.length) : 0, ts: new Date().toISOString() });
   }
   if (req.method !== "POST") return Response.json({ error: "method_not_allowed" }, { status: 405 });
   if (url.searchParams.get("key") !== WEBHOOK_KEY) return Response.json({ error: "forbidden" }, { status: 403 });
