@@ -211,6 +211,19 @@ caso("ambiguo: pide corregimiento y nombra ambas zonas", rSj.estado === "ambiguo
 const rCor = frasearTarifa(V_COR);
 caso("sin_match: nota con interior/asesor", rCor.estado === "sin_match" && /interior|asesor/i.test(rCor.nota));
 
+// --- v47 revisión adversarial pre-deploy: locks de los 2 hallazgos + pulidos ----------------------
+console.log("v47 revisión");
+// F1: tarifa_entrega NO en el whitelist de MODO ASISTENCIA (cotizar compromete un pedido; en asistencia
+// el humano lleva la venta). Chequeo sobre el source real.
+const assistFilter = (src.match(/modoAsistencia \? TOOLS\.filter\(\(t\) =>[^;]*/) || [""])[0];
+caso("asistencia = info_tienda + sucursales_interior", /info_tienda/.test(assistFilter) && /sucursales_interior/.test(assistFilter));
+caso("asistencia NO incluye tarifa_entrega", assistFilter.length > 0 && !/tarifa_entrega/.test(assistFilter));
+// pulido: "domicilio" fuerza tool (para enrutar a tarifa_entrega en la ciudad).
+caso('"¿lo llevan a domicilio?" fuerza tool', NEEDS_TOOL_RE.test("¿lo llevan a domicilio?"));
+// pulido: retiro con puntos_retiro null -> fallback, nunca "(null)" al cliente.
+const rNoPts = frasearTarifa({ estado:"ok", metodo:"retiro_agente_verde", tarifa_usd:6.00, confianza:"Alta", plazo:"x", puntos_retiro:null });
+caso("retiro sin puntos: fallback, no '(null)'", !/\(null\)/.test(rNoPts.respuesta_sugerida) && /punto Servientrega/i.test(rNoPts.respuesta_sugerida));
+
 // --- resumen --------------------------------------------------------------------------------------
 console.log(`\n${ok} OK, ${mal} FALLA${mal === 1 ? "" : "S"}`);
 if (mal > 0) process.exit(1);

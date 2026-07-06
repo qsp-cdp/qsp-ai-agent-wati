@@ -1,9 +1,10 @@
 # CLAUDE.md — Copiloto AI de WhatsApp (WATI) · Quick Service Panamá
 
 > Contexto base para Claude Code trabajando en ESTE repo. Lee esto primero.
-> Generado 2026-06-15; actualizado 2026-07-02 (v46 en el repo —sucursales del interior: explicar el
-> PROCESO de envío+retiro por Servientrega, no soltar el dato; v45 EN VIVO —endurecimiento quirúrgico,
-> `COPILOT_WEBHOOK_KEY` ya endurecida—, probando Sonnet 5) +
+> Generado 2026-06-15; actualizado 2026-07-06 (v47 en el repo —tarifa/método de envío por SECTOR: tool
+> `tarifa_entrega` + DATA LAYER de zonas en Supabase [`zonas_entrega`/`sectores_entrega`/`resolver_tarifa`,
+> 3 migraciones YA APLICADAS]; acumulativo sobre v46 sucursales-proceso [sin desplegar aún]; v45 EN VIVO,
+> probando Sonnet 5) +
 > esquema del proyecto Supabase. Docs de diseño originales en el repo
 > `qsp-cdp/qsp-cdp-docs` (`docs/design/2026-06-12-proyecto-copilot-wati.md` y
 > `docs/design/2026-06-13-copilot-analisis-sombra-prompt-v2.md`).
@@ -41,7 +42,25 @@ con certeza, y calla/deriva cuando es mejor que responda un humano. Tienda:
   autotest (`?selftest=inventario`) dio `ok_inventario_visible` con PG-145XL `totalInventory:87` → el token
   nuevo funciona y el inventario ya se muestra. (Hallazgo aparte: `COPILOT_WEBHOOK_KEY` no estaba en secrets
   → ✅ **endurecido el 02-jul** tras desplegar v45: secreto aleatorio + WATI actualizado + verificado.)
-- **EN EL REPO, LISTO PARA DESPLEGAR: v46 (`v46-sucursales-proceso`).** Reporte real de un cliente en
+- **EN EL REPO, LISTO PARA DESPLEGAR: v47 (`v47-tarifa-envio-sector`).** El bot cotizaba el envío de la
+  ciudad "desde B/.6.00, según el sector varía" y derivaba; peor, prometía "mismo día"/"a domicilio" en zonas
+  donde la ruta Servientrega es impredecible (quejas) o donde NO se hace domicilio (solo retiro). Fix
+  GROUNDED: nueva tool **`tarifa_entrega(lugar)`** que llama al **resolver determinista de Postgres**
+  (`resolver_tarifa`; fuente ÚNICA = tablas `zonas_entrega`/`sectores_entrega`) y **frasea en CÓDIGO**
+  (`frasearTarifa`, pura) según el método REAL de cada zona: entrega propia (mismo día, $6-7), RETIRO en
+  agente verde ($6, este SIN domicilio), puerta a puerta Servientrega ($9) o "un asesor coordina". El resolver
+  desambigua nombres repetidos (San José: $6 Betania vs $6 retiro Mañanitas → pide corregimiento) y respeta la
+  geografía (Summit del Canal NO va a retirar a Tocumen). El **modelo de zonas se decidió paso a paso con
+  Gerencia** (este: Tocumen/Mañanitas/24-Dic retiro $6 sin domicilio; Pacora/Las Garzas/San Martín/Felipillo
+  + Ancón-Canal puerta a puerta $9; Cerro Azul asesor; Z5 Norte $9; interior por Servientrega) y quedó
+  **VALIDADO contra Postgres real** (3 migraciones YA APLICADAS — ver abajo). Best-effort: fuera de la
+  cobertura metro cae a `sucursales_interior`/`info_tienda` o deriva. **Revisión adversarial pre-deploy (2
+  agentes, verificación mecánica):** sacó `tarifa_entrega` de MODO ASISTENCIA (cotizar COMPROMETE un pedido y
+  ahí el humano lleva la venta; `sucursales_interior` sí queda) y aclaró el enrutamiento (retiro de un sector
+  de la CIUDAD = `tarifa_entrega`, no `sucursales_interior`). 125 golden tests. **Acumulativo sobre v46** →
+  desplegar trae v46+v47. `git pull` + `.\deploy.ps1` (o Browse). También corregido `store_facts` (genérico de
+  envío honesto: Tocumen ya no dice $10, "mismo día" con la excepción este/norte).
+- **INCLUIDO EN v47 (acumulativo, aún sin desplegar): v46 (`v46-sucursales-proceso`).** Reporte real de un cliente en
   Santiago: el bot respondió *"Sí, en Santiago tenemos el punto CDS Santiago, teléfono…"* — sonaba a que
   QSP tiene tienda propia ahí, en vez de explicar que el pedido SE ENVÍA por Servientrega y se retira en
   ese punto. Causa: el prompt (desde v43) decía "responde SOLO con los puntos que devuelva" — dato suelto,
@@ -373,7 +392,23 @@ Migraciones (ver `supabase/migrations/`):
 `grants_service_role_tablas`, `conversations_confirmed_new`,
 `store_facts` (Fase 1.5 — **aplicada**, 17 datos reales),
 `20260624180000_ref_codes` (v28 — **aplicada**, stitching WhatsApp→web),
-`20260630160000_messages_cache_tokens` (v38 — **aplicada**, 2 columnas de telemetría de caché).
+`20260630160000_messages_cache_tokens` (v38 — **aplicada**, 2 columnas de telemetría de caché),
+`20260706170000_zonas_entrega` (v47 — **aplicada**, tablas `zonas_entrega`+`sectores_entrega` [419 sectores de
+Panamá+San Miguelito] + RPC `resolver_tarifa`, fuente ÚNICA de envíos por sector),
+`20260706180000_zonas_este_retiro` (v47 — **aplicada**, refactor de la zona este: retiro $6 / puerta $9 / asesor),
+`20260706190000_store_facts_zonas` (v47 — **aplicada**, genérico de envío honesto: Tocumen, "mismo día").
+
+**Data layer de envíos (v47 — fuente única, editable en Supabase):**
+- **zonas_entrega** — `zona` (PK), `tarifa_base_usd` (nullable), `metodo` (`propia`/`servientrega`/
+  `retiro_agente_verde`/`asesor` — el ENRUTADOR: propia→motorizado/Shipday, servientrega→a domicilio,
+  retiro→agente verde, asesor→humano), `plazo`, `puntos_retiro`. 8 zonas (Z1 $6 · Z2/Z3/Z6 $7 propia · Z4a
+  retiro $6 · Z4b puerta $9 · Z4c asesor · Z5 $9).
+- **sectores_entrega** — `corregimiento`+`barrio`+`alias`→`zona`, con `validacion` (Alta/Media) y
+  `barrio_norm`/`alias_norm` (match sin acentos). 419 filas.
+- **RPC `resolver_tarifa(p_lugar)`** → jsonb: normaliza, matchea con ranking (exacto > parcial), devuelve
+  `ok`/`ambiguo`/`sin_match`. `security definer`, solo `service_role`. Lo llaman el bot (tool tarifa_entrega)
+  y —futuro— el Carrier Service de Shopify (una sola lógica, sin duplicar). Arquitectura: Supabase = verdad
+  de la LÓGICA; Shopify/Shipday/Servientrega derivan; nunca se replica el dato a 3 lados.
 
 ## Flujo del webhook (resumen de index.ts)
 1. **GET** = healthcheck (status/version/mode/model/live_targets).
@@ -501,7 +536,16 @@ Reglas clave (texto completo en `index.ts`, const `SYSTEM_PROMPT`):
   `web/envios-interior-sucursal.html`). Match por substring sin acentos contra provincia/nombre; el modelo
   enruta la geografía (David→Chiriquí) y los datos salen de la lista (NO inventa). Sin `lugar` → resumen por
   provincia + URL. Está en código (estática); también disponible en MODO ASISTENCIA. Cierra el "adivinar
-  sucursal" que se vio en la auditoría.
+  sucursal" que se vio en la auditoría. **v47:** su descripción aclara que es SOLO interior/provincias (para
+  un sector de la CIUDAD usa `tarifa_entrega`).
+- **`tarifa_entrega(lugar)`** (v47, lista para desplegar) — costo y MÉTODO de envío a un SECTOR de la Ciudad de
+  Panamá / San Miguelito. Llama al RPC `resolver_tarifa` (data layer de envíos) y **frasea en código**
+  (`frasearTarifa`, pura) según el método: propia mismo día ($6-7), RETIRO en agente verde ($6, este SIN
+  domicilio), puerta a puerta Servientrega ($9), o "un asesor coordina". Devuelve `respuesta_sugerida` +
+  campos; el prompt manda RELAYARLA sin cambiar método/precio y NUNCA ofrecer domicilio donde solo hay retiro.
+  `ambiguo`→pide corregimiento; `sin_match`→interior (`sucursales_interior`)/`info_tienda`/deriva. **NO va en
+  MODO ASISTENCIA** (cotizar compromete un pedido; ahí el humano lleva la venta — decisión de la revisión
+  adversarial). El punto de retiro de un sector de la ciudad sale de AQUÍ, no de `sucursales_interior`.
 - **Visión (v19, desplegada — no es una tool, es entrada multimodal):** las imágenes del
   cliente (`type:image`, `owner=false`) se descargan de WATI (`descargarMediaWati`: campo
   `data` + `Authorization: Bearer WATI_API_TOKEN`, base64, límite ~3.5 MB) y se adjuntan al

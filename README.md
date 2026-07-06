@@ -21,9 +21,9 @@ sombra por seguridad.
 CLAUDE.md                                  # contexto autoritativo (leer primero)
 docs/base-conocimiento-qsp.md              # base de conocimiento del negocio (fuente → prompt + store_facts)
 supabase/
-  functions/copilot-webhook/index.ts       # la edge function (v46 en repo; v45 EN VIVO, probando Sonnet 5)
+  functions/copilot-webhook/index.ts       # la edge function (v47 en repo, incluye v46; v45 EN VIVO, probando Sonnet 5)
 tests/golden.mjs                            # golden tests (regex + helpers, extraídos del index.ts real) — node tests/golden.mjs
-  migrations/*.sql                          # esquema reproducible (8 migraciones)
+  migrations/*.sql                          # esquema reproducible (11 migraciones; v47 añade el data layer de envíos)
 deploy.ps1                                  # deploy byte-exacto por CLI + verificación de healthcheck
 web/
   envios-interior-sucursal.html            # página de envíos al interior (45 sucursales)
@@ -35,7 +35,8 @@ web/
   guard anti-fuga). Coexistencia validada (v15) · visión (v19) · endurecimiento anti-duplicado / anti-carrera /
   MODE-seguro (v20). **Probando Claude Sonnet 5** (`COPILOT_MODEL=claude-sonnet-5`; revertir = flipear a 4.6).
   **Inventario RESUELTO (01-jul):** confirmado con clientes reales. **`COPILOT_WEBHOOK_KEY` endurecida (02-jul):**
-  secreto real + WATI actualizado, verificado con tráfico en vivo. **v46 en repo, listo para desplegar.**
+  secreto real + WATI actualizado, verificado con tráfico en vivo. **v46 + v47 en repo, listos para desplegar
+  (v47 es acumulativo: trae v46).**
 - **v21:** ITBMS (precio + 7% + total, calculado en código) + inventario real (Shopify Admin
   `totalInventory`; ≤3 → "un asesor verifica") + anti-eco duro (se acabaron los handoffs falsos).
 - **v22:** conciencia de horario (atención Lun-Vie 9am-5pm, Panamá) — fuera de horario aclara
@@ -105,6 +106,14 @@ web/
   paso, la página `web/envios-interior-sucursal.html` tenía el mismo "tenemos 45 puntos" → corregido.
   `tests/golden.mjs` (112 casos verdes, 2 nuevos que guardan esta regresión). Correr `node tests/golden.mjs`
   antes de cada deploy.
+- **v47 (listo para desplegar):** tarifa/método de envío por SECTOR. Nueva tool `tarifa_entrega(lugar)` que
+  llama al resolver determinista de Postgres (`resolver_tarifa`; data layer `zonas_entrega`/`sectores_entrega`,
+  3 migraciones aplicadas y validadas contra Postgres real) y **frasea en código** según el método real:
+  entrega propia (mismo día), RETIRO en agente verde ($6, este SIN domicilio), puerta a puerta Servientrega
+  ($9) o "un asesor coordina". Desambigua nombres repetidos y respeta la geografía. Modelo de zonas decidido
+  paso a paso con Gerencia. **Revisión adversarial pre-deploy** (2 agentes): sacó la tool de MODO ASISTENCIA
+  (cotizar compromete un pedido) y aclaró el enrutamiento. 125 golden tests. Arquitectura: Supabase = fuente
+  única de la lógica de envíos; Shopify (Carrier Service) y Shipday la consumirán después. Acumulativo sobre v46.
 - Auditorías diarias: coexistencia perfecta (0 clientes pisados, 0 ecos falsos). Con Sonnet 5 + caching:
   ~$0.01/turno, ~8 s (02-jul: 119 turnos = $1.17).
 

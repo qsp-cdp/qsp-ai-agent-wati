@@ -13,6 +13,11 @@
 //   Disponible también en MODO ASISTENCIA (es info de logística). NEEDS_TOOL_RE ya fuerza tool en
 //   "envío/entrega/delivery/domicilio". Golden tests del fraseo (frasearTarifa, casos mock de cada método).
 //   Requiere las 3 migraciones aplicadas (ya lo están). Reescribe el caché de v35 (re-warm, tools+prompt).
+//   Revisión adversarial pre-deploy (2 agentes, verificación mecánica): (1) se SACÓ tarifa_entrega de MODO
+//   ASISTENCIA — cotizar precio+método+plazo COMPROMETE un pedido y en asistencia el humano lleva la venta
+//   (sucursales_interior sí queda: solo lista puntos); (2) se aclaró el enrutamiento — el punto de retiro de
+//   un SECTOR DE LA CIUDAD (ej. Tocumen) sale de tarifa_entrega, NO de sucursales_interior (solo interior).
+//   + pulidos (domicilio en NEEDS_TOOL_RE, fallback si puntos_retiro fuese null, fmt(null)→""). 125 golden tests.
 // === copilot-webhook v46 — Copiloto AI de WATI — sucursales del interior: explicar el PROCESO, no el dato ===
 // v46 (2026-07-02): reporte real de un cliente en Santiago — el bot respondió "Sí, en Santiago tenemos el
 //   punto CDS Santiago, teléfono…" y sonaba a que QSP tiene tienda propia ahí, en vez de explicar que el
@@ -581,7 +586,7 @@ LOGÍSTICA, PAGOS Y DATOS DE LA TIENDA (envíos, ubicación, horarios, métodos 
 - Si info_tienda no tiene el dato (devuelve "sin datos disponibles"): dilo con honestidad y deriva a un asesor para confirmarlo. No prometas plazos ni costos específicos.
 - POLÍTICAS COMERCIALES (descuentos, precios especiales, cliente frecuente, mayoreo/revendedor, crédito): si info_tienda NO trae el dato, NO las afirmes NI las niegues — nada de "no manejamos descuentos" ni "el precio es el mismo para todos" (solo un asesor decide precios especiales, y a veces los da). Di que un asesor le confirma si hay alguna opción para su caso.
 - SUCURSALES DEL INTERIOR (recogida) — EXPLICA EL PROCESO, no sueltes solo el dato: QSP NO tiene tiendas propias en el interior; el envío va por la red de Servientrega (sucursales y agentes/aliados autorizados). Si el cliente del interior pregunta dónde recoger/retirar o si hay sucursal/agencia en su zona, usa la herramienta sucursales_interior con su provincia o ciudad (ej. "David", "Chiriquí", "Penonomé") y arma la respuesta como PROCESO: "puede optar por enviarlo a [ciudad] ([provincia]) y retirarlo en el punto Servientrega [nombre]" + el teléfono y horario que devuelva la tool. NUNCA digas "tenemos el punto/sucursal en [ciudad]" (suena a tienda propia de QSP) — deja claro que el pedido SE ENVÍA ahí para que el cliente lo retire (con su cédula). NUNCA inventes una sucursal, dirección ni teléfono: usa solo lo que devuelva la tool. Si la ciudad exacta no aparece, deduce la provincia (sabes la geografía de Panamá) y vuelve a consultar por la provincia; si aun así no hay punto, dilo y comparte el listado completo. Para tarifas y plazos del interior (cuándo llega) usa info_tienda y súmalo a la misma respuesta si aporta.
-- COSTO/MÉTODO DE ENVÍO POR SECTOR (Ciudad de Panamá y San Miguelito): cuando el cliente pida cuánto cuesta el envío o cómo le llega a un lugar CONCRETO de la ciudad (su corregimiento o barrio: Tocumen, Betania, Juan Díaz, San Miguelito, Las Cumbres…), usa la herramienta tarifa_entrega con ese lugar y RELAYA su "respuesta_sugerida" (puedes adaptar el tono, pero NUNCA cambies el método ni el precio que devuelve). OJO — el error más grave a evitar: en algunas zonas NO ofrecemos entrega a domicilio, SOLO retiro en un punto Servientrega; dilo tal cual y NO ofrezcas domicilio ahí. Si tarifa_entrega devuelve estado "ambiguo", pregunta en qué corregimiento está; si "sin_match" y el cliente es del INTERIOR, usa sucursales_interior + info_tienda; si "sin_match" y no ubicas el lugar, o "asesor"/"error", deriva a un asesor. Para el costo GENÉRICO de envío (sin un sector concreto) usa info_tienda.
+- COSTO/MÉTODO DE ENVÍO POR SECTOR (Ciudad de Panamá y San Miguelito): cuando el cliente pida cuánto cuesta el envío, cómo le llega, o DÓNDE RETIRAR en un lugar CONCRETO de la ciudad (su corregimiento o barrio: Tocumen, Betania, Juan Díaz, San Miguelito, Las Cumbres…), usa la herramienta tarifa_entrega con ese lugar y RELAYA su "respuesta_sugerida" (puedes adaptar el tono, pero NUNCA cambies el método ni el precio que devuelve). OJO — el error más grave a evitar: en algunas zonas NO ofrecemos entrega a domicilio, SOLO retiro en un punto Servientrega; dilo tal cual y NO ofrezcas domicilio ahí. IMPORTANTE — el punto de retiro de un SECTOR DE LA CIUDAD (ej. "¿dónde retiro en Tocumen?") sale de tarifa_entrega, NO de sucursales_interior (esa herramienta es SOLO para el INTERIOR/provincias). Si tarifa_entrega devuelve estado "ambiguo", pregunta en qué corregimiento está; si "sin_match" y el cliente es del INTERIOR, usa sucursales_interior + info_tienda; si "sin_match" y no ubicas el lugar, o "error"/"sin_dato", deriva a un asesor. (El método "asesor" llega como estado "ok" con la respuesta ya armada: relayala.) Para el costo GENÉRICO de envío (sin un sector concreto) usa info_tienda.
 
 SOPORTE TÉCNICO Y REPARACIONES
 - QSP NO ofrece soporte técnico ni servicios de reparación. Si preguntan por reparar/arreglar un equipo, soporte técnico, o que algo "no enciende/no imprime", usa info_tienda y sugiere la empresa de la marca correspondiente que ahí figure; NUNCA inventes teléfonos ni empresas, y si no hay dato, deriva a un asesor.
@@ -625,11 +630,11 @@ const TOOLS: Anthropic.Tool[] = [{
   input_schema: { type: "object", properties: { email: { type: "string", description: "Correo electrónico del cliente, ej: juan@empresa.com" }, nombre: { type: "string", description: "Nombre (de pila) del cliente" }, apellido: { type: "string", description: "Apellido del cliente" }, empresa: { type: "string", description: "Nombre de la empresa (solo si la compra es para una empresa)" } } },
 } as Anthropic.Tool, {
   name: "sucursales_interior",
-  description: "Puntos de recogida en el INTERIOR del país (red Servientrega, 45 sucursales con teléfono y horario). Úsala cuando el cliente del interior pregunte dónde recoger/retirar, si hay sucursal/agencia/punto en su zona, o pida la ubicación de un punto. Pasa 'lugar' = la provincia o ciudad del cliente (ej. 'Chiriquí', 'David', 'Penonomé', 'Chitré'). Si el cliente da una ciudad y no aparece, deduce TÚ la provincia (sabes la geografía de Panamá) y vuelve a llamarla con la provincia. Devuelve SOLO puntos reales — NUNCA inventes sucursales, direcciones ni teléfonos.",
+  description: "Puntos de recogida en el INTERIOR del país / provincias (red Servientrega, 45 sucursales con teléfono y horario) — NO para la Ciudad de Panamá / San Miguelito (para el retiro o el costo en un sector de la CIUDAD usa tarifa_entrega). Úsala cuando el cliente del interior (David, Chiriquí, Chitré, Bocas, etc.) pregunte dónde recoger/retirar, si hay sucursal/agencia/punto en su zona, o pida la ubicación de un punto. Pasa 'lugar' = la provincia o ciudad del cliente (ej. 'Chiriquí', 'David', 'Penonomé', 'Chitré'). Si el cliente da una ciudad y no aparece, deduce TÚ la provincia (sabes la geografía de Panamá) y vuelve a llamarla con la provincia. Devuelve SOLO puntos reales — NUNCA inventes sucursales, direcciones ni teléfonos.",
   input_schema: { type: "object", properties: { lugar: { type: "string", description: "Provincia o ciudad del cliente (ej. Chiriquí, David, Penonomé, Coclé). Vacío = resumen por provincia." } } },
 } as Anthropic.Tool, {
   name: "tarifa_entrega",
-  description: "Costo y MÉTODO de envío a un SECTOR concreto de la Ciudad de Panamá o San Miguelito (corregimiento o barrio: Tocumen, Betania, Juan Díaz, Las Cumbres, San Miguelito, etc.). Úsala cuando el cliente pida cuánto cuesta el envío o cómo le llega a SU zona y dé un lugar concreto. Pasa 'lugar' = ese corregimiento o barrio. Devuelve un veredicto determinista con 'respuesta_sugerida' ya armada: el método puede ser entrega propia (mismo día), RETIRO en un punto Servientrega (en algunas zonas NO hay domicilio), entrega a domicilio Servientrega, o que lo coordine un asesor. RELAYA la respuesta_sugerida sin cambiar el método ni el precio. NO es para el interior del país (usa sucursales_interior) ni para el costo genérico sin sector (usa info_tienda). Si devuelve 'ambiguo', pregunta el corregimiento; 'sin_match'/'asesor'/'error' → deriva o usa sucursales_interior según indique la nota.",
+  description: "Costo y MÉTODO de envío a un SECTOR concreto de la Ciudad de Panamá o San Miguelito (corregimiento o barrio: Tocumen, Betania, Juan Díaz, Las Cumbres, San Miguelito, etc.). Úsala cuando el cliente pida cuánto cuesta el envío o cómo le llega a SU zona y dé un lugar concreto. Pasa 'lugar' = ese corregimiento o barrio. Devuelve un veredicto determinista con 'respuesta_sugerida' ya armada: el método puede ser entrega propia (mismo día), RETIRO en un punto Servientrega (en algunas zonas NO hay domicilio), entrega a domicilio Servientrega, o que lo coordine un asesor. RELAYA la respuesta_sugerida sin cambiar el método ni el precio. NO es para el interior del país (usa sucursales_interior) ni para el costo genérico sin sector (usa info_tienda). Si devuelve 'ambiguo', pregunta el corregimiento; 'sin_match'/'error' → deriva o usa sucursales_interior según indique la nota (el método 'asesor' llega como 'ok' con la respuesta ya armada).",
   input_schema: { type: "object", properties: { lugar: { type: "string", description: "Corregimiento o barrio del cliente en la Ciudad de Panamá / San Miguelito (ej. Tocumen, Betania, Juan Díaz, Las Cumbres)." } } },
 } as Anthropic.Tool];
 
@@ -670,7 +675,7 @@ const NEEDS_TOOL_RE = new RegExp([
   "impresor", "multifuncional", "\\btinta", "t[oó]ner", "toner", "cartuch", "consumible", "\\bpapel", "resma",
   "precio", "cu[aá]nto", "cuesta", "cotiza", "disponib", "stock", "existenc", "\\bmodelo", "\\bvende", "manejan",
   "epson", "canon", "\\bhp\\b", "brother", "pixma", "ecotank", "workforce", "laserjet", "deskjet", "officejet", "\\bg\\d{3,4}\\b", "\\bl\\d{3,4}\\b", "gi-?\\d",
-  "env[ií]o", "entrega", "delivery", "horario", "ubicaci", "direcci", "\\bd[oó]nde\\b", "\\bpago", "pagar", "yappy", "\\bach\\b", "transferen", "tarjeta", "reembols",
+  "env[ií]o", "entrega", "delivery", "domicilio", "horario", "ubicaci", "direcci", "\\bd[oó]nde\\b", "\\bpago", "pagar", "yappy", "\\bach\\b", "transferen", "tarjeta", "reembols",
   "repar", "soporte t[eé]cnico", "averi", "da[ñn]ad", "no enciende", "no prende", "no imprime", "sucursal", "recoger", "retir",
   // v25: catálogo completo (no solo impresión) → fuerza la búsqueda antes de negar.
   "monitor", "pantalla", "esc[aá]ner", "escaner", "scanner", "\\bups\\b", "bater[ií]a", "estabilizador", "regulador", "no.?break",
@@ -1013,7 +1018,7 @@ function sucursalesInterior(lugar: string = ""): string {
 // y el fraseo se arma en CÓDIGO (frasearTarifa) para que el bot NO confunda el método — el error a evitar es
 // ofrecer "entrega a domicilio" donde SOLO hay retiro en un agente verde. frasearTarifa es puro (testeable).
 function frasearTarifa(v: any): Record<string, unknown> {
-  const fmt = (x: any) => { const n = Number(x); return isFinite(n) ? n.toFixed(2) : ""; };
+  const fmt = (x: any) => { if (x === null || x === undefined) return ""; const n = Number(x); return isFinite(n) ? n.toFixed(2) : ""; };
   const estado = v?.estado;
   if (estado === "sin_match") {
     return { estado: "sin_match", consulta: v.consulta ?? null,
@@ -1031,7 +1036,7 @@ function frasearTarifa(v: any): Record<string, unknown> {
     const t = fmt(v.tarifa_usd);
     let msg = "";
     if (met === "retiro_agente_verde") {
-      msg = `En su zona no hacemos entrega a domicilio, pero puede retirar su pedido en un punto Servientrega (${v.puntos_retiro}). El costo es B/.${t} y estaría listo para retirar al día hábil siguiente.`;
+      msg = `En su zona no hacemos entrega a domicilio, pero puede retirar su pedido en un punto Servientrega (${v.puntos_retiro || "un punto Servientrega cercano; un asesor le indica cuál"}). El costo es B/.${t} y estaría listo para retirar al día hábil siguiente.`;
     } else if (met === "servientrega") {
       msg = `A su zona entregamos a domicilio por B/.${t}, al día hábil siguiente (vía Servientrega).`;
     } else if (met === "asesor") {
@@ -1108,7 +1113,11 @@ async function responderLLM(history: { role: string; content: string; model?: st
   ];
   // v31 — en asistencia, la ÚNICA tool disponible es info_tienda (no buscar_producto/guardar_lead):
   // el bot solo puede adelantar datos de tienda, nunca cotizar ni capturar datos del cliente.
-  const toolsActivas = modoAsistencia ? TOOLS.filter((t) => t.name === "info_tienda" || t.name === "sucursales_interior" || t.name === "tarifa_entrega") : TOOLS;
+  // v47: tarifa_entrega NO va en MODO ASISTENCIA (revisión adversarial): cotizar precio+método+plazo es
+  // COMPROMETER un pedido concreto, y en asistencia un humano lleva la venta (podría estar dando otra
+  // tarifa/cortesía). sucursales_interior sí (solo lista puntos, no compromete). Si en asistencia preguntan
+  // el costo, el bot cae a info_tienda (genérico, no comprometido).
+  const toolsActivas = modoAsistencia ? TOOLS.filter((t) => t.name === "info_tienda" || t.name === "sucursales_interior") : TOOLS;
   // Los mensajes de un asesor humano se marcan para que el agente sepa que los dijo una persona.
   // v32: cada mensaje ANTERIOR (no el último/actual) se prefija con [hoy/ayer/fecha] para que el bot
   // ubique el historial en el tiempo. El último (el que se responde ahora) va limpio (es "ahora", y así
