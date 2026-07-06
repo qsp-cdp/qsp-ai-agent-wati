@@ -26,24 +26,25 @@ function extraerConst(nombre) {
 function extraerFuncion(nombre) {
   const ini = src.indexOf(`function ${nombre}(`);
   if (ini < 0) throw new Error(`no encontré function ${nombre}`);
-  let i = src.indexOf("{", ini);
-  // saltar la llave del TIPO de retorno objeto (ej. `): { a: string } {`) — la llave del cuerpo es la
-  // que sigue a un `)` o al cierre del tipo; usamos conteo desde la PRIMERA llave tras quitar el tipo.
   let cuerpo = src.slice(ini);
-  cuerpo = cuerpo.replace(/\)\s*:\s*\{[^{}]*\}\s*\{/, ") {"); // return type objeto
-  i = cuerpo.indexOf("{");
-  let depth = 0, j = i;
+  cuerpo = cuerpo.replace(/\)\s*:\s*\{[^{}]*\}\s*\{/, ") {"); // tipo de retorno OBJETO (ej. `): {a:string} {`)
+  const iBody = cuerpo.indexOf("{");
+  let depth = 0, j = iBody;
   for (; j < cuerpo.length; j++) {
     if (cuerpo[j] === "{") depth++;
     else if (cuerpo[j] === "}") { depth--; if (depth === 0) break; }
   }
-  let fn = cuerpo.slice(0, j + 1);
-  // stripper de anotaciones TS (solo las formas que usan estos helpers)
-  fn = fn
-    .replace(/new Set<[^>]+>/g, "new Set")
-    .replace(/\)\s*:\s*[A-Za-z0-9_$\[\]<>|. ]+\s*\{/, ") {")                       // return type simple
-    .replace(/([(,]\s*[A-Za-z_$][\w$]*)\s*:\s*[A-Za-z0-9_$\[\]<>| ]+(?=\s*[,)=])/g, "$1"); // params
-  return eval(`(${fn})`);
+  // Separar FIRMA y CUERPO. El strip de tipos de parámetro se aplica SOLO a la firma; si se aplicara al
+  // cuerpo, rompería los object literals (`{ metodo: met }` -> `{ metodo }`, ReferenceError).
+  let sig = cuerpo.slice(0, iBody);
+  let body = cuerpo.slice(iBody, j + 1);
+  sig = sig
+    .replace(/\)\s*:\s*[A-Za-z0-9_$\[\]<>|., ]+\s*$/, ")")                 // tipo de retorno (Record<string, unknown>, string[], …)
+    .replace(/([(,]\s*[A-Za-z_$][\w$]*)\s*:\s*[^,)]+?(?=\s*[,)])/g, "$1"); // tipos de parámetros
+  // En el CUERPO solo neutralizamos TS que de verdad aparece ahí: genéricos de `new Set<>` y el `: any` de
+  // arrows internas (frasearTarifa). NUNCA tocamos `key: value` de los object literals.
+  body = body.replace(/new Set<[^>]+>/g, "new Set").replace(/:\s*any\b/g, "");
+  return eval(`(${sig}${body})`);
 }
 
 function extraerSystemPrompt() {
@@ -64,6 +65,7 @@ const conItbms = extraerFuncion("conItbms");
 const stockTexto = extraerFuncion("stockTexto");
 const pareceFuncionEnTexto = extraerFuncion("pareceFuncionEnTexto");
 const limpiarWhatsApp = extraerFuncion("limpiarWhatsApp");
+const frasearTarifa = extraerFuncion("frasearTarifa");
 const SYSTEM_PROMPT = extraerSystemPrompt();
 
 // --- harness -------------------------------------------------------------------------------------
@@ -169,6 +171,45 @@ caso('SYSTEM_PROMPT prohíbe explícitamente "tenemos el punto/sucursal"', /NUNC
 caso('SYSTEM_PROMPT explica el proceso de envío (Servientrega)', /red de Servientrega/i.test(SYSTEM_PROMPT));
 caso('SYSTEM_PROMPT dice trato de usted (no tutea)', /TRATO DE USTED/i.test(SYSTEM_PROMPT));
 caso('SYSTEM_PROMPT NO tiene el tuteo viejo de v41 ("te la mandamos")', !/te la mandamos/i.test(SYSTEM_PROMPT));
+
+// --- frasearTarifa (v47): el fraseo del envío por sector, según el método real ---------------------
+console.log("frasearTarifa");
+// veredictos mock = shapes EXACTOS que devuelve resolver_tarifa (validados contra Postgres real).
+const V_TOC = { estado:"ok", metodo:"retiro_agente_verde", tarifa_usd:6.00, confianza:"Alta",
+  plazo:"Listo para retirar al día hábil siguiente. En esta zona NO se hace entrega a domicilio.",
+  puntos_retiro:"AV Shop Box Don Bosco (detrás de Plaza Tocumen) o AV Nuevo Tocumen Shopline (Plaza Nuevo Tocumen)" };
+const V_PAC = { estado:"ok", metodo:"servientrega", tarifa_usd:9.00, confianza:"Media",
+  plazo:"Al día hábil siguiente a domicilio (vía Servientrega).", puntos_retiro:null };
+const V_CA  = { estado:"ok", metodo:"asesor", tarifa_usd:null, confianza:"Alta",
+  plazo:"Un asesor coordina la entrega y el costo según la dirección exacta.", puntos_retiro:null };
+const V_ED  = { estado:"ok", metodo:"propia", tarifa_usd:6.00, confianza:"Media",
+  plazo:"Mismo día si el pedido entra antes de las 3:00 p.m.; después, al día hábil siguiente.", puntos_retiro:null };
+const V_SJ  = { estado:"ambiguo", opciones:[
+  { corregimiento:"Betania", metodo:"propia", tarifa_usd:6.00 },
+  { corregimiento:"Las Mañanitas", metodo:"retiro_agente_verde", tarifa_usd:6.00 } ] };
+const V_COR = { estado:"sin_match", consulta:"coronado" };
+
+const rToc = frasearTarifa(V_TOC);
+caso("retiro: estado ok", rToc.estado === "ok");
+// LA CLAVE de v47: zona de retiro NUNCA ofrece domicilio
+caso("retiro: dice retirar y 'no ... domicilio'", /retirar/i.test(rToc.respuesta_sugerida) && /no hacemos entrega a domicilio/i.test(rToc.respuesta_sugerida));
+caso("retiro: incluye $6.00 y los puntos", rToc.respuesta_sugerida.includes("6.00") && rToc.respuesta_sugerida.includes("Don Bosco"));
+
+const rPac = frasearTarifa(V_PAC);
+caso("servientrega: domicilio $9.00", /a domicilio/i.test(rPac.respuesta_sugerida) && rPac.respuesta_sugerida.includes("9.00"));
+caso("confianza Media añade 'asesor confirma'", /asesor confirma/i.test(rPac.respuesta_sugerida));
+
+const rCa = frasearTarifa(V_CA);
+caso("asesor: coordina y SIN precio B/.", /asesor/i.test(rCa.respuesta_sugerida) && !/B\/\./.test(rCa.respuesta_sugerida));
+
+const rEd = frasearTarifa(V_ED);
+caso("propia: $6.00 mismo día", rEd.respuesta_sugerida.includes("6.00") && /mismo d[ií]a/i.test(rEd.respuesta_sugerida));
+
+const rSj = frasearTarifa(V_SJ);
+caso("ambiguo: pide corregimiento y nombra ambas zonas", rSj.estado === "ambiguo" && /corregimiento/i.test(rSj.respuesta_sugerida) && /Betania/.test(rSj.respuesta_sugerida) && /Mañanitas/.test(rSj.respuesta_sugerida));
+
+const rCor = frasearTarifa(V_COR);
+caso("sin_match: nota con interior/asesor", rCor.estado === "sin_match" && /interior|asesor/i.test(rCor.nota));
 
 // --- resumen --------------------------------------------------------------------------------------
 console.log(`\n${ok} OK, ${mal} FALLA${mal === 1 ? "" : "S"}`);

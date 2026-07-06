@@ -1,3 +1,18 @@
+// === copilot-webhook v47 — Copiloto AI de WATI — tarifa/método de envío por SECTOR (Ciudad de Panamá + San Miguelito) ===
+// v47 (2026-07-06): el bot cotizaba el envío de la ciudad "desde B/.6.00, según el sector puede variar" y
+//   derivaba el costo exacto al asesor; peor: prometía "mismo día" y "entrega a domicilio" en zonas donde la
+//   ruta Servientrega es impredecible (quejas) o donde NO se hace domicilio (solo retiro). Fix grounded: nueva
+//   tool `tarifa_entrega(lugar)` que llama al resolver determinista de Postgres (`resolver_tarifa`; fuente
+//   única = tablas zonas_entrega/sectores_entrega, migraciones 20260706170000/…180000/…190000) y FRASEA en
+//   CÓDIGO (`frasearTarifa`) según el método real de cada zona: entrega propia (mismo día), RETIRO en agente
+//   verde ($6, en zonas del este SIN domicilio), puerta a puerta Servientrega ($9) o "un asesor coordina".
+//   El resolver desambigua nombres repetidos (San José: $6 Betania vs $9 Mañanitas → pide el corregimiento) y
+//   distingue geografía (Summit del Canal NO va a retirar a Tocumen). Best-effort: si el RPC falla o el lugar
+//   no está en la cobertura metro (p.ej. el interior), cae a sucursales_interior/info_tienda o deriva. Regla
+//   de prompt en LOGÍSTICA (relaya la respuesta_sugerida, NUNCA ofrezcas domicilio donde solo hay retiro).
+//   Disponible también en MODO ASISTENCIA (es info de logística). NEEDS_TOOL_RE ya fuerza tool en
+//   "envío/entrega/delivery/domicilio". Golden tests del fraseo (frasearTarifa, casos mock de cada método).
+//   Requiere las 3 migraciones aplicadas (ya lo están). Reescribe el caché de v35 (re-warm, tools+prompt).
 // === copilot-webhook v46 — Copiloto AI de WATI — sucursales del interior: explicar el PROCESO, no el dato ===
 // v46 (2026-07-02): reporte real de un cliente en Santiago — el bot respondió "Sí, en Santiago tenemos el
 //   punto CDS Santiago, teléfono…" y sonaba a que QSP tiene tienda propia ahí, en vez de explicar que el
@@ -566,6 +581,7 @@ LOGÍSTICA, PAGOS Y DATOS DE LA TIENDA (envíos, ubicación, horarios, métodos 
 - Si info_tienda no tiene el dato (devuelve "sin datos disponibles"): dilo con honestidad y deriva a un asesor para confirmarlo. No prometas plazos ni costos específicos.
 - POLÍTICAS COMERCIALES (descuentos, precios especiales, cliente frecuente, mayoreo/revendedor, crédito): si info_tienda NO trae el dato, NO las afirmes NI las niegues — nada de "no manejamos descuentos" ni "el precio es el mismo para todos" (solo un asesor decide precios especiales, y a veces los da). Di que un asesor le confirma si hay alguna opción para su caso.
 - SUCURSALES DEL INTERIOR (recogida) — EXPLICA EL PROCESO, no sueltes solo el dato: QSP NO tiene tiendas propias en el interior; el envío va por la red de Servientrega (sucursales y agentes/aliados autorizados). Si el cliente del interior pregunta dónde recoger/retirar o si hay sucursal/agencia en su zona, usa la herramienta sucursales_interior con su provincia o ciudad (ej. "David", "Chiriquí", "Penonomé") y arma la respuesta como PROCESO: "puede optar por enviarlo a [ciudad] ([provincia]) y retirarlo en el punto Servientrega [nombre]" + el teléfono y horario que devuelva la tool. NUNCA digas "tenemos el punto/sucursal en [ciudad]" (suena a tienda propia de QSP) — deja claro que el pedido SE ENVÍA ahí para que el cliente lo retire (con su cédula). NUNCA inventes una sucursal, dirección ni teléfono: usa solo lo que devuelva la tool. Si la ciudad exacta no aparece, deduce la provincia (sabes la geografía de Panamá) y vuelve a consultar por la provincia; si aun así no hay punto, dilo y comparte el listado completo. Para tarifas y plazos del interior (cuándo llega) usa info_tienda y súmalo a la misma respuesta si aporta.
+- COSTO/MÉTODO DE ENVÍO POR SECTOR (Ciudad de Panamá y San Miguelito): cuando el cliente pida cuánto cuesta el envío o cómo le llega a un lugar CONCRETO de la ciudad (su corregimiento o barrio: Tocumen, Betania, Juan Díaz, San Miguelito, Las Cumbres…), usa la herramienta tarifa_entrega con ese lugar y RELAYA su "respuesta_sugerida" (puedes adaptar el tono, pero NUNCA cambies el método ni el precio que devuelve). OJO — el error más grave a evitar: en algunas zonas NO ofrecemos entrega a domicilio, SOLO retiro en un punto Servientrega; dilo tal cual y NO ofrezcas domicilio ahí. Si tarifa_entrega devuelve estado "ambiguo", pregunta en qué corregimiento está; si "sin_match" y el cliente es del INTERIOR, usa sucursales_interior + info_tienda; si "sin_match" y no ubicas el lugar, o "asesor"/"error", deriva a un asesor. Para el costo GENÉRICO de envío (sin un sector concreto) usa info_tienda.
 
 SOPORTE TÉCNICO Y REPARACIONES
 - QSP NO ofrece soporte técnico ni servicios de reparación. Si preguntan por reparar/arreglar un equipo, soporte técnico, o que algo "no enciende/no imprime", usa info_tienda y sugiere la empresa de la marca correspondiente que ahí figure; NUNCA inventes teléfonos ni empresas, y si no hay dato, deriva a un asesor.
@@ -611,6 +627,10 @@ const TOOLS: Anthropic.Tool[] = [{
   name: "sucursales_interior",
   description: "Puntos de recogida en el INTERIOR del país (red Servientrega, 45 sucursales con teléfono y horario). Úsala cuando el cliente del interior pregunte dónde recoger/retirar, si hay sucursal/agencia/punto en su zona, o pida la ubicación de un punto. Pasa 'lugar' = la provincia o ciudad del cliente (ej. 'Chiriquí', 'David', 'Penonomé', 'Chitré'). Si el cliente da una ciudad y no aparece, deduce TÚ la provincia (sabes la geografía de Panamá) y vuelve a llamarla con la provincia. Devuelve SOLO puntos reales — NUNCA inventes sucursales, direcciones ni teléfonos.",
   input_schema: { type: "object", properties: { lugar: { type: "string", description: "Provincia o ciudad del cliente (ej. Chiriquí, David, Penonomé, Coclé). Vacío = resumen por provincia." } } },
+} as Anthropic.Tool, {
+  name: "tarifa_entrega",
+  description: "Costo y MÉTODO de envío a un SECTOR concreto de la Ciudad de Panamá o San Miguelito (corregimiento o barrio: Tocumen, Betania, Juan Díaz, Las Cumbres, San Miguelito, etc.). Úsala cuando el cliente pida cuánto cuesta el envío o cómo le llega a SU zona y dé un lugar concreto. Pasa 'lugar' = ese corregimiento o barrio. Devuelve un veredicto determinista con 'respuesta_sugerida' ya armada: el método puede ser entrega propia (mismo día), RETIRO en un punto Servientrega (en algunas zonas NO hay domicilio), entrega a domicilio Servientrega, o que lo coordine un asesor. RELAYA la respuesta_sugerida sin cambiar el método ni el precio. NO es para el interior del país (usa sucursales_interior) ni para el costo genérico sin sector (usa info_tienda). Si devuelve 'ambiguo', pregunta el corregimiento; 'sin_match'/'asesor'/'error' → deriva o usa sucursales_interior según indique la nota.",
+  input_schema: { type: "object", properties: { lugar: { type: "string", description: "Corregimiento o barrio del cliente en la Ciudad de Panamá / San Miguelito (ej. Tocumen, Betania, Juan Díaz, Las Cumbres)." } } },
 } as Anthropic.Tool];
 
 // v45: "garantía/devolución" GENERAL ("¿qué garantía tienen?") ya NO va a handoff permanente — era
@@ -988,6 +1008,57 @@ function sucursalesInterior(lugar: string = ""): string {
   return JSON.stringify({ sucursales: hits.slice(0, 8).map((h) => ({ provincia: h.prov, nombre: h.nombre, datos: h.datos })), total_coincidencias: hits.length, listado_completo: SUCURSALES_URL });
 }
 
+// v47 — TARIFA/MÉTODO DE ENVÍO POR SECTOR (Ciudad de Panamá + San Miguelito). El veredicto lo calcula el
+// resolver determinista de Postgres (resolver_tarifa; fuente única = tablas zonas_entrega/sectores_entrega),
+// y el fraseo se arma en CÓDIGO (frasearTarifa) para que el bot NO confunda el método — el error a evitar es
+// ofrecer "entrega a domicilio" donde SOLO hay retiro en un agente verde. frasearTarifa es puro (testeable).
+function frasearTarifa(v: any): Record<string, unknown> {
+  const fmt = (x: any) => { const n = Number(x); return isFinite(n) ? n.toFixed(2) : ""; };
+  const estado = v?.estado;
+  if (estado === "sin_match") {
+    return { estado: "sin_match", consulta: v.consulta ?? null,
+      nota: "Ese lugar no está en la cobertura metro (Ciudad de Panamá / San Miguelito). Si el cliente es del INTERIOR, usa sucursales_interior + info_tienda (tarifa/plazo del interior). Si no lo ubicas, deriva a un asesor para que cotice." };
+  }
+  if (estado === "ambiguo") {
+    const desc = (o: any) => o.metodo === "retiro_agente_verde" ? `retiro por B/.${fmt(o.tarifa_usd)}`
+      : o.metodo === "asesor" ? "lo coordina un asesor" : `B/.${fmt(o.tarifa_usd)} a domicilio`;
+    const ops = (v.opciones ?? []).map((o: any) => `${o.corregimiento} (${desc(o)})`);
+    return { estado: "ambiguo", opciones: v.opciones ?? [],
+      respuesta_sugerida: `Hay más de una zona con ese nombre y el envío cambia según cuál: ${ops.join("; ")}. ¿En qué corregimiento se encuentra, para confirmarle el costo exacto?` };
+  }
+  if (estado === "ok") {
+    const met = v.metodo;
+    const t = fmt(v.tarifa_usd);
+    let msg = "";
+    if (met === "retiro_agente_verde") {
+      msg = `En su zona no hacemos entrega a domicilio, pero puede retirar su pedido en un punto Servientrega (${v.puntos_retiro}). El costo es B/.${t} y estaría listo para retirar al día hábil siguiente.`;
+    } else if (met === "servientrega") {
+      msg = `A su zona entregamos a domicilio por B/.${t}, al día hábil siguiente (vía Servientrega).`;
+    } else if (met === "asesor") {
+      msg = `Para su zona, un asesor coordina la entrega y el costo según la dirección exacta; con gusto le paso con un asesor.`;
+    } else { // propia
+      msg = `El envío a su zona es B/.${t} (${v.plazo}).`;
+    }
+    if (v.confianza === "Media" && met !== "asesor") msg += " Un asesor confirma el costo exacto al cerrar, según la dirección.";
+    return { estado: "ok", metodo: met, tarifa_usd: v.tarifa_usd ?? null, puntos_retiro: v.puntos_retiro ?? null,
+      plazo: v.plazo ?? null, confianza: v.confianza ?? null, respuesta_sugerida: msg };
+  }
+  return { estado: estado ?? "desconocido", nota: "No se pudo resolver; usa info_tienda (genérico) o deriva a un asesor." };
+}
+
+async function tarifaEntrega(lugar: string = ""): Promise<string> {
+  const q = String(lugar ?? "").trim();
+  if (!q) return JSON.stringify({ estado: "sin_dato", nota: "Pide al cliente su corregimiento o barrio (Ciudad de Panamá / San Miguelito) para dar el costo de envío exacto." });
+  try {
+    const { data, error } = await sb.rpc("resolver_tarifa", { p_lugar: q });
+    if (error) throw new Error(error.message);
+    return JSON.stringify(frasearTarifa(data));
+  } catch (e) {
+    await log("error", false, { fase: "tarifa_entrega", error: String(e).slice(0, 200) });
+    return JSON.stringify({ estado: "error", nota: "No se pudo calcular la tarifa; usa info_tienda (genérico) o deriva a un asesor." });
+  }
+}
+
 async function responderLLM(history: { role: string; content: string; model?: string | null; created_at?: string | null }[], forceTool: boolean, imagen?: { b64: string; mediaType: string } | null, imagenFallo?: boolean, waId: string = "", atributos: Record<string, string> = {}, linksTracked: Record<string, string> = {}, modoAsistencia: boolean = false): Promise<{ text: string | null; toolCalls: unknown[]; tokensIn: number; tokensOut: number; cacheRead: number; cacheWrite: number }> {
   if (!anthropic) return { text: null, toolCalls: [], tokensIn: 0, tokensOut: 0, cacheRead: 0, cacheWrite: 0 };
   // La API exige que el primer mensaje sea del usuario: descarta "assistant" al inicio
@@ -1037,7 +1108,7 @@ async function responderLLM(history: { role: string; content: string; model?: st
   ];
   // v31 — en asistencia, la ÚNICA tool disponible es info_tienda (no buscar_producto/guardar_lead):
   // el bot solo puede adelantar datos de tienda, nunca cotizar ni capturar datos del cliente.
-  const toolsActivas = modoAsistencia ? TOOLS.filter((t) => t.name === "info_tienda" || t.name === "sucursales_interior") : TOOLS;
+  const toolsActivas = modoAsistencia ? TOOLS.filter((t) => t.name === "info_tienda" || t.name === "sucursales_interior" || t.name === "tarifa_entrega") : TOOLS;
   // Los mensajes de un asesor humano se marcan para que el agente sepa que los dijo una persona.
   // v32: cada mensaje ANTERIOR (no el último/actual) se prefija con [hoy/ayer/fecha] para que el bot
   // ubique el historial en el tiempo. El último (el que se responde ahora) va limpio (es "ahora", y así
@@ -1105,6 +1176,8 @@ async function responderLLM(history: { role: string; content: string; model?: st
           ? await guardarLead(waId, (block.input as any).email, (block.input as any).empresa, (block.input as any).nombre, (block.input as any).apellido)
           : block.name === "sucursales_interior"
           ? sucursalesInterior((block.input as any).lugar ?? "")
+          : block.name === "tarifa_entrega"
+          ? await tarifaEntrega((block.input as any).lugar ?? "")
           : JSON.stringify({ error: "tool desconocida" });
         results.push({ type: "tool_result", tool_use_id: block.id, content: out });
       }
@@ -1276,7 +1349,7 @@ Deno.serve(async (req) => {
       const diag = await inventarioSelfTest(pid);
       return Response.json({ selftest: "inventario", ...diag, ts: new Date().toISOString() });
     }
-    return Response.json({ status: "ok", function: "copilot-webhook", version: "v46-sucursales-proceso", mode: MODE, mode_raw: MODE_RAW, model: MODEL, llm_configured: !!anthropic, wati_send_configured: !!(WATI_API_TOKEN && WATI_API_BASE), inventario_configurado: !!(SHOPIFY_ADMIN_TOKEN && SHOPIFY_ADMIN_API_BASE), resolve_configured: !!RESOLVE_SECRET, webhook_key_es_default: WEBHOOK_KEY_ES_DEFAULT, handoff_assist_min: HANDOFF_ASSIST_MIN, handoff_cold_hours: HANDOFF_COLD_HOURS, live_targets: MODE === "live" ? (LIVE_ALL ? "all" : LIVE_ALLOWLIST.length) : 0, ts: new Date().toISOString() });
+    return Response.json({ status: "ok", function: "copilot-webhook", version: "v47-tarifa-envio-sector", mode: MODE, mode_raw: MODE_RAW, model: MODEL, llm_configured: !!anthropic, wati_send_configured: !!(WATI_API_TOKEN && WATI_API_BASE), inventario_configurado: !!(SHOPIFY_ADMIN_TOKEN && SHOPIFY_ADMIN_API_BASE), resolve_configured: !!RESOLVE_SECRET, webhook_key_es_default: WEBHOOK_KEY_ES_DEFAULT, handoff_assist_min: HANDOFF_ASSIST_MIN, handoff_cold_hours: HANDOFF_COLD_HOURS, live_targets: MODE === "live" ? (LIVE_ALL ? "all" : LIVE_ALLOWLIST.length) : 0, ts: new Date().toISOString() });
   }
   if (req.method !== "POST") return Response.json({ error: "method_not_allowed" }, { status: 405 });
   if (url.searchParams.get("key") !== WEBHOOK_KEY) return Response.json({ error: "forbidden" }, { status: 403 });
