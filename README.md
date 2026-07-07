@@ -39,13 +39,14 @@ web/
 ```
 
 ## Estado
-- Edge function `copilot-webhook` **v45 (`v45-endurecimiento-quirurgico`), ACTIVE** — EN VIVO a todos (incluye
-  v40–v44: `.trim()` a secretos, trato de usted, guardrails, sucursales del interior, autotest de inventario,
-  guard anti-fuga). Coexistencia validada (v15) · visión (v19) · endurecimiento anti-duplicado / anti-carrera /
-  MODE-seguro (v20). **Probando Claude Sonnet 5** (`COPILOT_MODEL=claude-sonnet-5`; revertir = flipear a 4.6).
-  **Inventario RESUELTO (01-jul):** confirmado con clientes reales. **`COPILOT_WEBHOOK_KEY` endurecida (02-jul):**
-  secreto real + WATI actualizado, verificado con tráfico en vivo. **v46 + v47 + v48 en repo, listos para
-  desplegar (acumulativo). v48 (conciencia de pedidos) empareja con su escritor Shipday/Shopify — ver abajo.**
+- Edge function `copilot-webhook` **v48 (`v48-conciencia-pedidos`), ACTIVE** (desplegado 07-jul) — EN VIVO a todos.
+  Trae acumulado v40–v47 (`.trim()` a secretos, trato de usted, guardrails, sucursales, autotest de inventario,
+  envío por sector) + el **LECTOR** de conciencia de pedidos (tool `estado_pedido`). Coexistencia validada (v15) ·
+  visión (v19) · anti-duplicado/anti-carrera (v20). **Probando Claude Sonnet 5** (`COPILOT_MODEL=claude-sonnet-5`).
+  Migraciones `pedidos` + `contacts_grant` aplicadas. **PENDIENTE del círculo de pedidos:** desplegar los ESCRITORES
+  del puente Shipday **por CLI** (`.\deploy.ps1 wati-order shipday-status shopify-webhook wati-address contacts-lookup`)
+  + probar Shipday + armar el flujo de captura de WATI (`docs/plantilla-wati.md`). El lector solo es seguro (pedidos
+  vacía → `sin_pedidos` → deriva).
 - **v21:** ITBMS (precio + 7% + total, calculado en código) + inventario real (Shopify Admin
   `totalInventory`; ≤3 → "un asesor verifica") + anti-eco duro (se acabaron los handoffs falsos).
 - **v22:** conciencia de horario (atención Lun-Vie 9am-5pm, Panamá) — fuera de horario aclara

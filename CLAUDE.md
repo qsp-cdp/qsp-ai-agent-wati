@@ -19,8 +19,17 @@ equipo humano: contesta preguntas generales, indica disponibilidad/stock y da pr
 con certeza, y calla/deriva cuando es mejor que responda un humano. Tienda:
 **quickservicepanama.com** (suministros de impresión y tecnología en Panamá).
 
-## Estado actual (2026-07-02)
-- **EN VIVO: `copilot-webhook` v45 (`v45-endurecimiento-quirurgico`), ACTIVE.** Desplegado con `verify_jwt=false`
+## Estado actual (2026-07-07)
+- **EN VIVO: `copilot-webhook` v48 (`v48-conciencia-pedidos`), ACTIVE (desplegado 07-jul por Browse, byte-exacto,
+  verify_jwt=false; healthcheck `version:v48-conciencia-pedidos`, `model:claude-sonnet-5`, `webhook_key_es_default:false`).**
+  Acumulado v40–v47 + el **LECTOR** de conciencia de pedidos (tool `estado_pedido`). Migraciones `pedidos` +
+  `contacts_grant` **APLICADAS** (07-jul). **PENDIENTE para el círculo completo:** (a) desplegar los **ESCRITORES**
+  del puente Shipday **por CLI** (`.\deploy.ps1 wati-order shipday-status shopify-webhook wati-address contacts-lookup`)
+  para que `pedidos` se llene; (b) probar Shipday (curl a `wati-order`); (c) armar el flujo de captura de WATI
+  (`docs/plantilla-wati.md`: 5 atributos + flujo + HSM). El lector solo es seguro (pedidos vacía → `sin_pedidos` →
+  deriva). Secretos del puente completos; webhook de estados de Shipday ya registrado (⚠ rotar el token/API key,
+  quedó expuesto en un chat). Nota: los escritores del puente NO se pueden desplegar por Browse (importan `../_shared`).
+- **Base histórica (v45, ahora corriendo bajo v48): `copilot-webhook` v45 (`v45-endurecimiento-quirurgico`).** Desplegado con `verify_jwt=false`
   (incluye v40–v44: `.trim()` a secretos, trato de usted, guardrails, sucursales del interior, autotest de
   inventario y guard anti-fuga; + v45 endurecimiento quirúrgico — ver detalle abajo). **`COPILOT_WEBHOOK_KEY`
   YA ENDURECIDA** (02-jul): secreto aleatorio + URL actualizada en WATI, verificado con tráfico real
