@@ -15,3 +15,8 @@ npm-debug.log*
 .idea/
 .vscode/
 *.swp
+
+# Datos del puente de entregas (contactos/CSVs no van al repo, salvo el ejemplo)
+data/contacts.json
+data/*.csv
+!data/ejemplo-tookan-export.csv

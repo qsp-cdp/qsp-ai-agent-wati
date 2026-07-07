@@ -1,0 +1,29 @@
+# Blueprint de Render: despliegue con un clic desde este repositorio.
+# https://render.com → New → Blueprint → seleccionar este repo.
+services:
+  - type: web
+    name: qsp-delivery-bridge
+    runtime: node
+    plan: free
+    buildCommand: npm ci
+    startCommand: npm start
+    healthCheckPath: /health
+    envVars:
+      - key: SHIPDAY_API_KEY
+        sync: false # se pega a mano en el dashboard de Render (nunca en git)
+      - key: SHOPIFY_WEBHOOK_SECRET
+        sync: false
+      - key: WATI_WEBHOOK_TOKEN
+        generateValue: true # Render genera un token aleatorio seguro
+      - key: SHIPDAY_WEBHOOK_TOKEN
+        generateValue: true
+      - key: SHOPIFY_DELIVERY_FILTER
+        value: entrega local,local delivery
+      - key: PICKUP_NAME
+        value: Quick Service Panama
+      - key: PICKUP_ADDRESS
+        value: Plaza Aventura Business Center, Vía Ricardo J. Alfaro, Panamá
+      - key: PICKUP_PHONE
+        sync: false
+      - key: WATI_NOTIFY
+        value: "false"
