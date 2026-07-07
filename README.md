@@ -21,9 +21,9 @@ sombra por seguridad.
 CLAUDE.md                                  # contexto autoritativo (leer primero)
 docs/base-conocimiento-qsp.md              # base de conocimiento del negocio (fuente → prompt + store_facts)
 supabase/
-  functions/copilot-webhook/index.ts       # la edge function (v47 en repo, incluye v46; v45 EN VIVO, probando Sonnet 5)
+  functions/copilot-webhook/index.ts       # la edge function (v48 en repo, incluye v46+v47; v45 EN VIVO, probando Sonnet 5)
 tests/golden.mjs                            # golden tests (regex + helpers, extraídos del index.ts real) — node tests/golden.mjs
-  migrations/*.sql                          # esquema reproducible (11 migraciones; v47 añade el data layer de envíos)
+  migrations/*.sql                          # esquema reproducible (12 migraciones; v48 añade la tabla/RPC pedidos)
 deploy.ps1                                  # deploy byte-exacto por CLI + verificación de healthcheck
 web/
   envios-interior-sucursal.html            # página de envíos al interior (45 sucursales)
@@ -35,8 +35,8 @@ web/
   guard anti-fuga). Coexistencia validada (v15) · visión (v19) · endurecimiento anti-duplicado / anti-carrera /
   MODE-seguro (v20). **Probando Claude Sonnet 5** (`COPILOT_MODEL=claude-sonnet-5`; revertir = flipear a 4.6).
   **Inventario RESUELTO (01-jul):** confirmado con clientes reales. **`COPILOT_WEBHOOK_KEY` endurecida (02-jul):**
-  secreto real + WATI actualizado, verificado con tráfico en vivo. **v46 + v47 en repo, listos para desplegar
-  (v47 es acumulativo: trae v46).**
+  secreto real + WATI actualizado, verificado con tráfico en vivo. **v46 + v47 + v48 en repo, listos para
+  desplegar (acumulativo). v48 (conciencia de pedidos) empareja con su escritor Shipday/Shopify — ver abajo.**
 - **v21:** ITBMS (precio + 7% + total, calculado en código) + inventario real (Shopify Admin
   `totalInventory`; ≤3 → "un asesor verifica") + anti-eco duro (se acabaron los handoffs falsos).
 - **v22:** conciencia de horario (atención Lun-Vie 9am-5pm, Panamá) — fuera de horario aclara
@@ -106,6 +106,18 @@ web/
   paso, la página `web/envios-interior-sucursal.html` tenía el mismo "tenemos 45 puntos" → corregido.
   `tests/golden.mjs` (112 casos verdes, 2 nuevos que guardan esta regresión). Correr `node tests/golden.mjs`
   antes de cada deploy.
+- **v48 (listo para desplegar, empareja con su escritor):** CONCIENCIA DE PEDIDOS. El bot no sabía si un
+  cliente tenía un pedido en curso; ante "¿dónde está mi pedido?" adivinaba o derivaba a ciegas. Nueva tool
+  `estado_pedido` (sin args del modelo: toma el `wa_id` del CONTEXTO) → RPC `estado_pedido(p_wa_id)` que lee
+  la tabla `pedidos` (dedup+fusión por número de pedido) y **frasea en código** (`frasearPedido`) por estado
+  normalizado, con guía/tracking si hay. NUNCA inventa estado/fecha/guía; si `sin_pedidos` NO afirma que el
+  cliente no tiene pedidos (vista parcial) → deriva. **NO va en MODO ASISTENCIA.** **Revisión adversarial
+  pre-commit** (2 agentes): halló y cerró F1 (no filtrar el array crudo `estado_raw`/`total_usd`/`resumen` al
+  modelo — solo el string fraseado; podía inducir una fecha/precio). La tabla la ESCRIBEN las funciones de
+  despacho Shipday/Shopify (**pendientes de versionar en el repo**; contrato en
+  `docs/handoff-pedidos-conciencia.md`). Migración `20260707120000_pedidos.sql` validada en Postgres local
+  (falta aplicar). 161 golden tests. Seguro de desplegar aunque la tabla esté vacía (cae a `sin_pedidos`).
+  Acumulativo sobre v46+v47.
 - **v47 (listo para desplegar):** tarifa/método de envío por SECTOR. Nueva tool `tarifa_entrega(lugar)` que
   llama al resolver determinista de Postgres (`resolver_tarifa`; data layer `zonas_entrega`/`sectores_entrega`,
   3 migraciones aplicadas y validadas contra Postgres real) y **frasea en código** según el método real:

@@ -66,6 +66,7 @@ const stockTexto = extraerFuncion("stockTexto");
 const pareceFuncionEnTexto = extraerFuncion("pareceFuncionEnTexto");
 const limpiarWhatsApp = extraerFuncion("limpiarWhatsApp");
 const frasearTarifa = extraerFuncion("frasearTarifa");
+const frasearPedido = extraerFuncion("frasearPedido");
 const SYSTEM_PROMPT = extraerSystemPrompt();
 
 // --- harness -------------------------------------------------------------------------------------
@@ -223,6 +224,69 @@ caso('"¿lo llevan a domicilio?" fuerza tool', NEEDS_TOOL_RE.test("¿lo llevan a
 // pulido: retiro con puntos_retiro null -> fallback, nunca "(null)" al cliente.
 const rNoPts = frasearTarifa({ estado:"ok", metodo:"retiro_agente_verde", tarifa_usd:6.00, confianza:"Alta", plazo:"x", puntos_retiro:null });
 caso("retiro sin puntos: fallback, no '(null)'", !/\(null\)/.test(rNoPts.respuesta_sugerida) && /punto Servientrega/i.test(rNoPts.respuesta_sugerida));
+
+// --- v48: CONCIENCIA DE PEDIDOS ------------------------------------------------------------------
+console.log("v48 NEEDS_TOOL_RE (estado de pedido)");
+// Preguntas de ESTADO de un pedido ya hecho → DEBEN forzar tool (estado_pedido).
+for (const t of ["¿dónde está mi pedido?", "ya salió mi orden", "¿cuándo me llega?", "me das el número de guía",
+  "quiero el seguimiento", "cómo rastreo mi paquete", "estado de mi pedido", "mi compra ya salió", "cuándo entregan"]) {
+  caso(`estado-pedido "${t}" fuerza tool`, NEEDS_TOOL_RE.test(t));
+}
+// Targeted: "pedido/orden" a secas (intención de COMPRAR, no rastrear) NO deben forzar por los términos v48
+// (bare "pedido" quedó fuera a propósito; si trae palabra de catálogo, otra regla lo fuerza).
+for (const t of ["quiero hacer un pedido", "gracias por la compra"]) {
+  caso(`"${t}" NO fuerza por v48 (bare pedido/compra excluido)`, !NEEDS_TOOL_RE.test(t));
+}
+
+console.log("frasearPedido");
+// veredictos mock = shape EXACTO del RPC estado_pedido (validado contra Postgres local).
+const P_PROP = { estado:"ok", wa_id:"50761234567", pedidos:[
+  { pedido_ref:"#1001", estado:"en_camino", estado_raw:"ONTHEWAY", metodo:"propia", tracking:"https://track.shipday.com/ZZ9", total_usd:127, resumen:"1x Epson L3250" } ] };
+const P_SERV = { estado:"ok", wa_id:"50761234567", pedidos:[
+  { pedido_ref:"#1002", estado:"asignado", metodo:"servientrega", tracking:"GUIA-778899" } ] };
+const P_ENTREGADO = { estado:"ok", pedidos:[ { pedido_ref:"#1003", estado:"entregado", metodo:"propia", tracking:"TRACK-NO-MOSTRAR" } ] };
+const P_MULTI = { estado:"ok", pedidos:[ { pedido_ref:"#1001", estado:"entregado" }, { pedido_ref:"#1002", estado:"en_camino" } ] };
+const P_RARO = { estado:"ok", pedidos:[ { pedido_ref:"#9", estado:"loquesea_desconocido" } ] };
+
+const rProp = frasearPedido(P_PROP);
+caso("propia en_camino: ok + '#1001' + 'va en camino'", rProp.estado === "ok" && /#1001/.test(rProp.respuesta_sugerida) && /va en camino/i.test(rProp.respuesta_sugerida));
+caso("propia: link de seguimiento (no 'guía')", /seguirlo aqu[ií]/i.test(rProp.respuesta_sugerida) && rProp.respuesta_sugerida.includes("ZZ9") && !/gu[ií]a/i.test(rProp.respuesta_sugerida));
+// F1 (revisión adversarial): frasearPedido NO debe devolver el array crudo de pedidos — solo el string
+// fraseado en código. Si volviera estado_raw/total_usd/resumen, el modelo podría emitir una FECHA o un
+// PRECIO fuera de buscar_producto. Lock: el objeto no trae 'pedidos' ni valores crudos.
+const leakProp = JSON.stringify(rProp);
+caso("F1: no filtra el array crudo ni estado_raw/total_usd/resumen", !("pedidos" in rProp) && !/estado_raw|total_usd|resumen|ONTHEWAY|Epson|127/.test(leakProp));
+
+const rServ = frasearPedido(P_SERV);
+caso("servientrega asignado: rastrea con GUÍA", /gu[ií]a GUIA-778899/i.test(rServ.respuesta_sugerida));
+
+const rEnt = frasearPedido(P_ENTREGADO);
+caso("entregado: 'figura como entregado' y NO muestra tracking", /figura como entregado/i.test(rEnt.respuesta_sugerida) && !/TRACK-NO-MOSTRAR/.test(rEnt.respuesta_sugerida));
+
+const rMulti = frasearPedido(P_MULTI);
+caso("multi: lista #1001 y #1002", /#1001/.test(rMulti.respuesta_sugerida) && /#1002/.test(rMulti.respuesta_sugerida));
+
+const rRaro = frasearPedido(P_RARO);
+caso("estado desconocido: cae a 'en proceso', no inventa fecha", /en proceso/i.test(rRaro.respuesta_sugerida) && /#9/.test(rRaro.respuesta_sugerida) && !/\d{1,2}\s*(de|\/)/.test(rRaro.respuesta_sugerida));
+
+// sin_pedidos / entradas basura → NUNCA afirma que el cliente no tiene pedidos; deriva a un asesor.
+for (const v of [{ estado:"sin_pedidos", wa_id:"5076" }, {}, null, { estado:"ok", pedidos:[] }, { estado:"error" }]) {
+  const r = frasearPedido(v);
+  caso(`sin_pedidos(${JSON.stringify(v)}): estado sin_pedidos + asesor`, r.estado === "sin_pedidos" && /asesor/i.test(r.respuesta_sugerida));
+  caso(`sin_pedidos(${JSON.stringify(v)}): NO afirma "no tiene pedidos"`, !/no tiene (ning[uú]n )?pedido/i.test(r.respuesta_sugerida) && !/no aparece/i.test(r.respuesta_sugerida));
+}
+
+console.log("v48 SYSTEM_PROMPT + wiring");
+caso('SYSTEM_PROMPT tiene sección CONCIENCIA DE PEDIDOS', /CONCIENCIA DE PEDIDOS/.test(SYSTEM_PROMPT));
+caso('SYSTEM_PROMPT nombra la tool estado_pedido', /estado_pedido/.test(SYSTEM_PROMPT));
+caso('SYSTEM_PROMPT: vista PARCIAL, no negar pedidos', /vista es PARCIAL/i.test(SYSTEM_PROMPT) && /NO afirmes que el cliente/i.test(SYSTEM_PROMPT));
+caso('SYSTEM_PROMPT: estado de pedido despachado NO es interrupción', /NO es una interrupci[oó]n/i.test(SYSTEM_PROMPT));
+// wiring en el source real:
+caso("index.ts define la tool estado_pedido", /name: "estado_pedido"/.test(src));
+caso("index.ts cablea estadoPedido(waId) en el dispatch", /await estadoPedido\(waId\)/.test(src));
+caso("estadoPedido llama al RPC estado_pedido", /sb\.rpc\("estado_pedido"/.test(src));
+// v48: estado_pedido NO va en MODO ASISTENCIA (un humano lleva el caso) — chequeo sobre el filtro real.
+caso("asistencia NO incluye estado_pedido", assistFilter.length > 0 && !/estado_pedido/.test(assistFilter));
 
 // --- resumen --------------------------------------------------------------------------------------
 console.log(`\n${ok} OK, ${mal} FALLA${mal === 1 ? "" : "S"}`);

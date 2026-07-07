@@ -1,10 +1,13 @@
 # CLAUDE.md — Copiloto AI de WhatsApp (WATI) · Quick Service Panamá
 
 > Contexto base para Claude Code trabajando en ESTE repo. Lee esto primero.
-> Generado 2026-06-15; actualizado 2026-07-06 (v47 en el repo —tarifa/método de envío por SECTOR: tool
-> `tarifa_entrega` + DATA LAYER de zonas en Supabase [`zonas_entrega`/`sectores_entrega`/`resolver_tarifa`,
-> 3 migraciones YA APLICADAS]; acumulativo sobre v46 sucursales-proceso [sin desplegar aún]; v45 EN VIVO,
-> probando Sonnet 5) +
+> Generado 2026-06-15; actualizado 2026-07-07 (v48 en el repo —CONCIENCIA DE PEDIDOS: tool `estado_pedido`
+> + tabla/RPC `pedidos`/`estado_pedido` [migración validada en Postgres local, FALTA APLICAR]; el bot LEE el
+> estado del pedido y lo relaya sin inventar; los ESCRITORES —shopify-webhook/shipday-status/wati-order—
+> faltan versionar en este repo [contrato en `docs/handoff-pedidos-conciencia.md`]; acumulativo sobre v46+v47.
+> v47 —tarifa/método de envío por SECTOR: tool `tarifa_entrega` + DATA LAYER de zonas en Supabase
+> [`zonas_entrega`/`sectores_entrega`/`resolver_tarifa`, 3 migraciones YA APLICADAS]; acumulativo sobre v46
+> sucursales-proceso [sin desplegar aún]; v45 EN VIVO, probando Sonnet 5) +
 > esquema del proyecto Supabase. Docs de diseño originales en el repo
 > `qsp-cdp/qsp-cdp-docs` (`docs/design/2026-06-12-proyecto-copilot-wati.md` y
 > `docs/design/2026-06-13-copilot-analisis-sombra-prompt-v2.md`).
@@ -42,6 +45,22 @@ con certeza, y calla/deriva cuando es mejor que responda un humano. Tienda:
   autotest (`?selftest=inventario`) dio `ok_inventario_visible` con PG-145XL `totalInventory:87` → el token
   nuevo funciona y el inventario ya se muestra. (Hallazgo aparte: `COPILOT_WEBHOOK_KEY` no estaba en secrets
   → ✅ **endurecido el 02-jul** tras desplegar v45: secreto aleatorio + WATI actualizado + verificado.)
+- **EN EL REPO, LISTO PARA DESPLEGAR (empareja con su escritor): v48 (`v48-conciencia-pedidos`).** El bot no
+  sabía si un cliente tenía un pedido en curso; ante "¿dónde está mi pedido?" adivinaba o derivaba a ciegas.
+  Fix grounded: nueva tool **`estado_pedido`** (sin args del modelo: toma el `wa_id` del CONTEXTO) → RPC
+  **`estado_pedido(p_wa_id)`** que lee la tabla **`pedidos`** (dedup+fusión por número de pedido) y **frasea
+  en CÓDIGO** (`frasearPedido`, pura) por estado normalizado, con guía/tracking si hay. Regla de prompt
+  (CONCIENCIA DE PEDIDOS): relaya la `respuesta_sugerida`, NUNCA inventa estado/fecha/guía; preguntar por un
+  pedido despachado NO es interrupción; si `sin_pedidos` NO afirma que el cliente no tiene pedidos (vista
+  PARCIAL) → un asesor confirma. **NO va en MODO ASISTENCIA.** `NEEDS_TOOL_RE` fuerza tool en "mi pedido/
+  rastreo/guía/estado del pedido/cuándo me llega". La tabla `pedidos` la ESCRIBEN las funciones de despacho
+  Shipday/Shopify (upsert); **ese lado FALTA versionar en el repo** (código real en el proyecto Supabase +
+  repo Node canónico) — contrato listo en `docs/handoff-pedidos-conciencia.md`. **CAMBIO DE ESQUEMA:**
+  `20260707120000_pedidos.sql` (tabla + RPC, validada en Postgres local; FALTA APLICAR). 160 golden tests
+  (incluye frasearPedido: nunca inventa; estado_pedido fuera de asistencia). **Seguro de desplegar aunque la
+  tabla esté vacía** (cae a `sin_pedidos` → deriva), pero solo aporta valor con ≥1 escritor cableado.
+  Reescribe el caché de v35 (re-warm). Emparejarlo con el deploy de `shopify-webhook` (el escritor de mayor
+  cobertura) o aplicar la migración + cablear ese upsert primero.
 - **EN EL REPO, LISTO PARA DESPLEGAR: v47 (`v47-tarifa-envio-sector`).** El bot cotizaba el envío de la
   ciudad "desde B/.6.00, según el sector varía" y derivaba; peor, prometía "mismo día"/"a domicilio" en zonas
   donde la ruta Servientrega es impredecible (quejas) o donde NO se hace domicilio (solo retiro). Fix
@@ -383,6 +402,16 @@ WATI (WhatsApp) ──webhook POST?key=──► Supabase Edge Function `copilot
   `created_at`. Mapeo para el stitching WhatsApp→web: `buscar_producto` inserta una fila por link de
   producto emitido; el CDP resuelve `ref_code→wa_id` vía el endpoint GET `?ref_code=` (guard
   `RESOLVE_SECRET`). El `wa_id` vive SOLO aquí, nunca en la URL. Contrato: `docs/handoff-cdp-ref-code-bridge.md`.
+- **pedidos** (v48) — estado de pedidos/entregas para la CONCIENCIA del bot. Llave natural `wa_id`. La
+  ESCRIBEN las funciones de despacho (shopify-webhook/shipday-status/wati-order) vía upsert (arbitrado por
+  `shopify_order_id`/`shipday_order_id`); la LEE el bot vía RPC `estado_pedido(p_wa_id)`. Campos: `fuente`
+  (shopify/wati/shipday/manual), `pedido_ref`, `estado` (normalizado: nuevo/asignado/en_camino/entregado/
+  fallido/cancelado), `estado_raw`, `metodo` (propia/servientrega/retiro_agente_verde/asesor), `tracking`,
+  `total_usd`, `resumen`. **PII-light** (sin dirección/cédula/pago). Contrato: `docs/handoff-pedidos-conciencia.md`.
+- **RPC `estado_pedido(p_wa_id)`** (v48) — lectura del bot: pedidos recientes de un `wa_id` (normaliza el
+  teléfono a dígitos en ambos lados), máx 3, **deduplicados y fusionados por número de pedido** (una fila
+  shopify + una shipday del mismo pedido → un solo estado, el más fresco, sin perder método/total). `security
+  definer`, solo `service_role`. Devuelve jsonb `ok`/`sin_pedidos`.
 - **RPC `upsert_conversation(p_wa_id, p_sender_name)`** — upsert atómico por
   `wa_id` + incremento del contador diario de turnos. `security definer`, solo
   `service_role`.
@@ -396,7 +425,9 @@ Migraciones (ver `supabase/migrations/`):
 `20260706170000_zonas_entrega` (v47 — **aplicada**, tablas `zonas_entrega`+`sectores_entrega` [419 sectores de
 Panamá+San Miguelito] + RPC `resolver_tarifa`, fuente ÚNICA de envíos por sector),
 `20260706180000_zonas_este_retiro` (v47 — **aplicada**, refactor de la zona este: retiro $6 / puerta $9 / asesor),
-`20260706190000_store_facts_zonas` (v47 — **aplicada**, genérico de envío honesto: Tocumen, "mismo día").
+`20260706190000_store_facts_zonas` (v47 — **aplicada**, genérico de envío honesto: Tocumen, "mismo día"),
+`20260707120000_pedidos` (v48 — **validada en local, FALTA APLICAR**, tabla `pedidos` + RPC `estado_pedido`,
+puente de conciencia de pedidos del bot).
 
 **Data layer de envíos (v47 — fuente única, editable en Supabase):**
 - **zonas_entrega** — `zona` (PK), `tarifa_base_usd` (nullable), `metodo` (`propia`/`servientrega`/
@@ -672,6 +703,14 @@ Eventos WATI suscritos (necesarios): **Message Received**, **Session Message Sen
     Pendiente/futuro: (a) medir en prod (cuántas asistencias/cold-returns, falsos positivos) y calibrar
     umbrales; (b) extender cold-return a handoffs por keyword (hoy solo cuando hubo un asesor real);
     (c) afinar `BASIC_INFO_RE` según lo que pregunten de verdad.
+14. **Conciencia de pedidos (v48): ✅ lado LECTOR listo en el repo** (tool `estado_pedido` + RPC/tabla
+    `pedidos`, validada en Postgres local; falta APLICAR la migración). Pendiente: (a) **versionar en este
+    repo las funciones de despacho Shipday/Shopify** (shopify-webhook/shipday-status/wati-order — el código
+    real vive en el proyecto Supabase + un repo Node canónico con pruebas; NO reconstruir de memoria) y
+    agregarles el upsert a `pedidos` (contrato en `docs/handoff-pedidos-conciencia.md`); (b) emparejar el
+    deploy de v48 con ≥1 escritor (aporta valor solo cuando algo escribe la tabla); (c) opcional: derivar el
+    `metodo` por sector desde `resolver_tarifa` (fuente única) en vez del nombre del método de envío;
+    (d) purga futura de pedidos entregados/cancelados viejos (como `ref_codes`).
 
 ## Cómo leer el estado real (debugging)
 - Código en vivo: `get_edge_function` o healthcheck GET. Esquema: `list_tables`.

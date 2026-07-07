@@ -1,3 +1,16 @@
+// === copilot-webhook v48 — Copiloto AI de WATI — CONCIENCIA DE PEDIDOS (el bot sabe en qué va la entrega) ===
+// v48 (2026-07-07): el bot no sabía si un cliente tenía un pedido en curso; ante "¿dónde está mi pedido?"
+//   adivinaba o derivaba a ciegas. Fix grounded: nueva tool `estado_pedido` (sin args del modelo: toma el
+//   wa_id del CONTEXTO) → RPC `estado_pedido(p_wa_id)` que lee la tabla `pedidos` (fuente única), deduplica
+//   por número de pedido y devuelve los recientes; el fraseo se arma en CÓDIGO (`frasearPedido`, puro) por
+//   estado normalizado (nuevo/asignado/en_camino/entregado/fallido/cancelado), con la guía/tracking si hay.
+//   Regla de prompt (CONCIENCIA DE PEDIDOS): relaya la respuesta_sugerida, NUNCA inventes estado/fecha/guía;
+//   preguntar por un pedido despachado NO es interrupción; si "sin_pedidos" NO afirmes que no tiene pedidos
+//   (la vista es PARCIAL) → un asesor confirma. NEEDS_TOOL_RE fuerza tool en "mi pedido/rastreo/guía/estado
+//   del pedido/cuándo me llega". NO va en MODO ASISTENCIA (un humano lleva el caso). La tabla `pedidos` la
+//   ESCRIBEN las funciones de despacho (shopify-webhook/shipday-status/wati-order) vía upsert — contrato en
+//   docs/handoff-pedidos-conciencia.md. CAMBIO DE ESQUEMA: migración 20260707120000_pedidos (tabla + RPC,
+//   validada en Postgres local). Reescribe el caché de v35 (re-warm, tools+prompt). Golden tests de frasearPedido.
 // === copilot-webhook v47 — Copiloto AI de WATI — tarifa/método de envío por SECTOR (Ciudad de Panamá + San Miguelito) ===
 // v47 (2026-07-06): el bot cotizaba el envío de la ciudad "desde B/.6.00, según el sector puede variar" y
 //   derivaba el costo exacto al asesor; peor: prometía "mismo día" y "entrega a domicilio" en zonas donde la
@@ -588,6 +601,12 @@ LOGÍSTICA, PAGOS Y DATOS DE LA TIENDA (envíos, ubicación, horarios, métodos 
 - SUCURSALES DEL INTERIOR (recogida) — EXPLICA EL PROCESO, no sueltes solo el dato: QSP NO tiene tiendas propias en el interior; el envío va por la red de Servientrega (sucursales y agentes/aliados autorizados). Si el cliente del interior pregunta dónde recoger/retirar o si hay sucursal/agencia en su zona, usa la herramienta sucursales_interior con su provincia o ciudad (ej. "David", "Chiriquí", "Penonomé") y arma la respuesta como PROCESO: "puede optar por enviarlo a [ciudad] ([provincia]) y retirarlo en el punto Servientrega [nombre]" + el teléfono y horario que devuelva la tool. NUNCA digas "tenemos el punto/sucursal en [ciudad]" (suena a tienda propia de QSP) — deja claro que el pedido SE ENVÍA ahí para que el cliente lo retire (con su cédula). NUNCA inventes una sucursal, dirección ni teléfono: usa solo lo que devuelva la tool. Si la ciudad exacta no aparece, deduce la provincia (sabes la geografía de Panamá) y vuelve a consultar por la provincia; si aun así no hay punto, dilo y comparte el listado completo. Para tarifas y plazos del interior (cuándo llega) usa info_tienda y súmalo a la misma respuesta si aporta.
 - COSTO/MÉTODO DE ENVÍO POR SECTOR (Ciudad de Panamá y San Miguelito): cuando el cliente pida cuánto cuesta el envío, cómo le llega, o DÓNDE RETIRAR en un lugar CONCRETO de la ciudad (su corregimiento o barrio: Tocumen, Betania, Juan Díaz, San Miguelito, Las Cumbres…), usa la herramienta tarifa_entrega con ese lugar y RELAYA su "respuesta_sugerida" (puedes adaptar el tono, pero NUNCA cambies el método ni el precio que devuelve). OJO — el error más grave a evitar: en algunas zonas NO ofrecemos entrega a domicilio, SOLO retiro en un punto Servientrega; dilo tal cual y NO ofrezcas domicilio ahí. IMPORTANTE — el punto de retiro de un SECTOR DE LA CIUDAD (ej. "¿dónde retiro en Tocumen?") sale de tarifa_entrega, NO de sucursales_interior (esa herramienta es SOLO para el INTERIOR/provincias). Si tarifa_entrega devuelve estado "ambiguo", pregunta en qué corregimiento está; si "sin_match" y el cliente es del INTERIOR, usa sucursales_interior + info_tienda; si "sin_match" y no ubicas el lugar, o "error"/"sin_dato", deriva a un asesor. (El método "asesor" llega como estado "ok" con la respuesta ya armada: relayala.) Para el costo GENÉRICO de envío (sin un sector concreto) usa info_tienda.
 
+CONCIENCIA DE PEDIDOS (estado de un pedido YA hecho)
+- Cuando el cliente pregunte por el ESTADO, el seguimiento o la entrega de SU pedido/orden/compra YA realizada ("¿dónde está mi pedido?", "¿ya salió mi orden?", "¿cuándo me llega?", "¿me das el número de guía?"), usa la herramienta estado_pedido (toma su WhatsApp del contexto — NO se lo pidas) y RELAYA su "respuesta_sugerida". NUNCA inventes el estado, la fecha de entrega ni un número de guía: solo lo que devuelva la tool.
+- Preguntar por el estado de un pedido ya despachado NO es una interrupción: respóndelo con estado_pedido. Distinto es un pago/cotización/factura o una entrega que un HUMANO está coordinando en ese momento (eso sí se deriva, ver anti-interrupción).
+- Si estado_pedido devuelve "sin_pedidos" (o "sin_dato"/"error"), NO afirmes que el cliente "no tiene pedidos" ni que "no aparece nada": tu vista es PARCIAL (puede haber pedidos que no ves). Di con calma que un asesor se lo confirma y, si acaso, pídele el número de pedido.
+- Esto es SOLO para pedidos ya hechos. Para el costo de un envío usa tarifa_entrega; para pagos, facturas o coordinar una entrega, deriva a un asesor.
+
 SOPORTE TÉCNICO Y REPARACIONES
 - QSP NO ofrece soporte técnico ni servicios de reparación. Si preguntan por reparar/arreglar un equipo, soporte técnico, o que algo "no enciende/no imprime", usa info_tienda y sugiere la empresa de la marca correspondiente que ahí figure; NUNCA inventes teléfonos ni empresas, y si no hay dato, deriva a un asesor.
 
@@ -636,6 +655,10 @@ const TOOLS: Anthropic.Tool[] = [{
   name: "tarifa_entrega",
   description: "Costo y MÉTODO de envío a un SECTOR concreto de la Ciudad de Panamá o San Miguelito (corregimiento o barrio: Tocumen, Betania, Juan Díaz, Las Cumbres, San Miguelito, etc.). Úsala cuando el cliente pida cuánto cuesta el envío o cómo le llega a SU zona y dé un lugar concreto. Pasa 'lugar' = ese corregimiento o barrio. Devuelve un veredicto determinista con 'respuesta_sugerida' ya armada: el método puede ser entrega propia (mismo día), RETIRO en un punto Servientrega (en algunas zonas NO hay domicilio), entrega a domicilio Servientrega, o que lo coordine un asesor. RELAYA la respuesta_sugerida sin cambiar el método ni el precio. NO es para el interior del país (usa sucursales_interior) ni para el costo genérico sin sector (usa info_tienda). Si devuelve 'ambiguo', pregunta el corregimiento; 'sin_match'/'error' → deriva o usa sucursales_interior según indique la nota (el método 'asesor' llega como 'ok' con la respuesta ya armada).",
   input_schema: { type: "object", properties: { lugar: { type: "string", description: "Corregimiento o barrio del cliente en la Ciudad de Panamá / San Miguelito (ej. Tocumen, Betania, Juan Díaz, Las Cumbres)." } } },
+} as Anthropic.Tool, {
+  name: "estado_pedido",
+  description: "Consulta el ESTADO / seguimiento del pedido del cliente que está escribiendo (por su WhatsApp, tomado del CONTEXTO — NO pidas ni pases el número). Úsala SOLO cuando el cliente pregunte por el estado, seguimiento o entrega de SU pedido/orden/compra YA hecha (\"¿dónde está mi pedido?\", \"¿ya salió mi orden?\", \"¿cuándo me llega?\", \"número de guía\"). Devuelve 'respuesta_sugerida' ya armada: RELÁYALA sin inventar estados, fechas ni guías. Si el estado es 'sin_pedidos'/'sin_dato'/'error', NO afirmes que el cliente no tiene pedidos (tu vista es PARCIAL): relaya la sugerencia (un asesor lo confirma). NO es para cotizar el costo de un envío (usa tarifa_entrega) ni para pagos/facturas/coordinar una entrega en curso (eso lo maneja un asesor).",
+  input_schema: { type: "object", properties: {} },
 } as Anthropic.Tool];
 
 // v45: "garantía/devolución" GENERAL ("¿qué garantía tienen?") ya NO va a handoff permanente — era
@@ -698,6 +721,11 @@ const NEEDS_TOOL_RE = new RegExp([
   //     que antes de v45 (paridad); con cualquier palabra de catálogo ("tinta 954xl") sí.
   "\\b(?![a-z]{1,2}(?:-\\d+){2,}\\b)(?=[a-z0-9#-]*[a-z])(?=[a-z0-9#-]*\\d)[a-z0-9]+(?:[-#][a-z0-9]+)+\\b",
   "\\b(?=[a-z0-9]{4,10}\\b)(?=[a-z0-9]*[a-z][a-z0-9]*\\d)[a-z0-9]+\\b",
+  // v48: ESTADO/seguimiento de un PEDIDO ya hecho → fuerza tool (estado_pedido). Targeted: NO incluye
+  // "pedido"/"orden" a secas para no forzar en "quiero hacer un pedido" (eso es venta, otra tool).
+  "\\bmi(s)? pedido", "\\bmi orden\\b", "\\bmi compra\\b", "\\bmi paquete\\b",
+  "rastre", "seguimiento", "\\btracking\\b", "\\bgu[ií]a\\b", "n[uú]mero de (gu[ií]a|orden|pedido|seguimiento)",
+  "estado (de|del) (mi )?(pedido|orden|env[ií]o|entrega)", "cu[aá]ndo (me )?(llega|entregan|lleg[oó])", "ya (sali[oó]|despach)",
 ].join("|"), "i");
 
 // v31 — pregunta BÁSICA de tienda que el bot SÍ puede adelantar mientras un asesor está ausente
@@ -1064,6 +1092,59 @@ async function tarifaEntrega(lugar: string = ""): Promise<string> {
   }
 }
 
+// v48 — CONCIENCIA DE PEDIDOS. La lectura la hace el RPC estado_pedido (fuente única = tabla `pedidos`, que
+// escriben las funciones de despacho: shopify-webhook / shipday-status / wati-order — ver
+// docs/handoff-pedidos-conciencia.md). El fraseo se arma en CÓDIGO (frasearPedido, puro/testeable) para que
+// el bot NO invente estados/fechas/guías: relaya SOLO lo que la tabla tiene. Si no hay pedido visible, NO
+// afirma "usted no tiene pedidos" (la vista del bot es PARCIAL: hay pedidos manuales/viejos que no ve) →
+// deriva a un asesor. El wa_id sale del CONTEXTO, nunca del modelo (privacidad: no se consulta a nadie más).
+function frasearPedido(v: any): Record<string, unknown> {
+  // Frase por estado NORMALIZADO. Local (no módulo) para que el golden test lo extraiga self-contained.
+  const FRASE = {
+    nuevo: "está registrado y en preparación",
+    asignado: "ya fue asignado para su despacho",
+    en_camino: "va en camino",
+    entregado: "figura como entregado",
+    fallido: "tuvo un inconveniente en la entrega; un asesor lo contacta",
+    cancelado: "figura como cancelado",
+    desconocido: "está en proceso",
+  };
+  if (v?.estado !== "ok" || !Array.isArray(v?.pedidos) || !v.pedidos.length) {
+    return { estado: "sin_pedidos",
+      respuesta_sugerida: "No veo el estado de un pedido a su nombre en este momento. Con gusto un asesor se lo confirma; si tiene el número de pedido a mano, compártalo y lo revisamos." };
+  }
+  const frase = (p: any) => {
+    const ref = p.pedido_ref ? `Su pedido ${p.pedido_ref}` : "Su pedido";
+    let s = `${ref} ${FRASE[p.estado] || "está en proceso"}.`;
+    if (p.tracking && (p.estado === "en_camino" || p.estado === "asignado")) {
+      s += p.metodo === "servientrega" ? ` Puede rastrearlo con la guía ${p.tracking}.` : ` Puede seguirlo aquí: ${p.tracking}.`;
+    }
+    return s;
+  };
+  const msg = v.pedidos.length === 1
+    ? frase(v.pedidos[0])
+    : "Encontré estos pedidos a su nombre: " +
+      v.pedidos.map((p: any) => `${p.pedido_ref || "s/n"} (${FRASE[p.estado] || "en proceso"})`).join("; ") + ".";
+  // v48 (revisión adversarial F1): devolver SOLO la respuesta fraseada en CÓDIGO — NO el array crudo de
+  // pedidos. Si se pasara `v.pedidos` al modelo, vería estado_raw/total_usd/resumen (p.ej. un "ETA 07/08
+  // 3:45pm" en estado_raw, o un precio) y podría emitir una FECHA de entrega o un PRECIO fuera de
+  // buscar_producto — rompiendo el grounding. `respuesta_sugerida` ya trae ref/estado/tracking; con eso basta.
+  return { estado: "ok", respuesta_sugerida: msg };
+}
+
+async function estadoPedido(waId: string = ""): Promise<string> {
+  const wa = String(waId ?? "").replace(/\D/g, "");
+  if (wa.length < 6) return JSON.stringify({ estado: "sin_dato", nota: "No hay un número de cliente en el contexto; deriva a un asesor para revisar el pedido." });
+  try {
+    const { data, error } = await sb.rpc("estado_pedido", { p_wa_id: wa });
+    if (error) throw new Error(error.message);
+    return JSON.stringify(frasearPedido(data));
+  } catch (e) {
+    await log("error", false, { fase: "estado_pedido", error: String(e).slice(0, 200) });
+    return JSON.stringify({ estado: "error", nota: "No se pudo consultar el estado del pedido; deriva a un asesor para que lo revise." });
+  }
+}
+
 async function responderLLM(history: { role: string; content: string; model?: string | null; created_at?: string | null }[], forceTool: boolean, imagen?: { b64: string; mediaType: string } | null, imagenFallo?: boolean, waId: string = "", atributos: Record<string, string> = {}, linksTracked: Record<string, string> = {}, modoAsistencia: boolean = false): Promise<{ text: string | null; toolCalls: unknown[]; tokensIn: number; tokensOut: number; cacheRead: number; cacheWrite: number }> {
   if (!anthropic) return { text: null, toolCalls: [], tokensIn: 0, tokensOut: 0, cacheRead: 0, cacheWrite: 0 };
   // La API exige que el primer mensaje sea del usuario: descarta "assistant" al inicio
@@ -1187,6 +1268,8 @@ async function responderLLM(history: { role: string; content: string; model?: st
           ? sucursalesInterior((block.input as any).lugar ?? "")
           : block.name === "tarifa_entrega"
           ? await tarifaEntrega((block.input as any).lugar ?? "")
+          : block.name === "estado_pedido"
+          ? await estadoPedido(waId)
           : JSON.stringify({ error: "tool desconocida" });
         results.push({ type: "tool_result", tool_use_id: block.id, content: out });
       }
@@ -1358,7 +1441,7 @@ Deno.serve(async (req) => {
       const diag = await inventarioSelfTest(pid);
       return Response.json({ selftest: "inventario", ...diag, ts: new Date().toISOString() });
     }
-    return Response.json({ status: "ok", function: "copilot-webhook", version: "v47-tarifa-envio-sector", mode: MODE, mode_raw: MODE_RAW, model: MODEL, llm_configured: !!anthropic, wati_send_configured: !!(WATI_API_TOKEN && WATI_API_BASE), inventario_configurado: !!(SHOPIFY_ADMIN_TOKEN && SHOPIFY_ADMIN_API_BASE), resolve_configured: !!RESOLVE_SECRET, webhook_key_es_default: WEBHOOK_KEY_ES_DEFAULT, handoff_assist_min: HANDOFF_ASSIST_MIN, handoff_cold_hours: HANDOFF_COLD_HOURS, live_targets: MODE === "live" ? (LIVE_ALL ? "all" : LIVE_ALLOWLIST.length) : 0, ts: new Date().toISOString() });
+    return Response.json({ status: "ok", function: "copilot-webhook", version: "v48-conciencia-pedidos", mode: MODE, mode_raw: MODE_RAW, model: MODEL, llm_configured: !!anthropic, wati_send_configured: !!(WATI_API_TOKEN && WATI_API_BASE), inventario_configurado: !!(SHOPIFY_ADMIN_TOKEN && SHOPIFY_ADMIN_API_BASE), resolve_configured: !!RESOLVE_SECRET, webhook_key_es_default: WEBHOOK_KEY_ES_DEFAULT, handoff_assist_min: HANDOFF_ASSIST_MIN, handoff_cold_hours: HANDOFF_COLD_HOURS, live_targets: MODE === "live" ? (LIVE_ALL ? "all" : LIVE_ALLOWLIST.length) : 0, ts: new Date().toISOString() });
   }
   if (req.method !== "POST") return Response.json({ error: "method_not_allowed" }, { status: 405 });
   if (url.searchParams.get("key") !== WEBHOOK_KEY) return Response.json({ error: "forbidden" }, { status: 403 });
