@@ -18,8 +18,13 @@ $ErrorActionPreference = "Stop"
 $proj = "jbigmlcalcwiphqeudxd"
 $url  = "https://$proj.functions.supabase.co/copilot-webhook"
 
-# Funciones a desplegar: por defecto las 4 de v48; o las que pases como argumentos.
-$funcs = if ($args.Count -gt 0) { $args } else { @("copilot-webhook", "shopify-webhook", "shipday-status", "wati-order") }
+# Funciones a desplegar: por defecto todas (copiloto + puente); o las que pases como argumentos.
+#   Captura de direcciones (NO necesita Shipday): wati-address, contacts-lookup.
+#   Despacho (necesita Shipday configurado): shopify-webhook, shipday-status, wati-order.
+# Ej. para solo la captura:  .\deploy.ps1 wati-address contacts-lookup
+$funcs = if ($args.Count -gt 0) { $args } else {
+  @("copilot-webhook", "wati-address", "contacts-lookup", "shopify-webhook", "shipday-status", "wati-order")
+}
 
 foreach ($fn in $funcs) {
   Write-Host "`n==> Desplegando $fn a $proj (verify_jwt OFF, byte-exacto desde disco)..." -ForegroundColor Cyan
