@@ -2,7 +2,7 @@
 
 > Contexto base para Claude Code trabajando en ESTE repo. Lee esto primero.
 > Generado 2026-06-15; actualizado 2026-07-07 (v48 en el repo —CONCIENCIA DE PEDIDOS: tool `estado_pedido`
-> + tabla/RPC `pedidos`/`estado_pedido` [migración validada en Postgres local, FALTA APLICAR]; el bot LEE el
+> + tabla/RPC `pedidos`/`estado_pedido` [migración APLICADA 07-jul, verificada]; el bot LEE el
 > estado del pedido y lo relaya sin inventar. **Opción A hecha:** se unió (git merge) el puente Tookan→Shipday
 > [5 Edge Functions + `_shared/` + servicio Node con pruebas] y las 3 funciones de despacho CABLEAN el upsert
 > a `pedidos` por (fuente,pedido_ref) [contrato en `docs/handoff-pedidos-conciencia.md`]; acumulativo sobre v46+v47.
@@ -61,7 +61,8 @@ con certeza, y calla/deriva cuando es mejor que responda un humano. Tienda:
   `pedidos` por **(fuente, pedido_ref)** (shipday-status NO trae id interno de Shipday → el número de pedido es
   la llave común); el copiloto lo LEE. Todo en el MISMO proyecto Supabase (`config.toml` = `jbigmlcalcwiphqeudxd`;
   se le agregó `copilot-webhook` con verify_jwt=false). **CAMBIO DE ESQUEMA:** `20260707120000_pedidos.sql`
-  (tabla + RPC + índice único (fuente,pedido_ref), validada en Postgres local end-to-end; FALTA APLICAR). 172
+  (tabla + RPC + índice único (fuente,pedido_ref), validada en Postgres local end-to-end; **APLICADA 07-jul**,
+  verificada: grants ok + RPC devuelve `sin_pedidos`). 172
   golden + 18 node tests verdes. Contrato/estado en `docs/handoff-pedidos-conciencia.md`. **Revisión
   adversarial:** (lector, 2 agentes) cerró F1 (no filtrar el array crudo al modelo), la regresión de `estado`
   en el merge del RPC (rank de avance → un evento tardío no lo hace retroceder), colisión de clave y falsos
@@ -432,13 +433,13 @@ Migraciones (ver `supabase/migrations/`):
 `20260630160000_messages_cache_tokens` (v38 — **aplicada**, 2 columnas de telemetría de caché),
 `20260701000000_contacts` + `20260703000000_contacts_envio` (puente Shipday — libreta de direcciones desde
 Tookan; **en prod desde 01-jul**; llegaron al repo con el merge de Opción A),
-`20260707130000_contacts_grant` (v48 — **FALTA APLICAR/verificar**, `grant … contacts to service_role` que
+`20260707130000_contacts_grant` (v48 — **APLICADA 07-jul**, `grant … contacts to service_role` que
 faltaba en la migración original; idempotente),
 `20260706170000_zonas_entrega` (v47 — **aplicada**, tablas `zonas_entrega`+`sectores_entrega` [419 sectores de
 Panamá+San Miguelito] + RPC `resolver_tarifa`, fuente ÚNICA de envíos por sector),
 `20260706180000_zonas_este_retiro` (v47 — **aplicada**, refactor de la zona este: retiro $6 / puerta $9 / asesor),
 `20260706190000_store_facts_zonas` (v47 — **aplicada**, genérico de envío honesto: Tocumen, "mismo día"),
-`20260707120000_pedidos` (v48 — **validada en local, FALTA APLICAR**, tabla `pedidos` + RPC `estado_pedido`,
+`20260707120000_pedidos` (v48 — **APLICADA 07-jul** (validada antes en local), tabla `pedidos` + RPC `estado_pedido`,
 puente de conciencia de pedidos del bot).
 
 **Data layer de envíos (v47 — fuente única, editable en Supabase):**

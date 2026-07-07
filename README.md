@@ -128,7 +128,7 @@ web/
   tabla la ESCRIBEN las funciones de
   despacho Shipday/Shopify (**pendientes de versionar en el repo**; contrato en
   `docs/handoff-pedidos-conciencia.md`). Migración `20260707120000_pedidos.sql` validada en Postgres local
-  (falta aplicar). 172 golden tests. Seguro de desplegar aunque la tabla esté vacía (cae a `sin_pedidos`).
+  (aplicada 07-jul). 172 golden tests. Seguro de desplegar aunque la tabla esté vacía (cae a `sin_pedidos`).
   Acumulativo sobre v46+v47.
 - **v47 (listo para desplegar):** tarifa/método de envío por SECTOR. Nueva tool `tarifa_entrega(lugar)` que
   llama al resolver determinista de Postgres (`resolver_tarifa`; data layer `zonas_entrega`/`sectores_entrega`,

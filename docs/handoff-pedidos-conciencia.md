@@ -100,8 +100,8 @@ local). Para que la fusión sea correcta, los escritores DEBEN cumplir:
 ## Estado del cableado
 
 - ✅ **Copiloto (lector):** tool `estado_pedido` + RPC + fraseo — **en este repo (v48)**, con golden tests.
-- ✅ **Tabla + RPC:** migración `20260707120000_pedidos.sql` — validada en Postgres local; **falta aplicarla**
-  en Supabase (SQL Editor).
+- ✅ **Tabla + RPC:** migración `20260707120000_pedidos.sql` + `20260707130000_contacts_grant.sql` — **APLICADAS
+  el 07-jul** (verificado: `has_table_privilege` ok en `pedidos`/`contacts`, y `estado_pedido('…')` → `sin_pedidos`).
 - ✅ **Escritores (shopify-webhook / shipday-status / wati-order):** versionados en este repo (merge de la
   rama del puente Shipday) y CABLEADOS con `upsertPedido` (best-effort, no rompe el despacho). Node tests
   18/18, golden 172/172. Se despliegan con `--no-verify-jwt` (ver `docs/despliegue-supabase.md` + `config.toml`).
