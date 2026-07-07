@@ -72,3 +72,49 @@ export async function upsertContactByPhone(contact: Contact): Promise<void> {
     if (!res.ok) throw new Error(`Error insertando contacto: ${res.status} ${await res.text()}`);
   }
 }
+
+// --- Puente de conciencia de pedidos (v48) -------------------------------------------------------
+// Las funciones de despacho escriben el estado del pedido en `pedidos`; el copiloto (tool estado_pedido)
+// lo LEE para responder "¿dónde está mi pedido?" sin inventar. Contrato: docs/handoff-pedidos-conciencia.md.
+export interface PedidoUpsert {
+  wa_id: string;               // teléfono; se normaliza a dígitos (debe cruzar con el waId de WATI)
+  fuente: 'shopify' | 'shipday' | 'wati' | 'manual';
+  pedido_ref: string;          // NÚMERO de pedido = llave de convergencia (misma en shopify y shipday)
+  estado?: string;             // normalizado: nuevo/asignado/en_camino/entregado/fallido/cancelado
+  estado_raw?: string | null;
+  metodo?: string | null;      // propia/servientrega/retiro_agente_verde/asesor
+  tracking?: string | null;
+  total_usd?: number | null;
+  resumen?: string | null;
+  shopify_order_id?: string | null;
+  shipday_order_id?: string | null;
+}
+
+// Upsert por (fuente, pedido_ref) vía PostgREST (merge-duplicates). BEST-EFFORT y NULL-SAFE: nunca lanza —
+// un fallo aquí no debe romper el despacho ni la notificación (la orden en Shipday ya salió). Solo incluye
+// los campos con valor (así una fila 'shipday' no pisa el metodo/total que puso la fila 'shopify').
+export async function upsertPedido(p: PedidoUpsert): Promise<void> {
+  try {
+    const wa = String(p.wa_id ?? '').replace(/\D/g, '');
+    const ref = String(p.pedido_ref ?? '').trim();
+    if (wa.length < 6 || !ref) return; // sin llave útil (teléfono/número) no escribimos
+    const row: Record<string, unknown> = {
+      wa_id: wa, fuente: p.fuente, pedido_ref: ref, updated_at: new Date().toISOString(),
+    };
+    for (const k of ['estado', 'estado_raw', 'metodo', 'tracking', 'total_usd', 'resumen', 'shopify_order_id', 'shipday_order_id'] as const) {
+      const v = p[k];
+      if (v === undefined || v === null) continue;
+      if (typeof v === 'string' && v.trim() === '') continue;
+      row[k] = v;
+    }
+    const res = await fetch(restUrl('/pedidos?on_conflict=fuente,pedido_ref'), {
+      method: 'POST',
+      headers: { ...serviceHeaders(), Prefer: 'resolution=merge-duplicates,return=minimal' },
+      body: JSON.stringify(row),
+      signal: AbortSignal.timeout(8000), // no colgar la respuesta del webhook si la DB tarda
+    });
+    if (!res.ok) console.error(`upsertPedido ${p.fuente}/${ref} falló: ${res.status} ${await res.text()}`);
+  } catch (err) {
+    console.error('upsertPedido error:', (err as Error).message);
+  }
+}

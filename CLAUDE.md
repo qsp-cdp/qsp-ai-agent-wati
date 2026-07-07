@@ -3,8 +3,9 @@
 > Contexto base para Claude Code trabajando en ESTE repo. Lee esto primero.
 > Generado 2026-06-15; actualizado 2026-07-07 (v48 en el repo —CONCIENCIA DE PEDIDOS: tool `estado_pedido`
 > + tabla/RPC `pedidos`/`estado_pedido` [migración validada en Postgres local, FALTA APLICAR]; el bot LEE el
-> estado del pedido y lo relaya sin inventar; los ESCRITORES —shopify-webhook/shipday-status/wati-order—
-> faltan versionar en este repo [contrato en `docs/handoff-pedidos-conciencia.md`]; acumulativo sobre v46+v47.
+> estado del pedido y lo relaya sin inventar. **Opción A hecha:** se unió (git merge) el puente Tookan→Shipday
+> [5 Edge Functions + `_shared/` + servicio Node con pruebas] y las 3 funciones de despacho CABLEAN el upsert
+> a `pedidos` por (fuente,pedido_ref) [contrato en `docs/handoff-pedidos-conciencia.md`]; acumulativo sobre v46+v47.
 > v47 —tarifa/método de envío por SECTOR: tool `tarifa_entrega` + DATA LAYER de zonas en Supabase
 > [`zonas_entrega`/`sectores_entrega`/`resolver_tarifa`, 3 migraciones YA APLICADAS]; acumulativo sobre v46
 > sucursales-proceso [sin desplegar aún]; v45 EN VIVO, probando Sonnet 5) +
@@ -53,17 +54,21 @@ con certeza, y calla/deriva cuando es mejor que responda un humano. Tienda:
   (CONCIENCIA DE PEDIDOS): relaya la `respuesta_sugerida`, NUNCA inventa estado/fecha/guía; preguntar por un
   pedido despachado NO es interrupción; si `sin_pedidos` NO afirma que el cliente no tiene pedidos (vista
   PARCIAL) → un asesor confirma. **NO va en MODO ASISTENCIA.** `NEEDS_TOOL_RE` fuerza tool en "mi pedido/
-  rastreo/guía/estado del pedido/cuándo me llega". La tabla `pedidos` la ESCRIBEN las funciones de despacho
-  Shipday/Shopify (upsert); **ese lado FALTA versionar en el repo** (código real en el proyecto Supabase +
-  repo Node canónico) — contrato listo en `docs/handoff-pedidos-conciencia.md`. **CAMBIO DE ESQUEMA:**
-  `20260707120000_pedidos.sql` (tabla + RPC, validada en Postgres local; FALTA APLICAR). 172 golden tests
-  (incluye frasearPedido: nunca inventa; estado_pedido fuera de asistencia). **Revisión adversarial pre-commit
-  (2 agentes, verificación mecánica):** cerró F1 (no filtrar el array crudo al modelo), la regresión de
-  `estado` en el merge del RPC (rank de avance de entrega → un evento tardío no lo hace retroceder), colisión
-  de clave y falsos positivos del regex ("arrastre"/"guía de instalación"). **Seguro de desplegar aunque la
-  tabla esté vacía** (cae a `sin_pedidos` → deriva), pero solo aporta valor con ≥1 escritor cableado.
-  Reescribe el caché de v35 (re-warm). Emparejarlo con el deploy de `shopify-webhook` (el escritor de mayor
-  cobertura) o aplicar la migración + cablear ese upsert primero.
+  rastreo/guía/estado del pedido/cuándo me llega". **Los ESCRITORES YA ESTÁN EN EL REPO Y CABLEADOS (Opción
+  A):** se unió (git merge) la rama del puente Tookan→Shipday — 5 Edge Functions (shopify-webhook/
+  shipday-status/wati-order/wati-address/contacts-lookup + `_shared/`) + el servicio Node `src/` con pruebas —
+  y las 3 funciones de despacho ahora hacen `upsertPedido()` (best-effort, con timeout, en `_shared/db.ts`) a
+  `pedidos` por **(fuente, pedido_ref)** (shipday-status NO trae id interno de Shipday → el número de pedido es
+  la llave común); el copiloto lo LEE. Todo en el MISMO proyecto Supabase (`config.toml` = `jbigmlcalcwiphqeudxd`;
+  se le agregó `copilot-webhook` con verify_jwt=false). **CAMBIO DE ESQUEMA:** `20260707120000_pedidos.sql`
+  (tabla + RPC + índice único (fuente,pedido_ref), validada en Postgres local end-to-end; FALTA APLICAR). 172
+  golden + 18 node tests verdes. Contrato/estado en `docs/handoff-pedidos-conciencia.md`. **Revisión
+  adversarial:** (lector, 2 agentes) cerró F1 (no filtrar el array crudo al modelo), la regresión de `estado`
+  en el merge del RPC (rank de avance → un evento tardío no lo hace retroceder), colisión de clave y falsos
+  positivos del regex; (cableado, verificación mecánica) confirmó el join `wa_id` sólido end-to-end + revisó
+  convergencia/merge/deploy. **Seguro de desplegar aunque la tabla esté vacía** (cae a `sin_pedidos` → deriva).
+  Para que aporte valor: aplicar la migración + (re)desplegar las funciones de despacho ya cableadas +
+  `copilot-webhook`; confirmar que el pedido de Shipday lleva `orderNumber` = número de Shopify (convergencia).
 - **EN EL REPO, LISTO PARA DESPLEGAR: v47 (`v47-tarifa-envio-sector`).** El bot cotizaba el envío de la
   ciudad "desde B/.6.00, según el sector varía" y derivaba; peor, prometía "mismo día"/"a domicilio" en zonas
   donde la ruta Servientrega es impredecible (quejas) o donde NO se hace domicilio (solo retiro). Fix
@@ -406,8 +411,8 @@ WATI (WhatsApp) ──webhook POST?key=──► Supabase Edge Function `copilot
   producto emitido; el CDP resuelve `ref_code→wa_id` vía el endpoint GET `?ref_code=` (guard
   `RESOLVE_SECRET`). El `wa_id` vive SOLO aquí, nunca en la URL. Contrato: `docs/handoff-cdp-ref-code-bridge.md`.
 - **pedidos** (v48) — estado de pedidos/entregas para la CONCIENCIA del bot. Llave natural `wa_id`. La
-  ESCRIBEN las funciones de despacho (shopify-webhook/shipday-status/wati-order) vía upsert (arbitrado por
-  `shopify_order_id`/`shipday_order_id`); la LEE el bot vía RPC `estado_pedido(p_wa_id)`. Campos: `fuente`
+  ESCRIBEN las funciones de despacho (shopify-webhook/shipday-status/wati-order) vía `upsertPedido()`
+  (best-effort) con upsert por **(fuente, pedido_ref)**; la LEE el bot vía RPC `estado_pedido(p_wa_id)`. Campos: `fuente`
   (shopify/wati/shipday/manual), `pedido_ref`, `estado` (normalizado: nuevo/asignado/en_camino/entregado/
   fallido/cancelado), `estado_raw`, `metodo` (propia/servientrega/retiro_agente_verde/asesor), `tracking`,
   `total_usd`, `resumen`. **PII-light** (sin dirección/cédula/pago). Contrato: `docs/handoff-pedidos-conciencia.md`.
@@ -706,14 +711,15 @@ Eventos WATI suscritos (necesarios): **Message Received**, **Session Message Sen
     Pendiente/futuro: (a) medir en prod (cuántas asistencias/cold-returns, falsos positivos) y calibrar
     umbrales; (b) extender cold-return a handoffs por keyword (hoy solo cuando hubo un asesor real);
     (c) afinar `BASIC_INFO_RE` según lo que pregunten de verdad.
-14. **Conciencia de pedidos (v48): ✅ lado LECTOR listo en el repo** (tool `estado_pedido` + RPC/tabla
-    `pedidos`, validada en Postgres local; falta APLICAR la migración). Pendiente: (a) **versionar en este
-    repo las funciones de despacho Shipday/Shopify** (shopify-webhook/shipday-status/wati-order — el código
-    real vive en el proyecto Supabase + un repo Node canónico con pruebas; NO reconstruir de memoria) y
-    agregarles el upsert a `pedidos` (contrato en `docs/handoff-pedidos-conciencia.md`); (b) emparejar el
-    deploy de v48 con ≥1 escritor (aporta valor solo cuando algo escribe la tabla); (c) opcional: derivar el
-    `metodo` por sector desde `resolver_tarifa` (fuente única) en vez del nombre del método de envío;
-    (d) purga futura de pedidos entregados/cancelados viejos (como `ref_codes`).
+14. **Conciencia de pedidos (v48): ✅ LECTOR + ESCRITORES + unificación hechos.** (a) ✅ lector: tool
+    `estado_pedido` + RPC/tabla `pedidos`; (b) ✅ **Opción A: unido el puente Tookan→Shipday al repo** (git
+    merge de la rama real, con sus pruebas Node) y **las 3 funciones de despacho cablean `upsertPedido()`** a
+    `pedidos` por (fuente, pedido_ref). Pendiente: **APLICAR la migración** `20260707120000_pedidos.sql` +
+    (re)desplegar las funciones de despacho ya cableadas y `copilot-webhook`; confirmar convergencia
+    (`orderNumber` de Shipday = número de Shopify). Opcional a futuro: (c) derivar el `metodo` por sector desde
+    `resolver_tarifa` (fuente única) si Shipday empieza a rutear servientrega/retiro; (d) purga de pedidos
+    entregados/cancelados viejos (como `ref_codes`); (e) la libreta `contacts` del puente puede cruzarse con el
+    CDP por `wa_id` como el resto.
 
 ## Cómo leer el estado real (debugging)
 - Código en vivo: `get_edge_function` o healthcheck GET. Esquema: `list_tables`.

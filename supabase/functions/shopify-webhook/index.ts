@@ -5,9 +5,11 @@
 import {
   createShipdayOrder,
   json,
+  normalizePhone,
   shopifyOrderToShipday,
   shouldDispatchShopifyOrder,
 } from '../_shared/shipday.ts';
+import { upsertPedido } from '../_shared/db.ts';
 
 async function verifyShopifyHmac(rawBody: string, hmacHeader: string): Promise<boolean> {
   const secret = Deno.env.get('SHOPIFY_WEBHOOK_SECRET');
@@ -42,6 +44,19 @@ Deno.serve(async (req) => {
     const order = shopifyOrderToShipday(shopifyOrder);
     const result = await createShipdayOrder(order);
     console.log(`Pedido Shopify ${order.orderNumber} enviado a Shipday`);
+    // v48: conciencia de pedidos — deja el estado en `pedidos` para el copiloto (best-effort, no rompe).
+    // Va a Shipday porque pasó el filtro de entrega local → método 'propia'. estado 'nuevo' (o 'cancelado').
+    await upsertPedido({
+      wa_id: normalizePhone(String(order.customerPhoneNumber ?? '')),
+      fuente: 'shopify',
+      pedido_ref: String(order.orderNumber),
+      shopify_order_id: shopifyOrder.id != null ? String(shopifyOrder.id) : null,
+      estado: shopifyOrder.cancelled_at ? 'cancelado' : 'nuevo',
+      estado_raw: shopifyOrder.financial_status ?? null,
+      metodo: 'propia',
+      total_usd: Number(shopifyOrder.total_price) || null,
+      resumen: (shopifyOrder.line_items || []).map((li: any) => `${li.quantity}x ${li.title}`).slice(0, 3).join(', ') || null,
+    });
     return json({ ok: true, shipday: result });
   } catch (err) {
     console.error('Error Shopify→Shipday:', (err as Error).message);

@@ -36,48 +36,25 @@ WATI→Shipday (despacho)        ──► wati-order       ─┘        (RPC e
 **Privacidad:** NO se guarda aquí dirección, cédula, RUC ni datos de pago (el bot no los necesita para decir
 el estado). Retención: purga futura por `created_at` (entregados/cancelados viejos), como `ref_codes`.
 
-## Contrato de ESCRITURA (lo que cada función de despacho debe hacer)
+## Implementación (v48 — YA CABLEADA en este repo)
 
-Cada escritor hace **un upsert** sobre SU id externo. Ejemplo con `@supabase/supabase-js` (el mismo cliente
-`service_role` que ya usan las funciones); adaptar a su helper `_shared/db.ts` si usan PostgREST directo.
+Cada escritor llama al helper **`upsertPedido()`** (`supabase/functions/_shared/db.ts`), que hace el upsert por
+**`(fuente, pedido_ref)`** vía PostgREST (`Prefer: resolution=merge-duplicates`, `on_conflict=fuente,pedido_ref`),
+**best-effort y null-safe** (nunca lanza: un fallo aquí no rompe el despacho ni la notificación; con timeout para
+no colgar la respuesta; solo envía los campos con valor, así una fila `shipday` no pisa el `metodo`/`total` de la
+`shopify`). El teléfono se normaliza a dígitos con código de país (`normalizePhone` → strip `\D`) para cruzar con
+el `waId` de WATI. Quedó cableado así:
 
-### 1) `shopify-webhook` — al recibir el pedido (orders/create o orders/paid)
-```ts
-const waId = normalizePhone(order.customer?.phone || order.shipping_address?.phone); // dígitos, sin '+'
-const metodo = metodoDeShopify(order); // ver mapeo abajo (SHOPIFY_DELIVERY_FILTER / resolver_tarifa)
-await sb.from("pedidos").upsert({
-  wa_id: waId,
-  fuente: "shopify",
-  pedido_ref: order.name,                 // "#1001"
-  shopify_order_id: String(order.id),     // arbitro del upsert
-  estado: order.cancelled_at ? "cancelado" : "nuevo",
-  estado_raw: order.financial_status,     // "paid" / "pending" …
-  metodo,
-  total_usd: Number(order.total_price) || null,
-  resumen: (order.line_items || []).map(li => `${li.quantity}x ${li.title}`).slice(0,3).join(", ") || null,
-  updated_at: new Date().toISOString(),
-}, { onConflict: "shopify_order_id" });
-```
+- **`shopify-webhook`** (tras `createShipdayOrder` OK): `fuente:'shopify'`, `pedido_ref:String(order.orderNumber)`,
+  `estado: cancelled_at ? 'cancelado' : 'nuevo'`, `metodo:'propia'` (pasó el filtro de entrega local → reparto
+  propio), `total_usd`, `resumen` (líneas), `shopify_order_id`.
+- **`shipday-status`** (tras parsear el evento): `fuente:'shipday'`, `pedido_ref:event.orderNumber`,
+  `estado: estadoNormalizado(event.status)` (helper en `_shared/status.ts`), `estado_raw`, `tracking`, `metodo:'propia'`.
+- **`wati-order`** (tras `createShipdayOrder` OK): `fuente:'wati'`, `pedido_ref:String(order.orderNumber)`,
+  `estado:'nuevo'`, `metodo:'propia'`, `total_usd`, `resumen`.
 
-### 2) `shipday-status` — al recibir el webhook de estado de Shipday
-```ts
-const ev = parseShipdayStatusEvent(body);          // ya existe en _shared/status.ts
-const waId = normalizePhone(ev.customerPhone);      // dígitos, sin '+'
-await sb.from("pedidos").upsert({
-  wa_id: waId,
-  fuente: "shipday",
-  pedido_ref: ev.orderNumber,                       // OBLIGATORIO = order.name de Shopify (converge; ver ⚠)
-  shipday_order_id: String(ev.shipdayOrderId),      // arbitro del upsert
-  estado: ESTADO_SHIPDAY[ev.status] ?? "desconocido",
-  estado_raw: ev.status,                            // ORDER_ASSIGNED / ONTHEWAY / …
-  tracking: ev.trackingUrl ?? null,
-  updated_at: new Date().toISOString(),
-}, { onConflict: "shipday_order_id" });
-```
-
-### 3) `wati-order` — al despachar un pedido capturado por WATI hacia Shipday
-Igual que (2) pero `fuente: "wati"`, con el `shipday_order_id` que devuelva `createShipdayOrder(...)` y el
-`metodo` conocido (casi siempre `propia`). `pedido_ref` = el número/ref que se le asigne.
+El copiloto frasea el `estado` NORMALIZADO (no el crudo). `estadoNormalizado` (en `_shared/status.ts`) mapea el
+vocabulario de Shipday (el mismo que `STATUS_MESSAGES`).
 
 ## Mapeos
 
@@ -91,21 +68,21 @@ const ESTADO_SHIPDAY = {
 } as Record<string, string>; // ajustar a los estados EXACTOS que emita su cuenta Shipday
 ```
 
-**Método (`metodoDeShopify`)** — el mismo criterio que ya usa `shouldDispatchShopifyOrder`
-(`SHOPIFY_DELIVERY_FILTER` sobre `shipping_lines[].title/code`): si el envío es de reparto propio → `propia`;
-si es Servientrega a domicilio → `servientrega`; si es retiro en agente verde → `retiro_agente_verde`. A
-futuro, la fuente única del método por sector es el RPC `resolver_tarifa(lugar)` (data layer de zonas), para
-no duplicar la lógica.
+**Método** — en la implementación actual, todo pedido que llega a Shipday pasó el filtro de entrega local
+(`shouldDispatchShopifyOrder` / `SHOPIFY_DELIVERY_FILTER`) → es reparto **propio**, así que los tres escritores
+ponen `metodo:'propia'`. A futuro, si Shipday también rutea servientrega/retiro, la fuente única del método por
+sector es el RPC `resolver_tarifa(lugar)` (data layer de zonas), para no duplicar la lógica.
 
 **wa_id** — SIEMPRE dígitos sin `+`, con código de país (`normalizePhone` de `_shared/shipday.ts`, que ya
 maneja Panamá +507). El RPC de lectura normaliza ambos lados, pero guardar normalizado mantiene el índice útil.
 
 ## Convergencia (⚠ dos reglas OBLIGATORIAS para los escritores)
 
-`shopify-webhook` inserta con `shopify_order_id`; `shipday-status` con `shipday_order_id`. Un mismo pedido
-real deja **2 filas**. El RPC las agrupa por `pedido_ref`, toma el estado de la fila de MAYOR avance de
-entrega (para que un evento tardío no lo haga retroceder) y fusiona los campos estables no nulos (probado en
-Postgres local). Para que eso funcione, los escritores DEBEN cumplir:
+Cada escritor hace upsert por **`(fuente, pedido_ref)`**: un mismo pedido real deja una fila `shopify` y una
+`shipday` (el webhook de `shipday-status` NO trae un id interno de Shipday, así que el NÚMERO de pedido es la
+llave común). El RPC las agrupa por `pedido_ref`, toma el estado de la fila de MAYOR avance de entrega (para
+que un evento tardío no lo haga retroceder) y fusiona los campos estables no nulos (probado en Postgres
+local). Para que la fusión sea correcta, los escritores DEBEN cumplir:
 
 1. **`pedido_ref` COMPARTIDO (obligatorio, no opcional).** Ambos escritores deben poner el MISMO
    `pedido_ref` = el número de pedido de Shopify (`order.name`). Al crear el pedido Shipday desde
@@ -123,12 +100,12 @@ Postgres local). Para que eso funcione, los escritores DEBEN cumplir:
 - ✅ **Copiloto (lector):** tool `estado_pedido` + RPC + fraseo — **en este repo (v48)**, con golden tests.
 - ✅ **Tabla + RPC:** migración `20260707120000_pedidos.sql` — validada en Postgres local; **falta aplicarla**
   en Supabase (SQL Editor).
-- ⏳ **Escritores (shopify-webhook / shipday-status / wati-order):** viven en el proyecto Supabase
-  `jbigmlcalcwiphqeudxd` y en un repo canónico Node (con pruebas). **Pendiente versionarlos en este repo** y
-  agregarles el upsert de arriba. Para hacerlo con el código REAL (no reconstruido de memoria), traer los
-  archivos vía una sesión con el MCP de GitHub/Supabase autorizado, o pegarlos por Browse.
+- ✅ **Escritores (shopify-webhook / shipday-status / wati-order):** versionados en este repo (merge de la
+  rama del puente Shipday) y CABLEADOS con `upsertPedido` (best-effort, no rompe el despacho). Node tests
+  18/18, golden 172/172. Se despliegan con `--no-verify-jwt` (ver `docs/despliegue-supabase.md` + `config.toml`).
 
 > Nota de despliegue: el lector (v48) es **seguro de desplegar aunque la tabla esté vacía** — si no hay filas,
-> `estado_pedido` devuelve `sin_pedidos` y el bot deriva con calma. Pero solo aporta valor una vez que exista
-> al menos un escritor. Recomendado: aplicar la migración y cablear `shopify-webhook` (el escritor de mayor
-> cobertura) antes o junto con el deploy de v48.
+> `estado_pedido` devuelve `sin_pedidos` y el bot deriva con calma. Para que aporte valor: (1) aplicar la
+> migración `20260707120000_pedidos.sql`; (2) desplegar/re-desplegar las funciones de despacho (ya cableadas)
+> y el `copilot-webhook`; (3) confirmar que el pedido de Shipday lleva `orderNumber` = el número de pedido de
+> Shopify (convergencia). El escritor de mayor cobertura es `shopify-webhook`.

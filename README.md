@@ -9,6 +9,15 @@ sombra por seguridad.
 > **Lee `CLAUDE.md`** para el contexto completo (arquitectura, decisiones,
 > guardrails, roadmap). Es la fuente de verdad para trabajar este repo.
 
+## Dos subsistemas en este repo
+
+Este repositorio unifica dos piezas del stack de QSP que comparten la llave natural `wa_id` (teléfono):
+
+1. **Copiloto de WATI** (`supabase/functions/copilot-webhook/`) — el asistente de IA de WhatsApp. Es el tema principal de este README y de `CLAUDE.md`.
+2. **Puente de entregas Tookan→Shipday** (`supabase/functions/{shopify-webhook,shipday-status,wati-order,wati-address,contacts-lookup}/` + `_shared/`, y el servicio Node en `src/` con pruebas en `test/`) — despacha pedidos de Shopify/WATI a Shipday y notifica el estado de entrega. Guía completa en **[`docs/shipday-bridge.md`](docs/shipday-bridge.md)** (despliegue: `docs/despliegue-supabase.md` / `docs/despliegue-render.md`).
+
+**Puente entre ambos (v48):** las funciones de despacho escriben el estado del pedido en la tabla `pedidos` y el copiloto la LEE (tool `estado_pedido`) para responder "¿dónde está mi pedido?" sin inventar. Contrato: `docs/handoff-pedidos-conciencia.md`.
+
 ## Stack
 - **Supabase** proyecto `jbigmlcalcwiphqeudxd` (qsp-wati-copilot) — separado del
   CDP. Edge function Deno/TS + Postgres.

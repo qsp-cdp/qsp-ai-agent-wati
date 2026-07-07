@@ -3,6 +3,11 @@ project_id = "jbigmlcalcwiphqeudxd"
 
 # Los webhooks externos (Shopify, Shipday, WATI) no envían JWT de Supabase;
 # la seguridad la dan la firma HMAC de Shopify y los tokens propios.
+# El copiloto también es un webhook público (guardado por ?key=): verify_jwt debe quedar en false
+# para que un `supabase functions deploy` general no le active JWT por defecto y deje mudo al bot.
+[functions.copilot-webhook]
+verify_jwt = false
+
 [functions.shopify-webhook]
 verify_jwt = false
 

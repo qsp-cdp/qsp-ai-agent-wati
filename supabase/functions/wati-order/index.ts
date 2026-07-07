@@ -9,7 +9,7 @@
 // antes por wati-address). Crea la orden en Shipday y, salvo notificar=false,
 // anuncia al cliente por WhatsApp que su pedido va a preparación para envío.
 import { createShipdayOrder, HttpError, json, resolveMapsCoords, watiCaptureToShipday } from '../_shared/shipday.ts';
-import { findContactByPhone, upsertContactByPhone } from '../_shared/db.ts';
+import { findContactByPhone, upsertContactByPhone, upsertPedido } from '../_shared/db.ts';
 import { sendWatiSessionMessage } from '../_shared/watiapi.ts';
 
 Deno.serve(async (req) => {
@@ -52,6 +52,17 @@ Deno.serve(async (req) => {
     const order = watiCaptureToShipday(capture);
     const result = await createShipdayOrder(order);
     console.log(`Pedido WATI ${order.orderNumber} enviado a Shipday`);
+
+    // v48: conciencia de pedidos — deja el pedido en `pedidos` para el copiloto (best-effort, reparto propio).
+    await upsertPedido({
+      wa_id: String(order.customerPhoneNumber ?? ''),   // watiCaptureToShipday ya normalizó a +507…
+      fuente: 'wati',
+      pedido_ref: String(order.orderNumber),
+      estado: 'nuevo',
+      metodo: 'propia',
+      total_usd: capture.total != null ? Number(capture.total) || null : null,
+      resumen: capture.pedido ? String(capture.pedido).slice(0, 120) : null,
+    });
 
     try {
       await upsertContactByPhone({

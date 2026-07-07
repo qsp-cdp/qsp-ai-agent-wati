@@ -3,8 +3,9 @@
 //   https://<PROJECT_REF>.supabase.co/functions/v1/shipday-status?token=<SHIPDAY_WEBHOOK_TOKEN>
 // Registra cada evento; si WATI_NOTIFY=true reenvía el aviso al cliente por
 // WhatsApp vía WATI (apagado por defecto: Shipday ya notifica por WhatsApp).
-import { json } from '../_shared/shipday.ts';
-import { parseShipdayStatusEvent, sendWatiSessionMessage, statusMessageFor } from '../_shared/status.ts';
+import { json, normalizePhone } from '../_shared/shipday.ts';
+import { estadoNormalizado, parseShipdayStatusEvent, sendWatiSessionMessage, statusMessageFor } from '../_shared/status.ts';
+import { upsertPedido } from '../_shared/db.ts';
 
 Deno.serve(async (req) => {
   if (req.method !== 'POST') return json({ error: 'Método no permitido' }, 405);
@@ -20,6 +21,18 @@ Deno.serve(async (req) => {
   }
   const event = parseShipdayStatusEvent(payload);
   console.log(`Shipday: pedido ${event.orderNumber || '?'} → ${event.status || 'evento sin estado'}`);
+
+  // v48: conciencia de pedidos — actualiza el estado de entrega en `pedidos` para el copiloto (best-effort).
+  // La fila 'shipday' converge con la 'shopify' por (fuente, pedido_ref); el RPC toma el estado más avanzado.
+  await upsertPedido({
+    wa_id: normalizePhone(event.customerPhone),
+    fuente: 'shipday',
+    pedido_ref: event.orderNumber,
+    estado: estadoNormalizado(event.status),
+    estado_raw: event.status || null,
+    tracking: event.trackingUrl || null,
+    metodo: 'propia',
+  });
 
   if (Deno.env.get('WATI_NOTIFY') === 'true' && event.customerPhone) {
     const message = statusMessageFor(event);

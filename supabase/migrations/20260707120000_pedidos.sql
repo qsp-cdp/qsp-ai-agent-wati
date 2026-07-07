@@ -38,12 +38,13 @@ create index if not exists pedidos_wa_id_updated_idx on public.pedidos (wa_id, u
 -- aunque una fila se hubiera guardado con "+507"/espacios (los escritores deben guardar dígitos, ver doc).
 create index if not exists pedidos_wa_norm_idx on public.pedidos ((regexp_replace(wa_id, '\D', '', 'g')));
 
--- Upsert por cada escritor sobre SU id externo. UNIQUE simple (no parcial): en Postgres los NULL son
--- distintos entre sí, así que muchas filas SIN ese id conviven, y el id no-nulo queda único → el escritor
--- puede hacer `on conflict (shopify_order_id) do update ...` sin predicado. (Un pedido real puede dejar una
--- fila 'shopify' y otra 'shipday'; la lectura deduplica por número de pedido y devuelve la más fresca.)
-create unique index if not exists pedidos_shopify_order_id_key on public.pedidos (shopify_order_id);
-create unique index if not exists pedidos_shipday_order_id_key on public.pedidos (shipday_order_id);
+-- Convergencia / arbitro del upsert = (fuente, pedido_ref). Cada escritor (shopify-webhook / shipday-status
+-- / wati-order) conoce el NÚMERO de pedido; en cambio shipday-status NO trae un id interno de Shipday en su
+-- webhook, así que (fuente, pedido_ref) es la llave natural común. Un pedido real deja una fila 'shopify' y
+-- una 'shipday' con el MISMO pedido_ref → el RPC las agrupa y fusiona (estado por rango de avance, atributos
+-- no nulos). pedido_ref nulo (entradas manuales) → varias filas conviven (en un índice compuesto un NULL
+-- hace la fila distinta). shopify_order_id/shipday_order_id quedan como columnas de referencia (sin unicidad).
+create unique index if not exists pedidos_fuente_ref_key on public.pedidos (fuente, pedido_ref);
 
 -- RLS on, solo service_role (el ?key= del webhook es el guard; RLS sin policies = solo service_role).
 alter table public.pedidos enable row level security;
@@ -116,8 +117,11 @@ $$;
 grant execute on function public.estado_pedido(text) to service_role;
 
 -- Verificación (correr aparte):
---   insert into public.pedidos (wa_id, fuente, pedido_ref, shopify_order_id, estado, metodo)
---     values ('50761234567','shopify','#1001','gid://shopify/Order/1001','en_camino','propia')
---     on conflict (shopify_order_id) do update set estado=excluded.estado, updated_at=now();
---   select public.estado_pedido('+507 6123-4567');   -- ok, 1 pedido #1001 en_camino propia
+--   insert into public.pedidos (wa_id, fuente, pedido_ref, estado, metodo, total_usd)
+--     values ('50761234567','shopify','1001','nuevo','propia',127)
+--     on conflict (fuente, pedido_ref) do update set estado=excluded.estado, updated_at=now();
+--   insert into public.pedidos (wa_id, fuente, pedido_ref, estado, tracking)
+--     values ('50761234567','shipday','1001','en_camino','https://track/abc')
+--     on conflict (fuente, pedido_ref) do update set estado=excluded.estado, tracking=excluded.tracking, updated_at=now();
+--   select public.estado_pedido('+507 6123-4567');   -- ok, 1 pedido 1001 en_camino (rank) + metodo propia + total
 --   select public.estado_pedido('50769999999');       -- sin_pedidos
