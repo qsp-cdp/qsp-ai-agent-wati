@@ -32,7 +32,7 @@ docs/base-conocimiento-qsp.md              # base de conocimiento del negocio (f
 supabase/
   functions/copilot-webhook/index.ts       # la edge function (v48 en repo, incluye v46+v47; v45 EN VIVO, probando Sonnet 5)
 tests/golden.mjs                            # golden tests (regex + helpers, extraídos del index.ts real) — node tests/golden.mjs
-  migrations/*.sql                          # esquema reproducible (12 migraciones; v48 añade la tabla/RPC pedidos)
+  migrations/*.sql                          # esquema reproducible (16 migraciones; v48 añade pedidos + el puente Shipday trae contacts/contacts_envio/contacts_grant)
 deploy.ps1                                  # deploy byte-exacto por CLI + verificación de healthcheck
 web/
   envios-interior-sucursal.html            # página de envíos al interior (45 sucursales)

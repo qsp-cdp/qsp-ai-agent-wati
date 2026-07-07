@@ -430,6 +430,10 @@ Migraciones (ver `supabase/migrations/`):
 `store_facts` (Fase 1.5 — **aplicada**, 17 datos reales),
 `20260624180000_ref_codes` (v28 — **aplicada**, stitching WhatsApp→web),
 `20260630160000_messages_cache_tokens` (v38 — **aplicada**, 2 columnas de telemetría de caché),
+`20260701000000_contacts` + `20260703000000_contacts_envio` (puente Shipday — libreta de direcciones desde
+Tookan; **en prod desde 01-jul**; llegaron al repo con el merge de Opción A),
+`20260707130000_contacts_grant` (v48 — **FALTA APLICAR/verificar**, `grant … contacts to service_role` que
+faltaba en la migración original; idempotente),
 `20260706170000_zonas_entrega` (v47 — **aplicada**, tablas `zonas_entrega`+`sectores_entrega` [419 sectores de
 Panamá+San Miguelito] + RPC `resolver_tarifa`, fuente ÚNICA de envíos por sector),
 `20260706180000_zonas_este_retiro` (v47 — **aplicada**, refactor de la zona este: retiro $6 / puerta $9 / asesor),

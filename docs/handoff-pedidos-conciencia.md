@@ -25,8 +25,8 @@ WATI→Shipday (despacho)        ──► wati-order       ─┘        (RPC e
 |---|---|
 | `wa_id` | teléfono en **dígitos, sin `+`** (ej. `50761234567`). Debe coincidir con el `waId` de WATI. |
 | `fuente` | `shopify` \| `wati` \| `shipday` \| `manual` |
-| `pedido_ref` | número visible del pedido (ej. `#1001`) — **clave de convergencia** entre filas |
-| `shopify_order_id` / `shipday_order_id` | id externo — **arbitro del upsert** de cada escritor (UNIQUE) |
+| `pedido_ref` | número del pedido, canónico (se le quita el `#`: `#1001`→`1001`) — **clave de convergencia** y ARBITRO del upsert junto con `fuente` (UNIQUE `(fuente, pedido_ref)`) |
+| `shopify_order_id` / `shipday_order_id` | id externo, solo REFERENCIA (nullable; `shopify-webhook` graba `shopify_order_id`; `shipday_order_id` hoy no se usa — el webhook de Shipday no lo trae) |
 | `estado` | **normalizado**: `nuevo`,`asignado`,`en_camino`,`entregado`,`fallido`,`cancelado`,`desconocido` |
 | `estado_raw` | estado crudo del proveedor (no perder fidelidad) |
 | `metodo` | `propia`\|`servientrega`\|`retiro_agente_verde`\|`asesor` (amarra al modelo de zonas) — nullable |
@@ -84,16 +84,18 @@ llave común). El RPC las agrupa por `pedido_ref`, toma el estado de la fila de 
 que un evento tardío no lo haga retroceder) y fusiona los campos estables no nulos (probado en Postgres
 local). Para que la fusión sea correcta, los escritores DEBEN cumplir:
 
-1. **`pedido_ref` COMPARTIDO (obligatorio, no opcional).** Ambos escritores deben poner el MISMO
-   `pedido_ref` = el número de pedido de Shopify (`order.name`). Al crear el pedido Shipday desde
-   `shopify-webhook`, pasa `order.name` como `orderNumber` de Shipday; así `shipday-status` lo devuelve en
-   `ev.orderNumber` y las dos filas caen en el mismo grupo. Si NO comparten `pedido_ref`, el bot mostraría el
-   mismo pedido dos veces con estados contradictorios (hallazgo de la revisión adversarial).
-2. **`shopify-webhook` NO debe pisar `estado` con `'nuevo'` en eventos posteriores.** Escribe `estado` solo al
-   CREAR (`'nuevo'`) y al CANCELAR (`'cancelado'`). Si te suscribes a `orders/updated`/fulfillment, en esos
-   upserts NO incluyas `estado` (déjalo fuera del objeto), para no retroceder el estado de entrega que ya
-   escribió `shipday-status`. El RPC además rankea el avance como segunda línea de defensa, pero un `'nuevo'`
-   tardío con un `pedido_ref` distinto rompería la regla 1 igual: cumple las dos.
+1. **`pedido_ref` COMPARTIDO.** Las dos filas deben caer en el mismo `pedido_ref`. En la implementación actual
+   (webhook propio de Shopify, la app nativa de Shipday está desinstalada — ver `docs/shipday-bridge.md`),
+   `shopify-webhook` crea la orden Shipday con `orderNumber = String(order.order_number)` (ej. `1001`), y
+   `shipday-status` recibe ese mismo `orderNumber` de vuelta → convergen. **Blindaje:** `upsertPedido`
+   CANONIZA el `pedido_ref` quitándole el `#` inicial, así aunque la app NATIVA de Shipday devolviera `#1001`,
+   ambas filas caen en `1001`. Si un día se reactiva la integración nativa, verifica que el `orderNumber` que
+   Shipday reporta canonice igual que el `order_number` de Shopify (si no, el bot mostraría el pedido dos veces).
+2. **Un evento NO mapeado no degrada el estado (ya cableado).** `shipday-status` OMITE `estado` cuando
+   `estadoNormalizado` da `'desconocido'` (evento de edición/reasignación tras `'en_camino'`) para no pisar un
+   estado bueno; el `estado_raw`/`tracking` sí se actualizan. Y `shopify-webhook` escribe `estado` solo al
+   CREAR (`'nuevo'`)/CANCELAR (`'cancelado'`); si a futuro se suscribe a `orders/updated`, que NO incluya
+   `estado` en esos upserts. El RPC además rankea el avance como segunda línea de defensa.
 
 ## Estado del cableado
 

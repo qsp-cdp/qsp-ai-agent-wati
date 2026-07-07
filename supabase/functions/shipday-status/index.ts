@@ -24,11 +24,15 @@ Deno.serve(async (req) => {
 
   // v48: conciencia de pedidos — actualiza el estado de entrega en `pedidos` para el copiloto (best-effort).
   // La fila 'shipday' converge con la 'shopify' por (fuente, pedido_ref); el RPC toma el estado más avanzado.
+  // Un evento NO mapeado ('desconocido' — p.ej. edición/reasignación que Shipday manda tras 'en_camino') NO
+  // debe DEGRADAR un estado bueno ya guardado: se OMITE `estado` en ese caso (se conserva el previo; el
+  // tracking y el estado_raw sí se actualizan). El rank del RPC no basta aquí porque es una sola fila 'shipday'.
+  const estadoEvt = estadoNormalizado(event.status);
   await upsertPedido({
     wa_id: normalizePhone(event.customerPhone),
     fuente: 'shipday',
     pedido_ref: event.orderNumber,
-    estado: estadoNormalizado(event.status),
+    estado: estadoEvt === 'desconocido' ? undefined : estadoEvt,
     estado_raw: event.status || null,
     tracking: event.trackingUrl || null,
     metodo: 'propia',

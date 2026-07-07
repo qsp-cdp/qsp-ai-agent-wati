@@ -96,7 +96,9 @@ export interface PedidoUpsert {
 export async function upsertPedido(p: PedidoUpsert): Promise<void> {
   try {
     const wa = String(p.wa_id ?? '').replace(/\D/g, '');
-    const ref = String(p.pedido_ref ?? '').trim();
+    // Canónico: "#1001" y "1001" deben CONVERGER (la app nativa de Shipday devolvería "#1001" mientras
+    // shopify-webhook graba "1001"). Se quita el '#' inicial para que la fila shopify y la shipday agrupen.
+    const ref = String(p.pedido_ref ?? '').trim().replace(/^#+/, '');
     if (wa.length < 6 || !ref) return; // sin llave útil (teléfono/número) no escribimos
     const row: Record<string, unknown> = {
       wa_id: wa, fuente: p.fuente, pedido_ref: ref, updated_at: new Date().toISOString(),
