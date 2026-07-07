@@ -56,8 +56,11 @@ con certeza, y calla/deriva cuando es mejor que responda un humano. Tienda:
   rastreo/guía/estado del pedido/cuándo me llega". La tabla `pedidos` la ESCRIBEN las funciones de despacho
   Shipday/Shopify (upsert); **ese lado FALTA versionar en el repo** (código real en el proyecto Supabase +
   repo Node canónico) — contrato listo en `docs/handoff-pedidos-conciencia.md`. **CAMBIO DE ESQUEMA:**
-  `20260707120000_pedidos.sql` (tabla + RPC, validada en Postgres local; FALTA APLICAR). 160 golden tests
-  (incluye frasearPedido: nunca inventa; estado_pedido fuera de asistencia). **Seguro de desplegar aunque la
+  `20260707120000_pedidos.sql` (tabla + RPC, validada en Postgres local; FALTA APLICAR). 172 golden tests
+  (incluye frasearPedido: nunca inventa; estado_pedido fuera de asistencia). **Revisión adversarial pre-commit
+  (2 agentes, verificación mecánica):** cerró F1 (no filtrar el array crudo al modelo), la regresión de
+  `estado` en el merge del RPC (rank de avance de entrega → un evento tardío no lo hace retroceder), colisión
+  de clave y falsos positivos del regex ("arrastre"/"guía de instalación"). **Seguro de desplegar aunque la
   tabla esté vacía** (cae a `sin_pedidos` → deriva), pero solo aporta valor con ≥1 escritor cableado.
   Reescribe el caché de v35 (re-warm). Emparejarlo con el deploy de `shopify-webhook` (el escritor de mayor
   cobertura) o aplicar la migración + cablear ese upsert primero.

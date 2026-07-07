@@ -721,11 +721,14 @@ const NEEDS_TOOL_RE = new RegExp([
   //     que antes de v45 (paridad); con cualquier palabra de catálogo ("tinta 954xl") sí.
   "\\b(?![a-z]{1,2}(?:-\\d+){2,}\\b)(?=[a-z0-9#-]*[a-z])(?=[a-z0-9#-]*\\d)[a-z0-9]+(?:[-#][a-z0-9]+)+\\b",
   "\\b(?=[a-z0-9]{4,10}\\b)(?=[a-z0-9]*[a-z][a-z0-9]*\\d)[a-z0-9]+\\b",
-  // v48: ESTADO/seguimiento de un PEDIDO ya hecho → fuerza tool (estado_pedido). Targeted: NO incluye
-  // "pedido"/"orden" a secas para no forzar en "quiero hacer un pedido" (eso es venta, otra tool).
-  "\\bmi(s)? pedido", "\\bmi orden\\b", "\\bmi compra\\b", "\\bmi paquete\\b",
-  "rastre", "seguimiento", "\\btracking\\b", "\\bgu[ií]a\\b", "n[uú]mero de (gu[ií]a|orden|pedido|seguimiento)",
-  "estado (de|del) (mi )?(pedido|orden|env[ií]o|entrega)", "cu[aá]ndo (me )?(llega|entregan|lleg[oó])", "ya (sali[oó]|despach)",
+  // v48: ESTADO/seguimiento de un PEDIDO ya hecho → fuerza tool (estado_pedido). Targeted (revisión
+  // adversarial): NO "pedido/orden" a secas (no forzar en "quiero hacer un pedido"); NO "guía"/"seguimiento"
+  // sueltos (evita "guía de instalación", "seguimiento médico"); "\\brastre" con borde evita "arrastre".
+  "\\bmis? (pedidos?|[oó]rden(es)?|compras?|paquetes?)\\b",
+  "\\brastre", "\\btracking\\b", "n[uú]mero de (gu[ií]a|orden|pedido|seguimiento|rastreo)",
+  "seguimiento (de(l)? )?(mi |su |el |la )?(pedido|orden|env[ií]o|entrega|paquete|compra|gu[ií]a)",
+  "estado (de(l)? )?(mi |su |la |el )?(pedido|orden|env[ií]o|entrega|compra)",
+  "cu[aá]ndo (me |le )?(llega|entregan|lleg[oó])", "ya (sali[oó]|despach)",
 ].join("|"), "i");
 
 // v31 — pregunta BÁSICA de tienda que el bot SÍ puede adelantar mientras un asesor está ausente
@@ -1109,7 +1112,11 @@ function frasearPedido(v: any): Record<string, unknown> {
     cancelado: "figura como cancelado",
     desconocido: "está en proceso",
   };
-  if (v?.estado !== "ok" || !Array.isArray(v?.pedidos) || !v.pedidos.length) {
+  // Filtra elementos no-objeto (defensa, finding 7: el RPC nunca los emite, pero un jsonb raro no debe
+  // tumbar la respuesta). Si no queda nada usable → sin_pedidos (deriva; no afirma que no tiene pedidos).
+  const items = (v?.estado === "ok" && Array.isArray(v?.pedidos))
+    ? v.pedidos.filter((p: any) => p && typeof p === "object") : [];
+  if (!items.length) {
     return { estado: "sin_pedidos",
       respuesta_sugerida: "No veo el estado de un pedido a su nombre en este momento. Con gusto un asesor se lo confirma; si tiene el número de pedido a mano, compártalo y lo revisamos." };
   }
@@ -1121,10 +1128,10 @@ function frasearPedido(v: any): Record<string, unknown> {
     }
     return s;
   };
-  const msg = v.pedidos.length === 1
-    ? frase(v.pedidos[0])
+  const msg = items.length === 1
+    ? frase(items[0])
     : "Encontré estos pedidos a su nombre: " +
-      v.pedidos.map((p: any) => `${p.pedido_ref || "s/n"} (${FRASE[p.estado] || "en proceso"})`).join("; ") + ".";
+      items.map((p: any) => `${p.pedido_ref || "un pedido"} (${FRASE[p.estado] || "en proceso"})`).join("; ") + ".";
   // v48 (revisión adversarial F1): devolver SOLO la respuesta fraseada en CÓDIGO — NO el array crudo de
   // pedidos. Si se pasara `v.pedidos` al modelo, vería estado_raw/total_usd/resumen (p.ej. un "ETA 07/08
   // 3:45pm" en estado_raw, o un precio) y podría emitir una FECHA de entrega o un PRECIO fuera de

@@ -112,11 +112,14 @@ web/
   la tabla `pedidos` (dedup+fusión por número de pedido) y **frasea en código** (`frasearPedido`) por estado
   normalizado, con guía/tracking si hay. NUNCA inventa estado/fecha/guía; si `sin_pedidos` NO afirma que el
   cliente no tiene pedidos (vista parcial) → deriva. **NO va en MODO ASISTENCIA.** **Revisión adversarial
-  pre-commit** (2 agentes): halló y cerró F1 (no filtrar el array crudo `estado_raw`/`total_usd`/`resumen` al
-  modelo — solo el string fraseado; podía inducir una fecha/precio). La tabla la ESCRIBEN las funciones de
+  pre-commit** (2 agentes, verificación mecánica): halló y cerró F1 (no filtrar el array crudo
+  `estado_raw`/`total_usd`/`resumen` al modelo — podía inducir una fecha/precio), la regresión de `estado` en
+  el merge del RPC (un evento tardío ya NO hace retroceder el estado; se rankea el avance de entrega), una
+  colisión de clave `pedido_ref`/`id`, y falsos positivos del regex ("arrastre", "guía de instalación"). La
+  tabla la ESCRIBEN las funciones de
   despacho Shipday/Shopify (**pendientes de versionar en el repo**; contrato en
   `docs/handoff-pedidos-conciencia.md`). Migración `20260707120000_pedidos.sql` validada en Postgres local
-  (falta aplicar). 161 golden tests. Seguro de desplegar aunque la tabla esté vacía (cae a `sin_pedidos`).
+  (falta aplicar). 172 golden tests. Seguro de desplegar aunque la tabla esté vacía (cae a `sin_pedidos`).
   Acumulativo sobre v46+v47.
 - **v47 (listo para desplegar):** tarifa/método de envío por SECTOR. Nueva tool `tarifa_entrega(lugar)` que
   llama al resolver determinista de Postgres (`resolver_tarifa`; data layer `zonas_entrega`/`sectores_entrega`,

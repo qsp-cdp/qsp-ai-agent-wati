@@ -229,13 +229,15 @@ caso("retiro sin puntos: fallback, no '(null)'", !/\(null\)/.test(rNoPts.respues
 console.log("v48 NEEDS_TOOL_RE (estado de pedido)");
 // Preguntas de ESTADO de un pedido ya hecho → DEBEN forzar tool (estado_pedido).
 for (const t of ["¿dónde está mi pedido?", "ya salió mi orden", "¿cuándo me llega?", "me das el número de guía",
-  "quiero el seguimiento", "cómo rastreo mi paquete", "estado de mi pedido", "mi compra ya salió", "cuándo entregan"]) {
+  "seguimiento de mi pedido", "cómo rastreo mi paquete", "estado de mi pedido", "mi compra ya salió", "cuándo entregan",
+  "mis pedidos", "mis órdenes", "mis paquetes"]) { // plural parity (finding 5)
   caso(`estado-pedido "${t}" fuerza tool`, NEEDS_TOOL_RE.test(t));
 }
-// Targeted: "pedido/orden" a secas (intención de COMPRAR, no rastrear) NO deben forzar por los términos v48
-// (bare "pedido" quedó fuera a propósito; si trae palabra de catálogo, otra regla lo fuerza).
-for (const t of ["quiero hacer un pedido", "gracias por la compra"]) {
-  caso(`"${t}" NO fuerza por v48 (bare pedido/compra excluido)`, !NEEDS_TOOL_RE.test(t));
+// Targeted (findings 4/5): "pedido/orden" a secas (intención de COMPRAR) NO fuerzan; y las FALSAS positivas
+// que la 1ª versión dejaba pasar ("arrastre" vía "rastre"; "guía/seguimiento" sueltos) ya NO fuerzan.
+for (const t of ["quiero hacer un pedido", "gracias por la compra",
+  "seguimiento médico", "hay mucho arrastre en la fila", "¿tienen una guía de instalación?", "guía de usuario"]) {
+  caso(`"${t}" NO fuerza tool (v48 targeted)`, !NEEDS_TOOL_RE.test(t));
 }
 
 console.log("frasearPedido");
@@ -268,6 +270,16 @@ caso("multi: lista #1001 y #1002", /#1001/.test(rMulti.respuesta_sugerida) && /#
 
 const rRaro = frasearPedido(P_RARO);
 caso("estado desconocido: cae a 'en proceso', no inventa fecha", /en proceso/i.test(rRaro.respuesta_sugerida) && /#9/.test(rRaro.respuesta_sugerida) && !/\d{1,2}\s*(de|\/)/.test(rRaro.respuesta_sugerida));
+
+// finding 7 (defensa): elementos no-objeto NO deben tumbar frasearPedido.
+for (const bad of [{ estado:"ok", pedidos:[null] }, { estado:"ok", pedidos:[42, null] }, { estado:"ok", pedidos:[{}] }]) {
+  let threw = false, r;
+  try { r = frasearPedido(bad); } catch { threw = true; }
+  caso(`frasearPedido no truena con ${JSON.stringify(bad)}`, !threw && r && typeof r.respuesta_sugerida === "string");
+}
+// finding 6/1 (defensa): un pedido con ref nulo se muestra como "un pedido", nunca "s/n" ni un id interno.
+const rNullRef = frasearPedido({ estado:"ok", pedidos:[ { pedido_ref:null, estado:"en_camino" }, { pedido_ref:"#7", estado:"nuevo" } ] });
+caso("multi con ref nulo: 'un pedido', no 's/n'", /un pedido/.test(rNullRef.respuesta_sugerida) && !/s\/n/.test(rNullRef.respuesta_sugerida) && /#7/.test(rNullRef.respuesta_sugerida));
 
 // sin_pedidos / entradas basura → NUNCA afirma que el cliente no tiene pedidos; deriva a un asesor.
 for (const v of [{ estado:"sin_pedidos", wa_id:"5076" }, {}, null, { estado:"ok", pedidos:[] }, { estado:"error" }]) {

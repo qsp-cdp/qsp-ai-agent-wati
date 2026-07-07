@@ -66,7 +66,7 @@ const waId = normalizePhone(ev.customerPhone);      // dígitos, sin '+'
 await sb.from("pedidos").upsert({
   wa_id: waId,
   fuente: "shipday",
-  pedido_ref: ev.orderNumber,                       // idealmente = order.name de Shopify (converge)
+  pedido_ref: ev.orderNumber,                       // OBLIGATORIO = order.name de Shopify (converge; ver ⚠)
   shipday_order_id: String(ev.shipdayOrderId),      // arbitro del upsert
   estado: ESTADO_SHIPDAY[ev.status] ?? "desconocido",
   estado_raw: ev.status,                            // ORDER_ASSIGNED / ONTHEWAY / …
@@ -100,14 +100,23 @@ no duplicar la lógica.
 **wa_id** — SIEMPRE dígitos sin `+`, con código de país (`normalizePhone` de `_shared/shipday.ts`, que ya
 maneja Panamá +507). El RPC de lectura normaliza ambos lados, pero guardar normalizado mantiene el índice útil.
 
-## Convergencia (por qué puede haber 2 filas por pedido)
+## Convergencia (⚠ dos reglas OBLIGATORIAS para los escritores)
 
-`shopify-webhook` inserta con `shopify_order_id`; `shipday-status` con `shipday_order_id`. Si no comparten un
-id, quedan **2 filas** para el mismo pedido real. No es problema para la lectura: el RPC agrupa por
-`pedido_ref` y devuelve el **estado más fresco** fusionando los campos no nulos (probado en Postgres local:
-`#1001` sale `entregado` conservando `metodo=propia`/`total`/`resumen`). **Mejora opcional** cuando se cablee
-el código real: que `shopify-webhook` pase `order.name` como `orderNumber` de Shipday → ambos escritores caen
-en el mismo `pedido_ref` y la fusión es perfecta.
+`shopify-webhook` inserta con `shopify_order_id`; `shipday-status` con `shipday_order_id`. Un mismo pedido
+real deja **2 filas**. El RPC las agrupa por `pedido_ref`, toma el estado de la fila de MAYOR avance de
+entrega (para que un evento tardío no lo haga retroceder) y fusiona los campos estables no nulos (probado en
+Postgres local). Para que eso funcione, los escritores DEBEN cumplir:
+
+1. **`pedido_ref` COMPARTIDO (obligatorio, no opcional).** Ambos escritores deben poner el MISMO
+   `pedido_ref` = el número de pedido de Shopify (`order.name`). Al crear el pedido Shipday desde
+   `shopify-webhook`, pasa `order.name` como `orderNumber` de Shipday; así `shipday-status` lo devuelve en
+   `ev.orderNumber` y las dos filas caen en el mismo grupo. Si NO comparten `pedido_ref`, el bot mostraría el
+   mismo pedido dos veces con estados contradictorios (hallazgo de la revisión adversarial).
+2. **`shopify-webhook` NO debe pisar `estado` con `'nuevo'` en eventos posteriores.** Escribe `estado` solo al
+   CREAR (`'nuevo'`) y al CANCELAR (`'cancelado'`). Si te suscribes a `orders/updated`/fulfillment, en esos
+   upserts NO incluyas `estado` (déjalo fuera del objeto), para no retroceder el estado de entrega que ya
+   escribió `shipday-status`. El RPC además rankea el avance como segunda línea de defensa, pero un `'nuevo'`
+   tardío con un `pedido_ref` distinto rompería la regla 1 igual: cumple las dos.
 
 ## Estado del cableado
 

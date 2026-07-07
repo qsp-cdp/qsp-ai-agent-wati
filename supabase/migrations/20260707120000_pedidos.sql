@@ -34,6 +34,9 @@ create table if not exists public.pedidos (
 
 -- Lectura del bot: los pedidos recientes de un wa_id, del más nuevo al más viejo.
 create index if not exists pedidos_wa_id_updated_idx on public.pedidos (wa_id, updated_at desc);
+-- El RPC filtra por wa_id NORMALIZADO (dígitos) en ambos lados → índice funcional para que sea sargable
+-- aunque una fila se hubiera guardado con "+507"/espacios (los escritores deben guardar dígitos, ver doc).
+create index if not exists pedidos_wa_norm_idx on public.pedidos ((regexp_replace(wa_id, '\D', '', 'g')));
 
 -- Upsert por cada escritor sobre SU id externo. UNIQUE simple (no parcial): en Postgres los NULL son
 -- distintos entre sí, así que muchas filas SIN ese id conviven, y el id no-nulo queda único → el escritor
@@ -64,31 +67,39 @@ begin
     return jsonb_build_object('estado','sin_pedidos','wa_id',wa);
   end if;
 
+  -- Un pedido real puede dejar 2 filas (una 'shopify', otra 'shipday'). Se agrupan por número de pedido
+  -- (clave prefijada 'id:'||id si no hay número, para que un pedido_ref numérico "5" no choque con un id 5).
   with mine as (
-    select pedido_ref, estado, estado_raw, metodo, tracking, total_usd, resumen, updated_at, id
+    select id, pedido_ref, estado, estado_raw, metodo, tracking, total_usd, resumen, updated_at,
+      coalesce(pedido_ref, 'id:' || id::text) as k,
+      -- rango de AVANCE de entrega: un estado avanzado/terminal gana a uno inicial aunque una escritura
+      -- TARDÍA lo pise por recencia (p.ej. shopify escribe 'nuevo' en un orders/updated después de que
+      -- shipday ya marcó 'en_camino'). Evita que el estado RETROCEDA a 'nuevo'.
+      (case estado when 'entregado' then 6 when 'cancelado' then 6 when 'fallido' then 5
+                   when 'en_camino' then 4 when 'asignado' then 3 when 'nuevo' then 2 else 1 end) as rk
     from public.pedidos
     where regexp_replace(wa_id, '\D', '', 'g') = wa
   ),
-  -- Un pedido real puede dejar 2 filas (una 'shopify', otra 'shipday'). Se agrupan por número de pedido
-  -- (o id si no hay número) y se toma: el estado de la fila MÁS FRESCA, y por cada campo el valor NO NULO
-  -- más fresco (así el estado sale del último evento y método/total/resumen no se pierden si vienen de la
-  -- otra fila). Sin depender de que los escritores converjan a una sola fila.
-  grp as (
-    select
-      coalesce(pedido_ref, id::text) as k,
-      max(updated_at) as last_upd,
-      (array_agg(estado      order by updated_at desc))[1] as estado,
-      (array_agg(estado_raw  order by updated_at desc) filter (where estado_raw is not null))[1] as estado_raw,
-      (array_agg(pedido_ref  order by updated_at desc) filter (where pedido_ref is not null))[1] as pedido_ref,
-      (array_agg(metodo      order by updated_at desc) filter (where metodo     is not null))[1] as metodo,
-      (array_agg(tracking    order by updated_at desc) filter (where tracking   is not null))[1] as tracking,
-      (array_agg(total_usd   order by updated_at desc) filter (where total_usd  is not null))[1] as total_usd,
-      (array_agg(resumen     order by updated_at desc) filter (where resumen    is not null))[1] as resumen
-    from mine
-    group by coalesce(pedido_ref, id::text)
+  -- fila PRIMARIA por pedido: la de mayor avance (rk), desempatando por más reciente. De ELLA salen
+  -- estado + estado_raw + tracking juntos (coherentes entre sí, no mezclados de filas distintas).
+  prim as (
+    select distinct on (k) k, estado, estado_raw, tracking
+    from mine order by k, rk desc, updated_at desc
+  ),
+  -- atributos ESTABLES del pedido: el valor NO NULO más fresco entre las filas del grupo (no se pierden si
+  -- método/total/resumen vienen de la fila shopify y el estado de la fila shipday).
+  attrs as (
+    select k, max(updated_at) as last_upd,
+      (array_agg(pedido_ref order by updated_at desc) filter (where pedido_ref is not null))[1] as pedido_ref,
+      (array_agg(metodo     order by updated_at desc) filter (where metodo     is not null))[1] as metodo,
+      (array_agg(total_usd  order by updated_at desc) filter (where total_usd  is not null))[1] as total_usd,
+      (array_agg(resumen    order by updated_at desc) filter (where resumen    is not null))[1] as resumen
+    from mine group by k
   ),
   top3 as (
-    select * from grp order by last_upd desc limit 3
+    select a.pedido_ref, p.estado, p.estado_raw, a.metodo, p.tracking, a.total_usd, a.resumen, a.last_upd
+    from attrs a join prim p on p.k = a.k
+    order by a.last_upd desc limit 3
   )
   select jsonb_agg(jsonb_build_object(
     'pedido_ref', pedido_ref, 'estado', estado, 'estado_raw', estado_raw,
