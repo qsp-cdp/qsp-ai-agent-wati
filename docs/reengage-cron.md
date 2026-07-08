@@ -33,14 +33,24 @@ y crea el RPC `reengage_candidates`. Correr en el SQL Editor (validada contra Po
 `.\deploy.ps1 reengage-expired` (importa `_shared` → **solo por CLI**, no por Browse). Ya está en la lista
 por default de `deploy.ps1` y en `config.toml` (`verify_jwt=false`).
 
-### 3. Crear + aprobar la plantilla HSM en WATI/Meta
-Categoría **Utility**, idioma **español**, **SIN variables** (recomendado — evita fallos por parámetro vacío).
-Borrador sugerido (ajústalo a tu voz):
+### 3. Crear + aprobar la plantilla HSM en WATI/Meta — ✅ HECHO (08-jul-2026)
+Plantilla **`reenganche_conversacion`** creada, enviada y **APROBADA por Meta**. SIN variables (evita fallos
+por parámetro vacío). Cuerpo aprobado:
 
-> 👋 ¡Hola! En *Quick Service Panamá* vimos tu mensaje. Seguimos disponibles para ayudarte con tu compra o
-> cotización. ¿Continuamos por aquí? 🙂
+> ¡Hola! 👋 Le escribimos de *Quick Service Panamá*. Vimos su mensaje y seguimos disponibles para ayudarle
+> con su compra o cotización. ¿Retomamos por aquí?
 
-Anota el **nombre** de la plantilla aprobada (lo necesitas para `WATI_REENGAGE_TEMPLATE`).
+(Footer "Quick Service Panamá" + 1 botón de respuesta rápida "Sí, continuemos".)
+
+> ⚠️ **Meta la reclasificó de UTILITY a MARKETING** (típico en re-enganche). Implicaciones: (1) precio de
+> conversación de *marketing* (más caro que utility/servicio); (2) respeta el **opt-out de marketing** de
+> WhatsApp a nivel plataforma (un cliente que se dio de baja no la recibe → el envío falla y se loguea
+> `reengage_fallo`); (3) más sensible a la **calidad del número**. **Por qué es aceptable:** la audiencia es
+> TIBIA (solo clientes que YA nos escribieron y quedaron sin responder), + `reengage_optout` + idempotencia
+> (1 por ciclo) + tope `REENGAGE_MAX` + `status='bot'`. Si se quiere volver a Utility, se puede pedir
+> re-revisión a Meta (Ayuda para empresas) — opcional, no bloquea. El código NO cambia por la categoría.
+
+Setear `WATI_REENGAGE_TEMPLATE=reenganche_conversacion`.
 
 ### 4. Secretos / env vars de la función (Edge Function secrets)
 | Var | Default | Qué es |
