@@ -217,8 +217,9 @@ console.log("v47 revisión");
 // F1: tarifa_entrega NO en el whitelist de MODO ASISTENCIA (cotizar compromete un pedido; en asistencia
 // el humano lleva la venta). Chequeo sobre el source real.
 const assistFilter = (src.match(/modoAsistencia \? TOOLS\.filter\(\(t\) =>[^;]*/) || [""])[0];
-caso("asistencia = info_tienda + sucursales_interior", /info_tienda/.test(assistFilter) && /sucursales_interior/.test(assistFilter));
-caso("asistencia NO incluye tarifa_entrega", assistFilter.length > 0 && !/tarifa_entrega/.test(assistFilter));
+caso("asistencia incluye info_tienda + sucursales_interior", /info_tienda/.test(assistFilter) && /sucursales_interior/.test(assistFilter));
+caso("asistencia NO incluye tarifa_entrega (cotizar envío compromete una entrega)", assistFilter.length > 0 && !/tarifa_entrega/.test(assistFilter));
+caso("asistencia NO incluye guardar_lead (no captura datos con el humano a cargo)", assistFilter.length > 0 && !/guardar_lead/.test(assistFilter));
 // pulido: "domicilio" fuerza tool (para enrutar a tarifa_entrega en la ciudad).
 caso('"¿lo llevan a domicilio?" fuerza tool', NEEDS_TOOL_RE.test("¿lo llevan a domicilio?"));
 // pulido: retiro con puntos_retiro null -> fallback, nunca "(null)" al cliente.
@@ -297,8 +298,10 @@ caso('SYSTEM_PROMPT: estado de pedido despachado NO es interrupción', /NO es un
 caso("index.ts define la tool estado_pedido", /name: "estado_pedido"/.test(src));
 caso("index.ts cablea estadoPedido(waId) en el dispatch", /await estadoPedido\(waId\)/.test(src));
 caso("estadoPedido llama al RPC estado_pedido", /sb\.rpc\("estado_pedido"/.test(src));
-// v48: estado_pedido NO va en MODO ASISTENCIA (un humano lleva el caso) — chequeo sobre el filtro real.
-caso("asistencia NO incluye estado_pedido", assistFilter.length > 0 && !/estado_pedido/.test(assistFilter));
+// v50: estado_pedido SÍ va ahora en MODO ASISTENCIA (preventa grounded; el estado es read-only y no
+// compromete nada), junto con buscar_producto. Esto CAMBIA el lock v48 que lo excluía.
+caso("asistencia SÍ incluye estado_pedido (v50)", /estado_pedido/.test(assistFilter));
+caso("asistencia SÍ incluye buscar_producto (v50)", /buscar_producto/.test(assistFilter));
 
 // --- v49: DEBOUNCE de ráfagas + visión multi-imagen (locks sobre el source real) -------------------
 console.log("v49 debounce + visión de ráfaga");
@@ -314,6 +317,34 @@ caso("visión multi-imagen (adjunta el array completo)", /\.\.\.imagenes\.map\(\
 caso("ráfaga acotada: máx 3 imágenes", /urlsRafaga\.slice\(-3\)/.test(src));
 caso("healthcheck expone debounce_ms", /debounce_ms: DEBOUNCE_MS/.test(src));
 caso("asistencia también debounce-a", /v49: misma espera de r[aá]faga/.test(src));
+
+// --- v50: MODO ASISTENCIA ampliado a PREVENTA (locks sobre el source real) ------------------------
+console.log("v50 asistencia → preventa");
+// trigger: puedeAsistir ahora admite catálogo/precio/pedido (NEEDS_TOOL_RE), no solo info básica.
+caso("v50: trigger de asistencia ampliado a NEEDS_TOOL_RE", /\(BASIC_INFO_RE\.test\(texto\) \|\| NEEDS_TOOL_RE\.test\(texto\)\)/.test(src));
+// INTERRUPT_RE sigue gateando (pago/fiscal/coordinar entrega bloquean la asistencia ANTES del OR).
+caso("v50: INTERRUPT_RE sigue gateando la asistencia (!interrumpe && (...))", /!interrumpe && \(BASIC_INFO_RE\.test\(texto\) \|\| NEEDS_TOOL_RE\.test\(texto\)\)/.test(src));
+// una pregunta de PRECIO habilita la asistencia (matchea NEEDS_TOOL_RE) — antes se callaba.
+caso('v50: "¿cuánto cuesta el tóner 105A?" habilitaría asistencia', NEEDS_TOOL_RE.test("¿cuánto cuesta el tóner 105A?"));
+// pero un PAGO EN CURSO que menciona un producto sigue bloqueado por INTERRUPT_RE (interrumpe=true).
+caso('v50: "a qué cuenta te transfiero por el tóner" NO asiste (INTERRUPT gana)', INTERRUPT_RE.test("a qué cuenta te transfiero por el tóner"));
+// la asistencia repone el tracking de links de buscar_producto (v29) — igual que el flujo normal.
+caso("v50: asistencia reaplica tracking (linksTracked) en ambos flujos", (src.match(/reaplicarTracking\(limpiarWhatsApp\(r\.text\), linksTracked\)/g) || []).length >= 2);
+
+// ASSIST_SUFFIX: habilita preventa grounded pero mantiene los guardrails duros.
+const ASSIST_SUFFIX = (() => {
+  const ini = src.indexOf("const ASSIST_SUFFIX = `");
+  if (ini < 0) throw new Error("no encontré la const ASSIST_SUFFIX");
+  const fin = src.indexOf("`;", ini);
+  return src.slice(ini + "const ASSIST_SUFFIX = `".length, fin);
+})();
+caso("v50: ASSIST_SUFFIX habilita buscar_producto + precio", /buscar_producto/.test(ASSIST_SUFFIX) && /precio/i.test(ASSIST_SUFFIX));
+caso("v50: ASSIST_SUFFIX prohíbe cerrar/confirmar la venta", /NO cierres/i.test(ASSIST_SUFFIX));
+caso("v50: ASSIST_SUFFIX prohíbe coordinar pago/pedido/entrega", /NO confirmes ni coordines/i.test(ASSIST_SUFFIX));
+caso("v50: ASSIST_SUFFIX prohíbe datos fiscales (RUC/factura)", /fiscales.*(RUC|factura)/i.test(ASSIST_SUFFIX));
+caso("v50: ASSIST_SUFFIX prohíbe cotizar envío por sector", /NO cotices el costo\/m[eé]todo de env[ií]o/i.test(ASSIST_SUFFIX));
+caso("v50: ASSIST_SUFFIX prohíbe pedir/guardar datos del cliente", /NO pidas ni guardes datos/i.test(ASSIST_SUFFIX));
+caso("v50: ASSIST_SUFFIX sigue deferente (un asesor continúa)", /asesor contin[uú]a/i.test(ASSIST_SUFFIX));
 
 // --- resumen --------------------------------------------------------------------------------------
 console.log(`\n${ok} OK, ${mal} FALLA${mal === 1 ? "" : "S"}`);

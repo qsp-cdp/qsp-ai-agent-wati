@@ -30,7 +30,7 @@ Este repositorio unifica dos piezas del stack de QSP que comparten la llave natu
 CLAUDE.md                                  # contexto autoritativo (leer primero)
 docs/base-conocimiento-qsp.md              # base de conocimiento del negocio (fuente → prompt + store_facts)
 supabase/
-  functions/copilot-webhook/index.ts       # la edge function (v48 en repo, incluye v46+v47; v45 EN VIVO, probando Sonnet 5)
+  functions/copilot-webhook/index.ts       # la edge function (v50 en repo: v49 debounce+visión de ráfaga, v50 asistencia→preventa; v48 EN VIVO, probando Sonnet 5)
 tests/golden.mjs                            # golden tests (regex + helpers, extraídos del index.ts real) — node tests/golden.mjs
   migrations/*.sql                          # esquema reproducible (16 migraciones; v48 añade pedidos + el puente Shipday trae contacts/contacts_envio/contacts_grant)
 deploy.ps1                                  # deploy byte-exacto por CLI + verificación de healthcheck

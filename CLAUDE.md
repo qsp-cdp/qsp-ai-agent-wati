@@ -20,6 +20,23 @@ con certeza, y calla/deriva cuando es mejor que responda un humano. Tienda:
 **quickservicepanama.com** (suministros de impresión y tecnología en Panamá).
 
 ## Estado actual (2026-07-08)
+- **EN EL REPO, LISTO PARA DESPLEGAR: v50 (`v50-asistencia-preventa`).** Decisión de Gerencia sobre el
+  ciclo de vida del handoff: tras 15 min sin el asesor, el bot ya NO se limita a info básica de tienda —
+  ahora hace **PREVENTA grounded** para no dejar al cliente esperando. Cambios (solo prompt + lógica del
+  handoff, sin esquema): (1) el trigger `puedeAsistir` se amplía de `BASIC_INFO_RE` a
+  `(BASIC_INFO_RE || NEEDS_TOOL_RE)` → catálogo/precio/stock/estado de pedido también activan la asistencia;
+  (2) las tools de asistencia pasan de `{info_tienda, sucursales_interior}` a `{buscar_producto, info_tienda,
+  sucursales_interior, estado_pedido}` — SIGUEN FUERA `guardar_lead` (no captura datos con el humano a cargo)
+  y `tarifa_entrega` (cotizar método+precio de envío COMPROMETE una entrega; el costo genérico cae a
+  info_tienda); (3) `ASSIST_SUFFIX` reescrito: habilita precio/ITBMS/stock/link + estado de pedido, pero
+  PROHÍBE cerrar/coordinar venta, pago, pedido o entrega, pedir/guardar datos, tocar RUC/factura, cotizar
+  envío por sector y renegociar lo que el asesor venía dando; (4) la asistencia repone el tracking de links
+  (`reaplicarTracking`, v29) igual que el flujo normal. **Guardrails intactos:** `INTERRUPT_RE`
+  (pago/fiscal/coordinar entrega) sigue bloqueando ANTES del OR; si el asesor vuelve a escribir, `owner=true`
+  regresa a handoff y el anti-carrera lo protege; la respuesta sigue marcada `model='assist-handoff'`
+  (anti-eco). 195 golden tests (14 nuevos/cambiados: el lock v48 que EXCLUÍA `estado_pedido` de asistencia se
+  invirtió). Revisión adversarial pre-deploy en curso. Acumulativo sobre v49 → desplegar trae v49+v50 (aplicar
+  la migración `20260708150000_messages_media_url` de v49 ANTES). Deploy: `.\deploy.ps1 copilot-webhook`.
 - **EN EL REPO, LISTO PARA DESPLEGAR: v49 (`v49-debounce-rafaga`).** De la auditoría real de la conv
   50764417334 ([foto][foto]"¿estas no hay?" → el bot no vio las fotos) + decisión de Gerencia (baseline
   humano = loop de minutos → 10 s no son nada): (1) **DEBOUNCE de ráfagas** — todas las invocaciones esperan
@@ -90,7 +107,8 @@ con certeza, y calla/deriva cuando es mejor que responda un humano. Tienda:
   en CÓDIGO** (`frasearPedido`, pura) por estado normalizado, con guía/tracking si hay. Regla de prompt
   (CONCIENCIA DE PEDIDOS): relaya la `respuesta_sugerida`, NUNCA inventa estado/fecha/guía; preguntar por un
   pedido despachado NO es interrupción; si `sin_pedidos` NO afirma que el cliente no tiene pedidos (vista
-  PARCIAL) → un asesor confirma. **NO va en MODO ASISTENCIA.** `NEEDS_TOOL_RE` fuerza tool en "mi pedido/
+  PARCIAL) → un asesor confirma. **(v48 la sacaba de MODO ASISTENCIA; v50 la INCLUYE** — el estado es
+  read-only y no compromete nada.) `NEEDS_TOOL_RE` fuerza tool en "mi pedido/
   rastreo/guía/estado del pedido/cuándo me llega". **Los ESCRITORES YA ESTÁN EN EL REPO Y CABLEADOS (Opción
   A):** se unió (git merge) la rama del puente Tookan→Shipday — 5 Edge Functions (shopify-webhook/
   shipday-status/wati-order/wati-address/contacts-lookup + `_shared/`) + el servicio Node `src/` con pruebas —
@@ -282,7 +300,7 @@ con certeza, y calla/deriva cuando es mejor que responda un humano. Tienda:
   caché cada turno. Lectura de caché 0.1× / escritura 1.25×, TTL 5 min; el prefijo supera de sobra el
   mínimo de 2048 tokens de Sonnet 4.6. GA (sin header beta). Verificar con `usage.cache_read_input_tokens>0`
   y `avg(tokens_in)` cayendo (`input_tokens` NO incluye lo leído de caché). En MODO ASISTENCIA las tools
-  difieren (solo `info_tienda`) → ese camino mantiene su propia entrada de caché (raro, no afecta el normal).
+  difieren (subconjunto acotado; v50) → ese camino mantiene su propia entrada de caché (raro, no afecta el normal).
   Sin cambios de esquema. **Desplegado y confirmado en prod (2026-06-30):** `avg(tokens_in)` ~9.554 → ~2.337
   (−75% de input a 1×); turnos simples ~800–1.300 in (prefijo servido del caché), turnos con tool 2.7k–7.6k
   (el historial y el JSON de productos NO se cachean, por diseño).
@@ -586,11 +604,16 @@ Reglas clave (texto completo en `index.ts`, const `SYSTEM_PROMPT`):
   insiste, respeta el "no", no repregunta lo que ya tenemos. NUNCA pide RUC/cédula/factura (→ asesor).
 - **CANAL (v26):** atiende POR WhatsApp → no manda al cliente a "escribir por WhatsApp" ni da el
   número de la tienda; al derivar, "un asesor te responde por aquí".
-- **MODO ASISTENCIA (v31, se ANEXA al prompt vía `ASSIST_SUFFIX`):** cuando un asesor tiene el chat pero
-  lleva rato sin responder y el cliente pregunta algo básico, el bot adelanta SOLO esa info de tienda
-  (ubicación/horario/pago/envío/devolución) vía `info_tienda`, breve y deferente ("un asesor sigue con tu
-  caso"); NO retoma la venta, NO da precios/productos, NO pide datos, NO toca pago/fiscal. La única tool
-  disponible en este modo es `info_tienda`.
+- **MODO ASISTENCIA (v31, ampliado en v50; se ANEXA al prompt vía `ASSIST_SUFFIX`):** cuando un asesor tiene
+  el chat pero lleva ≥15 min sin responder y el cliente vuelve a preguntar, el bot adelanta una respuesta
+  ÚTIL grounded, breve y deferente ("un asesor sigue con su caso"), SIN retomar la venta. **v50:** ya no se
+  limita a info básica — puede dar **precio/ITBMS/stock/link** (`buscar_producto`), datos de tienda
+  (`info_tienda`), puntos del interior (`sucursales_interior`) y **estado de un pedido** (`estado_pedido`);
+  todo desde una tool, nunca de memoria. SIGUE prohibido: cerrar/confirmar/coordinar venta, pago, pedido o
+  entrega; pedir/guardar datos del cliente; tocar RUC/factura; cotizar el envío de un sector concreto
+  (`tarifa_entrega` NO está disponible aquí → el costo cae a `info_tienda` genérico); y contradecir/renegociar
+  lo que el asesor venía manejando. Tools disponibles en este modo: `buscar_producto`, `info_tienda`,
+  `sucursales_interior`, `estado_pedido` (NO `guardar_lead` ni `tarifa_entrega`). `INTERRUPT_RE` bloquea antes.
 - **HANDOFF** y **LÍMITES** (no legal/médico, nada fuera de la tienda).
 
 ## Tools

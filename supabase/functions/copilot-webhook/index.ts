@@ -649,11 +649,11 @@ LÍMITES
 const ASSIST_SUFFIX = `
 
 MODO ASISTENCIA — un asesor humano está atendiendo este chat
-Un compañero del equipo tiene esta conversación, pero lleva un rato sin responder y el cliente acaba de preguntar algo. Para no dejarlo esperando, adelanta ÚNICAMENTE información general de la tienda y nada más:
-- Responde SOLO si es una pregunta de: ubicación, horario, formas de pago que aceptamos, envíos/entregas o política de devoluciones/garantía. Usa info_tienda y responde breve (1-2 oraciones) con lo que devuelva.
+Un compañero del equipo tiene esta conversación, pero lleva un rato sin responder y el cliente acaba de preguntar algo. Para no dejarlo esperando, adelántale una respuesta ÚTIL sin retomar la venta. Todo lo que digas debe salir de una herramienta (NUNCA de memoria):
+- SÍ puedes: dar precio/ITBMS/stock y el link de un producto (buscar_producto), datos de la tienda (info_tienda), puntos de recogida del interior (sucursales_interior) y el estado de un pedido ya hecho (estado_pedido). Responde breve (1-2 oraciones) con lo que devuelva la herramienta.
 - Sé deferente: deja claro que un asesor sigue con su caso. Ej.: "Mientras tanto le confirmo: [dato]. Un asesor continúa con su solicitud enseguida."
-- NO retomes la venta, NO des precios/stock ni busques productos, NO pidas ni guardes datos, NO confirmes pagos/pedidos, NO cierres nada: de eso se encarga el asesor.
-- Si la pregunta NO es de esa información general, o toca un pago/cotización/factura/reclamo o el caso puntual que lleva el asesor, NO escribas nada (deja la respuesta vacía): que lo siga el humano.`;
+- NO cierres ni confirmes la venta, NO confirmes ni coordines un pago, un pedido ni una entrega, NO pidas ni guardes datos del cliente, NO toques datos fiscales (RUC/factura), NO cotices el costo/método de envío de un sector concreto (eso compromete una entrega: la coordina el asesor), y NO contradigas ni renegocies algo que el asesor ya venía manejando (un precio especial, una cortesía).
+- Si la pregunta toca un pago en curso, una cotización/factura formal, coordinar una entrega, o el caso puntual que lleva el asesor, NO escribas nada (deja la respuesta vacía): que lo siga el humano.`;
 
 const TOOLS: Anthropic.Tool[] = [{
   name: "buscar_producto",
@@ -754,10 +754,12 @@ const NEEDS_TOOL_RE = new RegExp([
 
 // v31 — pregunta BÁSICA de tienda que el bot SÍ puede adelantar mientras un asesor está ausente
 // (handoff-assist): ubicación, horario, formas de pago que aceptamos, envíos/entregas y política de
-// devoluciones — todo lo que vive en store_facts (lo responde info_tienda). Deliberadamente NO incluye
-// precios/productos (eso es retomar la venta del humano) ni nada transaccional/fiscal (lo bloquea
-// INTERRUPT_RE, que se evalúa antes). "garantía/devolución" caen aquí a propósito (política general);
-// el caso puntual lo sigue el asesor.
+// devoluciones — todo lo que vive en store_facts (lo responde info_tienda). No incluye precios/productos
+// (esta regex no los matchea) ni nada transaccional/fiscal (lo bloquea INTERRUPT_RE, que se evalúa antes).
+// "garantía/devolución" caen aquí a propósito (política general); el caso puntual lo sigue el asesor.
+// v50 — la asistencia ya NO se limita a esto: el trigger `puedeAsistir` también admite NEEDS_TOOL_RE
+// (catálogo/precio/pedido) → el bot hace preventa grounded (buscar_producto) sin retomar la venta.
+// Esta regex sigue igual (define solo el subconjunto "info de tienda"); la ampliación es el OR del call site.
 const BASIC_INFO_RE = new RegExp([
   // ubicación / cómo llegar
   "ubicaci", "direcci", "\\bd[oó]nde\\b", "\\bqueda", "ubicad", "c[oó]mo llego", "\\bmapa\\b", "\\bwaze\\b", "google maps", "local\\b", "tienda f[ií]sica",
@@ -1220,13 +1222,12 @@ async function responderLLM(history: { role: string; content: string; model?: st
     { type: "text", text: SYSTEM_PROMPT, cache_control: { type: "ephemeral" } },
     { type: "text", text: systemDinamico },
   ];
-  // v31 — en asistencia, la ÚNICA tool disponible es info_tienda (no buscar_producto/guardar_lead):
-  // el bot solo puede adelantar datos de tienda, nunca cotizar ni capturar datos del cliente.
-  // v47: tarifa_entrega NO va en MODO ASISTENCIA (revisión adversarial): cotizar precio+método+plazo es
-  // COMPROMETER un pedido concreto, y en asistencia un humano lleva la venta (podría estar dando otra
-  // tarifa/cortesía). sucursales_interior sí (solo lista puntos, no compromete). Si en asistencia preguntan
-  // el costo, el bot cae a info_tienda (genérico, no comprometido).
-  const toolsActivas = modoAsistencia ? TOOLS.filter((t) => t.name === "info_tienda" || t.name === "sucursales_interior") : TOOLS;
+  // v50 — en asistencia el bot ahora hace PREVENTA grounded: buscar_producto (precio/ITBMS/stock/link),
+  // info_tienda, sucursales_interior y estado_pedido. Sigue FUERA: guardar_lead (no captura datos del
+  // cliente con un humano a cargo) y tarifa_entrega (cotizar método+precio de envío COMPROMETE una entrega
+  // —v47—; si en asistencia preguntan el costo, cae a info_tienda genérico, no comprometido). ASSIST_SUFFIX
+  // gobierna qué NO cerrar/coordinar; INTERRUPT_RE ya bloqueó pago/fiscal/coordinar entrega antes de llegar.
+  const toolsActivas = modoAsistencia ? TOOLS.filter((t) => ["buscar_producto", "info_tienda", "sucursales_interior", "estado_pedido"].includes(t.name)) : TOOLS;
   // Los mensajes de un asesor humano se marcan para que el agente sepa que los dijo una persona.
   // v32: cada mensaje ANTERIOR (no el último/actual) se prefija con [hoy/ayer/fecha] para que el bot
   // ubique el historial en el tiempo. El último (el que se responde ahora) va limpio (es "ahora", y así
@@ -1471,7 +1472,7 @@ Deno.serve(async (req) => {
       const diag = await inventarioSelfTest(pid);
       return Response.json({ selftest: "inventario", ...diag, ts: new Date().toISOString() });
     }
-    return Response.json({ status: "ok", function: "copilot-webhook", version: "v49-debounce-rafaga", mode: MODE, mode_raw: MODE_RAW, model: MODEL, llm_configured: !!anthropic, wati_send_configured: !!(WATI_API_TOKEN && WATI_API_BASE), inventario_configurado: !!(SHOPIFY_ADMIN_TOKEN && SHOPIFY_ADMIN_API_BASE), resolve_configured: !!RESOLVE_SECRET, webhook_key_es_default: WEBHOOK_KEY_ES_DEFAULT, handoff_assist_min: HANDOFF_ASSIST_MIN, handoff_cold_hours: HANDOFF_COLD_HOURS, debounce_ms: DEBOUNCE_MS, live_targets: MODE === "live" ? (LIVE_ALL ? "all" : LIVE_ALLOWLIST.length) : 0, ts: new Date().toISOString() });
+    return Response.json({ status: "ok", function: "copilot-webhook", version: "v50-asistencia-preventa", mode: MODE, mode_raw: MODE_RAW, model: MODEL, llm_configured: !!anthropic, wati_send_configured: !!(WATI_API_TOKEN && WATI_API_BASE), inventario_configurado: !!(SHOPIFY_ADMIN_TOKEN && SHOPIFY_ADMIN_API_BASE), resolve_configured: !!RESOLVE_SECRET, webhook_key_es_default: WEBHOOK_KEY_ES_DEFAULT, handoff_assist_min: HANDOFF_ASSIST_MIN, handoff_cold_hours: HANDOFF_COLD_HOURS, debounce_ms: DEBOUNCE_MS, live_targets: MODE === "live" ? (LIVE_ALL ? "all" : LIVE_ALLOWLIST.length) : 0, ts: new Date().toISOString() });
   }
   if (req.method !== "POST") return Response.json({ error: "method_not_allowed" }, { status: 405 });
   if (url.searchParams.get("key") !== WEBHOOK_KEY) return Response.json({ error: "forbidden" }, { status: 403 });
@@ -1585,8 +1586,12 @@ Deno.serve(async (req) => {
       const minsSinHumano = ultHumano ? (Date.now() - new Date(ultHumano).getTime()) / 60000 : -1;
       const interrumpe = INTERRUPT_RE.test(texto); // trámite/pago/fiscal en curso → nunca tocar
       const frio = !!ultHumano && minsSinHumano > HANDOFF_COLD_HOURS * 60 && !interrumpe;
+      // v50 — asistencia ampliada a PREVENTA: además de las preguntas básicas de tienda (BASIC_INFO_RE),
+      // ahora también asiste ante catálogo/precio/stock/estado de pedido (NEEDS_TOOL_RE) → el bot da precios
+      // grounded (buscar_producto) sin retomar la venta. INTERRUPT_RE (pago/fiscal/coordinar entrega) sigue
+      // bloqueando ANTES; ASSIST_SUFFIX le prohíbe cerrar la venta, cotizar envío por sector y pedir datos.
       const puedeAsistir = !!ultHumano && !frio && minsSinHumano >= HANDOFF_ASSIST_MIN
-        && conv.turns_today <= MAX_TURNS_DIA && !interrumpe && BASIC_INFO_RE.test(texto);
+        && conv.turns_today <= MAX_TURNS_DIA && !interrumpe && (BASIC_INFO_RE.test(texto) || NEEDS_TOOL_RE.test(texto));
 
       if (frio) {
         // COLD-RETURN: el asesor lleva >umbral sin escribir → conversación fría. El bot la retoma por
@@ -1597,17 +1602,22 @@ Deno.serve(async (req) => {
         conv.status = "bot";
         await log("handoff_cold_return", true, { waId, horas_sin_humano: Math.round(minsSinHumano / 60) });
       } else if (puedeAsistir) {
-        // ASISTENCIA: tarea aparte en segundo plano. El bot responde SOLO la info básica (info_tienda),
-        // no saca la conversación de handoff y no le quita la venta al asesor.
+        // ASISTENCIA: tarea aparte en segundo plano. v50 — el bot hace PREVENTA grounded (precio/stock vía
+        // buscar_producto, info de tienda, puntos del interior, estado de pedido), pero NO saca la
+        // conversación de handoff, NO cierra/coordina la venta y NO le quita el caso al asesor.
         const asistir = (async () => {
           try {
             if (DEBOUNCE_MS > 0) await new Promise((res) => setTimeout(res, DEBOUNCE_MS)); // v49: misma espera de ráfaga
             if (await hayMensajeClienteMasNuevo(conv.id, userCreatedAt)) { await log("descartado_superado", true, { waId, fase: "asist-pre" }); return; }
             const { data: hist } = await sb.from("messages").select("role,content,model,created_at").eq("conversation_id", conv.id).in("role", ["user", "assistant"]).order("created_at", { ascending: false }).limit(10);
             const history = (hist ?? []).reverse();
-            // forceTool=true + modoAsistencia=true → única tool info_tienda, forzada (grounding).
-            const r = await responderLLM(history as any, true, null, false, waId, {}, {}, true);
-            let salida = r.text ? limpiarWhatsApp(r.text) : null;
+            // v50 — asistencia hace preventa grounded: forceTool=true (siempre consulta una herramienta) +
+            // modoAsistencia=true (tools acotadas a buscar_producto/info_tienda/sucursales_interior/estado_pedido).
+            // linksTracked recoge los links con ref_code de buscar_producto y reaplicarTracking los repone
+            // post-LLM (v29), igual que el flujo normal — si no, el modelo podría "limpiar" el tracking.
+            const linksTracked: Record<string, string> = {};
+            const r = await responderLLM(history as any, true, null, false, waId, {}, linksTracked, true);
+            let salida = r.text ? reaplicarTracking(limpiarWhatsApp(r.text), linksTracked) : null;
             // v44 guard anti-fuga: si la tool-call se filtró como texto, no la enviamos (aquí un humano ya
             // tiene el caso → basta con no responder). Loggea para telemetría.
             if (salida && pareceFuncionEnTexto(salida)) { await log("fuga_tool_texto", false, { waId, fase: "asistencia", muestra: (r.text ?? "").slice(0, 200) }); salida = null; }
