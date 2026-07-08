@@ -1478,7 +1478,7 @@ Deno.serve(async (req) => {
       const diag = await inventarioSelfTest(pid);
       return Response.json({ selftest: "inventario", ...diag, ts: new Date().toISOString() });
     }
-    return Response.json({ status: "ok", function: "copilot-webhook", version: "v50-asistencia-preventa", mode: MODE, mode_raw: MODE_RAW, model: MODEL, llm_configured: !!anthropic, wati_send_configured: !!(WATI_API_TOKEN && WATI_API_BASE), inventario_configurado: !!(SHOPIFY_ADMIN_TOKEN && SHOPIFY_ADMIN_API_BASE), resolve_configured: !!RESOLVE_SECRET, webhook_key_es_default: WEBHOOK_KEY_ES_DEFAULT, handoff_assist_min: HANDOFF_ASSIST_MIN, handoff_cold_hours: HANDOFF_COLD_HOURS, debounce_ms: DEBOUNCE_MS, live_targets: MODE === "live" ? (LIVE_ALL ? "all" : LIVE_ALLOWLIST.length) : 0, ts: new Date().toISOString() });
+    return Response.json({ status: "ok", function: "copilot-webhook", version: "v51-reengage", mode: MODE, mode_raw: MODE_RAW, model: MODEL, llm_configured: !!anthropic, wati_send_configured: !!(WATI_API_TOKEN && WATI_API_BASE), inventario_configurado: !!(SHOPIFY_ADMIN_TOKEN && SHOPIFY_ADMIN_API_BASE), resolve_configured: !!RESOLVE_SECRET, webhook_key_es_default: WEBHOOK_KEY_ES_DEFAULT, handoff_assist_min: HANDOFF_ASSIST_MIN, handoff_cold_hours: HANDOFF_COLD_HOURS, debounce_ms: DEBOUNCE_MS, live_targets: MODE === "live" ? (LIVE_ALL ? "all" : LIVE_ALLOWLIST.length) : 0, ts: new Date().toISOString() });
   }
   if (req.method !== "POST") return Response.json({ error: "method_not_allowed" }, { status: 405 });
   if (url.searchParams.get("key") !== WEBHOOK_KEY) return Response.json({ error: "forbidden" }, { status: 403 });
@@ -1512,6 +1512,17 @@ Deno.serve(async (req) => {
       return Response.json({ ok: true, evento: "new_contact_registrado", waId });
     }
     return Response.json({ ok: true, skipped: "new_contact_sin_waid" });
+  }
+
+  // v51 — evento de PLANTILLA saliente (WATI "Template Message Sent"): p.ej. el cron de re-enganche
+  // (reengage-expired) le mandó una plantilla HSM a un cliente cuya ventana expiró, o un asesor disparó una
+  // plantilla (captura de dirección). NO es un asesor escribiendo: si cayera en el path owner=true de abajo
+  // se marcaría un HANDOFF FALSO y arrancaría el reloj de asesor (el cliente que responda quedaría en modo
+  // asistencia en vez de ser atendido por el bot). Se registra y se salta. (El eventType real se ve en el
+  // log `evento_plantilla_saliente`; el guard es amplio a propósito: cualquier evento de plantilla saliente.)
+  if (eventType.includes("template") || eventType.includes("plantilla")) {
+    await log("evento_plantilla_saliente", true, { waId: waId || null, eventType });
+    return Response.json({ ok: true, skipped: "template_message_sent" });
   }
 
   // Mensaje del NEGOCIO (owner=true): asesor humano/automático, o el ECO de un envío propio del bot.

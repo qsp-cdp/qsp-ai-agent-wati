@@ -353,6 +353,18 @@ caso("v50: ASSIST_SUFFIX prohíbe cotizar envío por sector", /NO cotices el cos
 caso("v50: ASSIST_SUFFIX prohíbe pedir/guardar datos del cliente", /NO pidas ni guardes datos/i.test(ASSIST_SUFFIX));
 caso("v50: ASSIST_SUFFIX sigue deferente (un asesor continúa)", /asesor contin[uú]a/i.test(ASSIST_SUFFIX));
 
+// --- v51: guard de plantilla saliente (coexistencia con el cron de re-enganche) -------------------
+console.log("v51 guard plantilla saliente");
+// El cron reengage-expired envía plantillas HSM; WATI eco-notifica "Template Message Sent". El copiloto
+// debe SALTARLO (no tratarlo como asesor humano → falso handoff). Lock sobre el source real.
+caso("v51: copilot salta eventos de plantilla saliente", /eventType\.includes\("template"\)/.test(src) && /evento_plantilla_saliente/.test(src));
+caso("v51: el guard de plantilla va ANTES del path owner=true (human-agent)", (() => {
+  const iGuard = src.indexOf('skipped: "template_message_sent"');
+  const iOwner = src.indexOf("Mensaje del NEGOCIO (owner=true)");
+  return iGuard > -1 && iOwner > -1 && iGuard < iOwner;
+})());
+caso("v51: healthcheck del copiloto = v51-reengage", /version: "v51-reengage"/.test(src));
+
 // --- resumen --------------------------------------------------------------------------------------
 console.log(`\n${ok} OK, ${mal} FALLA${mal === 1 ? "" : "S"}`);
 if (mal > 0) process.exit(1);

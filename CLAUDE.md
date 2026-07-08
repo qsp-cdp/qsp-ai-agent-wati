@@ -20,6 +20,27 @@ con certeza, y calla/deriva cuando es mejor que responda un humano. Tienda:
 **quickservicepanama.com** (suministros de impresión y tecnología en Panamá).
 
 ## Estado actual (2026-07-08)
+- **EN EL REPO, LISTO PARA DESPLEGAR: v51 (`v51-reengage`) — RECUPERACIÓN DE FIN DE SEMANA (cron).** Los
+  clientes que escriben viernes/sábado noche expiran la ventana de 24h de WhatsApp; el lunes había que
+  reabrir cada chat a mano con una plantilla. Ahora hay un **cron** que lo automatiza. Decisión de diseño
+  tras investigar WATI (agente): NO se puede 100% dentro de WATI (Broadcast sí, pero no filtra por
+  "última entrada / ventana expirada"), así que el descubrimiento va por **NUESTRO Postgres**. Piezas:
+  (1) **Edge Function nueva `reengage-expired`** (importa `_shared` → deploy SOLO por CLI), disparada por
+  **pg_cron** los lunes 9am Panamá (=14:00 UTC) vía `net.http_post`; **SHADOW-FIRST** (default
+  `REENGAGE_MODE=shadow` = DRY-RUN: loguea a quién re-engancharía, NO envía) — mismo ADN que `COPILOT_MODE`;
+  self-gate de feriado/día-hábil en TS (hereda la lógica del copiloto). (2) **RPC `reengage_candidates`**
+  (migración `20260708190000_reengage.sql`) que halla los "colgados": último msg del hilo = del cliente
+  (sin responder) + ventana 24h vencida + dentro del lookback (96h) + `status!='cerrada'` + sin `reengage_optout`
+  + no re-enganchado desde su última entrada (idempotencia). **VALIDADO contra Postgres 16 local
+  end-to-end** (devuelve EXACTO los elegibles; excluye respondido/reciente/viejo/cerrada/optout/ya-reenganchado/
+  último-msg-asesor; params ok). (3) **`_shared`**: `sendWatiTemplateMessage` (envío de PLANTILLA HSM — el
+  primero del repo, único válido fuera de la ventana 24h; `sendSessionMessage` no sirve), `fetchReengageCandidates`/
+  `markReengaged`/`logJob`, `panama.ts` (feriados/TZ reusable), `.trim()` defensivo a los secretos WATI.
+  (4) **Copiloto v51 (`v51-reengage`)**: guard que **salta el evento "Template Message Sent"** de WATI
+  (`evento_plantilla_saliente`) → el envío del cron NO se confunde con un asesor humano (evita falso handoff).
+  206 golden tests. Revisión adversarial pre-deploy en curso. **Migración `20260708190000_reengage.sql` PRIMERO**;
+  deploy `.\deploy.ps1` (copiloto + `reengage-expired`); luego crear la plantilla HSM en WATI, setear env vars y
+  programar el cron. Puesta en marcha + SQL del cron + borrador de plantilla: `docs/reengage-cron.md`.
 - **EN EL REPO, LISTO PARA DESPLEGAR: v50 (`v50-asistencia-preventa`).** Decisión de Gerencia sobre el
   ciclo de vida del handoff: tras 15 min sin el asesor, el bot ya NO se limita a info básica de tienda —
   ahora hace **PREVENTA grounded** para no dejar al cliente esperando. Cambios (solo prompt + lógica del

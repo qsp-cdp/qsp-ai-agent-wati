@@ -33,6 +33,46 @@ export function lastDigits(phone: string, n = 8): string {
   return String(phone ?? '').replace(/\D/g, '').slice(-n);
 }
 
+// --- Re-enganche de fin de semana (v51) ----------------------------------------------------------
+// El cron (Edge Function reengage-expired) lee estos candidatos y, en modo live, les manda una plantilla.
+export interface ReengageCandidate { wa_id: string; sender_name: string | null; last_inbound_at: string; }
+
+// Llama al RPC reengage_candidates (toda la lógica de elegibilidad vive en SQL — ver la migración).
+export async function fetchReengageCandidates(lookbackHours: number, windowHours: number, max: number): Promise<ReengageCandidate[]> {
+  const res = await fetch(restUrl('/rpc/reengage_candidates'), {
+    method: 'POST',
+    headers: serviceHeaders(),
+    body: JSON.stringify({ p_lookback_hours: lookbackHours, p_window_hours: windowHours, p_max: max }),
+    signal: AbortSignal.timeout(15000),
+  });
+  if (!res.ok) throw new Error(`reengage_candidates falló: ${res.status} ${await res.text()}`);
+  return await res.json();
+}
+
+// Marca que a este wa_id se le mandó la plantilla de re-enganche ahora (idempotencia: no re-enviar hasta
+// que el cliente vuelva a escribir). Solo se llama en modo LIVE tras un envío exitoso.
+export async function markReengaged(waId: string): Promise<void> {
+  const res = await fetch(restUrl(`/conversations?wa_id=eq.${encodeURIComponent(waId)}`), {
+    method: 'PATCH',
+    headers: { ...serviceHeaders(), Prefer: 'return=minimal' },
+    body: JSON.stringify({ reengaged_at: new Date().toISOString() }),
+    signal: AbortSignal.timeout(8000),
+  });
+  if (!res.ok) throw new Error(`markReengaged ${waId} falló: ${res.status} ${await res.text()}`);
+}
+
+// Logger a job_log vía PostgREST (mismo patrón que el copiloto, pero sin supabase-js). Nunca lanza.
+export async function logJob(functionName: string, action: string, ok: boolean, detail: unknown): Promise<void> {
+  try {
+    await fetch(restUrl('/job_log'), {
+      method: 'POST',
+      headers: { ...serviceHeaders(), Prefer: 'return=minimal' },
+      body: JSON.stringify({ function_name: functionName, action, ok, detail }),
+      signal: AbortSignal.timeout(5000),
+    });
+  } catch { /* nunca romper */ }
+}
+
 export async function findContactByPhone(phone: string): Promise<Contact | null> {
   const digits = lastDigits(phone);
   if (!digits) return null;
