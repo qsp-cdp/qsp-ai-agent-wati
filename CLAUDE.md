@@ -19,16 +19,32 @@ equipo humano: contesta preguntas generales, indica disponibilidad/stock y da pr
 con certeza, y calla/deriva cuando es mejor que responda un humano. Tienda:
 **quickservicepanama.com** (suministros de impresión y tecnología en Panamá).
 
-## Estado actual (2026-07-07)
+## Estado actual (2026-07-08)
+- **🎉 CÍRCULO DE PEDIDOS COMPLETO Y PROBADO EN VIVO (08-jul).** Las 3 patas verificadas end-to-end con tráfico
+  real (no solo código desplegado):
+  1. **Captura:** flujo WATI "Dirección de envío" (regla `Contiene: registrar envio` → 3 preguntas → webhook a
+     `wati-address`) — probado, escribió en la libreta `contacts` (`source=wati`).
+  2. **Despacho:** flujo WATI "Despachar pedido" (regla `Contiene: confirmar envio` → webhook a `wati-order` con
+     `{telefono:{{phone}}}`) — probado 2 veces, creó órdenes reales en Shipday (ids 50009967 y la de 08-jul) y
+     escribió en `pedidos` (`fuente=wati`, `estado=nuevo`, `pedido_ref=WATI-…`).
+  3. **Lectura:** tool `estado_pedido` del copiloto — ya puede leer esas filas.
+  Ambos flujos son SOLO webhook (sin mensaje de cierre propio; `wati-address`/`wati-order` ya notifican al
+  cliente). **Aprendizaje clave:** las reglas de WATI disparan con mensajes ENTRANTES (del cliente) — un
+  mensaje que escribe el asesor desde el inbox es saliente y NO dispara nada; por eso ambos flujos se activan
+  con el CLIENTE escribiendo el keyword (el asesor se lo pide primero). WATI no tiene disparador por
+  etiqueta/tag (solo por atributo de contacto) — evaluado y descartado por ahora, el patrón por keyword ya
+  cumple. **Housekeeping pendiente:** cancelar en Shipday las 2 órdenes de prueba (WATI-1783450748729 /
+  WATI-1783524383338); limpiar la fila de contacto de prueba si se desea. Los 5 atributos "cosméticos" de WATI
+  (`direccion_envio` etc., solo para que el asesor los vea en el panel) siguen sin crear — no son necesarios
+  para que el circuito funcione.
 - **EN VIVO: `copilot-webhook` v48 (`v48-conciencia-pedidos`), ACTIVE (desplegado 07-jul por Browse, byte-exacto,
   verify_jwt=false; healthcheck `version:v48-conciencia-pedidos`, `model:claude-sonnet-5`, `webhook_key_es_default:false`).**
   Acumulado v40–v47 + el **LECTOR** de conciencia de pedidos (tool `estado_pedido`). Migraciones `pedidos` +
-  `contacts_grant` **APLICADAS** (07-jul). **PENDIENTE para el círculo completo:** (a) desplegar los **ESCRITORES**
-  del puente Shipday **por CLI** (`.\deploy.ps1 wati-order shipday-status shopify-webhook wati-address contacts-lookup`)
-  para que `pedidos` se llene; (b) probar Shipday (curl a `wati-order`); (c) armar el flujo de captura de WATI
-  (`docs/plantilla-wati.md`: 5 atributos + flujo + HSM). El lector solo es seguro (pedidos vacía → `sin_pedidos` →
-  deriva). Secretos del puente completos; webhook de estados de Shipday ya registrado (⚠ rotar el token/API key,
-  quedó expuesto en un chat). Nota: los escritores del puente NO se pueden desplegar por Browse (importan `../_shared`).
+  `contacts_grant` **APLICADAS** (07-jul). Los **ESCRITORES** del puente Shipday ya se desplegaron por CLI
+  (`.\deploy.ps1`, sin argumentos = las 6 funciones) — `pedidos` ya se llena con tráfico real. Secretos del
+  puente completos; `WATI_WEBHOOK_TOKEN` y `SHIPDAY_WEBHOOK_TOKEN` rotados a valores random fuertes durante
+  esta sesión (los viejos habían quedado expuestos en chat). Nota: los escritores del puente NO se pueden
+  desplegar por Browse (importan `../_shared`) — siempre por CLI.
 - **Base histórica (v45, ahora corriendo bajo v48): `copilot-webhook` v45 (`v45-endurecimiento-quirurgico`).** Desplegado con `verify_jwt=false`
   (incluye v40–v44: `.trim()` a secretos, trato de usted, guardrails, sucursales del interior, autotest de
   inventario y guard anti-fuga; + v45 endurecimiento quirúrgico — ver detalle abajo). **`COPILOT_WEBHOOK_KEY`

@@ -39,14 +39,16 @@ web/
 ```
 
 ## Estado
+- **🎉 Círculo de pedidos COMPLETO y probado en vivo (08-jul):** captura de dirección (flujo WATI "Dirección de
+  envío" → `wati-address` → libreta `contacts`) + despacho (flujo WATI "Despachar pedido" → `wati-order` →
+  Shipday + tabla `pedidos`) + lectura (copiloto, tool `estado_pedido`). Las 3 patas verificadas con tráfico
+  real, no solo desplegadas. Detalle de la implementación (reglas, keywords, aprendizajes): `docs/plantilla-wati.md`.
 - Edge function `copilot-webhook` **v48 (`v48-conciencia-pedidos`), ACTIVE** (desplegado 07-jul) — EN VIVO a todos.
   Trae acumulado v40–v47 (`.trim()` a secretos, trato de usted, guardrails, sucursales, autotest de inventario,
   envío por sector) + el **LECTOR** de conciencia de pedidos (tool `estado_pedido`). Coexistencia validada (v15) ·
   visión (v19) · anti-duplicado/anti-carrera (v20). **Probando Claude Sonnet 5** (`COPILOT_MODEL=claude-sonnet-5`).
-  Migraciones `pedidos` + `contacts_grant` aplicadas. **PENDIENTE del círculo de pedidos:** desplegar los ESCRITORES
-  del puente Shipday **por CLI** (`.\deploy.ps1 wati-order shipday-status shopify-webhook wati-address contacts-lookup`)
-  + probar Shipday + armar el flujo de captura de WATI (`docs/plantilla-wati.md`). El lector solo es seguro (pedidos
-  vacía → `sin_pedidos` → deriva).
+  Migraciones `pedidos` + `contacts_grant` aplicadas. Los ESCRITORES del puente Shipday ya desplegados por CLI
+  y probados con pedidos reales (2 órdenes de prueba creadas en Shipday, canceladas post-prueba).
 - **v21:** ITBMS (precio + 7% + total, calculado en código) + inventario real (Shopify Admin
   `totalInventory`; ≤3 → "un asesor verifica") + anti-eco duro (se acabaron los handoffs falsos).
 - **v22:** conciencia de horario (atención Lun-Vie 9am-5pm, Panamá) — fuera de horario aclara
