@@ -42,7 +42,9 @@ as $$
   from public.conversations c
   join last_in  li on li.conversation_id = c.id
   join last_any la on la.conversation_id = c.id
-  where c.status <> 'cerrada'
+  where c.status = 'bot'  -- SOLO conversaciones que gestiona el bot: NUNCA 'handoff' (un asesor humano
+                          -- está/estuvo a cargo → no le mandamos una plantilla automática, anti-interrupción)
+                          -- ni 'cerrada'. Para incluir handoffs a propósito, relajar a `c.status <> 'cerrada'`.
     and coalesce(c.reengage_optout, false) = false
     and li.last_inbound_at <  now() - make_interval(hours => p_window_hours)   -- ventana 24h YA vencida
     and li.last_inbound_at >= now() - make_interval(hours => p_lookback_hours) -- pero dentro del lookback

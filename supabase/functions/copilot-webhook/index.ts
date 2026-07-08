@@ -1520,7 +1520,10 @@ Deno.serve(async (req) => {
   // se marcaría un HANDOFF FALSO y arrancaría el reloj de asesor (el cliente que responda quedaría en modo
   // asistencia en vez de ser atendido por el bot). Se registra y se salta. (El eventType real se ve en el
   // log `evento_plantilla_saliente`; el guard es amplio a propósito: cualquier evento de plantilla saliente.)
-  if (eventType.includes("template") || eventType.includes("plantilla")) {
+  // Exige esDelNegocio (owner=true): una plantilla saliente SIEMPRE es del negocio. Así, si algún día WATI
+  // mandara un evento ENTRANTE cuyo tipo contenga "template" (p.ej. la respuesta a un botón de plantilla),
+  // NO se descarta por error (owner=false → no entra aquí → lo atiende el flujo normal del cliente).
+  if (esDelNegocio && (eventType.includes("template") || eventType.includes("plantilla"))) {
     await log("evento_plantilla_saliente", true, { waId: waId || null, eventType });
     return Response.json({ ok: true, skipped: "template_message_sent" });
   }

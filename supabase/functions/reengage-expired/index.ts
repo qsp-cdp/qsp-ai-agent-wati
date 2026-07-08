@@ -58,24 +58,41 @@ async function correr(): Promise<Record<string, unknown>> {
     await logJob(FN, "reengage_run", false, { motivo: "sin_template", candidatos: cands.length });
     return { candidatos: cands.length, error: "sin_template" };
   }
-  // LIVE: enviar la plantilla + marcar, con concurrencia acotada.
-  let enviados = 0, fallidos = 0;
+  // LIVE: enviar la plantilla + marcar, con concurrencia acotada y un DEADLINE global (si WATI se pone
+  // lento, evita que la corrida supere el wall-limit de la Edge Function y muera a mitad sin registro;
+  // lo que quede se loguea como restante, no se trunca en silencio).
+  const t0 = Date.now();
+  const DEADLINE_MS = 120000;
+  let enviados = 0, fallidos = 0, marcaFallo = 0;
   for (let i = 0; i < cands.length; i += CONCURRENCY) {
+    if (Date.now() - t0 > DEADLINE_MS) {
+      await logJob(FN, "reengage_deadline", true, { procesados: i, restantes: cands.length - i, enviados, fallidos });
+      break;
+    }
     const chunk = cands.slice(i, i + CONCURRENCY);
     await Promise.all(chunk.map(async (c) => {
+      // 1) Enviar (plantilla SIN variables → sin fallos por parámetro vacío).
       try {
-        // Plantilla SIN variables (recomendado para el re-enganche → sin fallos por parámetro vacío).
         await sendWatiTemplateMessage(c.wa_id, TEMPLATE, BROADCAST, []);
-        await markReengaged(c.wa_id); // idempotencia: no re-enviar hasta que el cliente vuelva a escribir
-        enviados++;
       } catch (e) {
         fallidos++;
         await logJob(FN, "reengage_fallo", false, { wa_id: c.wa_id, error: String(e).slice(0, 200) });
+        return; // no salió → NO marcar (sigue candidato, se reintenta la próxima corrida)
       }
+      enviados++;
+      // 2) Marcar idempotencia. La plantilla YA salió (se facturó y afecta la calidad del número), así que
+      // marcar es best-effort CON reintento; si aun así falla, log DISTINTO (sent=true) para vigilar el
+      // riesgo de doble envío — NUNCA se re-cuenta como fallo de envío ni se re-envía en esta corrida.
+      let marcado = false;
+      for (let intento = 0; intento < 3 && !marcado; intento++) {
+        try { await markReengaged(c.wa_id); marcado = true; }
+        catch { if (intento < 2) await new Promise((r) => setTimeout(r, 500 * (intento + 1))); }
+      }
+      if (!marcado) { marcaFallo++; await logJob(FN, "reengage_marca_fallo", false, { wa_id: c.wa_id, sent: true }); }
     }));
   }
-  await logJob(FN, "reengage_run", true, { mode: "live", candidatos: cands.length, enviados, fallidos });
-  return { candidatos: cands.length, mode: "live", enviados, fallidos };
+  await logJob(FN, "reengage_run", true, { mode: "live", candidatos: cands.length, enviados, fallidos, marca_fallo: marcaFallo });
+  return { candidatos: cands.length, mode: "live", enviados, fallidos, marca_fallo: marcaFallo };
 }
 
 Deno.serve(async (req) => {

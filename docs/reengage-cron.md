@@ -13,7 +13,7 @@ pg_cron (lunes 9:00am Panamá = 14:00 UTC)
         ├─ RPC reengage_candidates(lookback, window, max)  ─► NUESTRO Postgres (no la API de WATI)
         │     · último msg del hilo = del cliente (sin responder)
         │     · ventana 24h vencida  ·  dentro del lookback (96h)
-        │     · status != cerrada  ·  sin opt-out  ·  no re-enganchado desde su última entrada
+        │     · status = 'bot' (NUNCA handoff → no pisa al asesor; ni cerrada)  ·  sin opt-out  ·  no re-enganchado
         └─ por cada candidato:
               DRY-RUN (default) → job_log `reengage_dryrun` (no envía)
               LIVE               → sendTemplateMessage(WATI) + marca reengaged_at (idempotencia)
@@ -110,8 +110,17 @@ select cron.schedule(
 
 ## Decisiones abiertas / a calibrar tras ver el DRY-RUN
 
-- **A quién:** hoy = "el último mensaje del hilo es del cliente y quedó sin responder". Si querés incluir
-  también los `handoff` que un humano dejó a medias, se amplía el RPC (una línea). El dry-run dirá el volumen real.
+- **A quién:** hoy = conversaciones **gestionadas por el bot** (`status='bot'`) cuyo último mensaje es del
+  cliente y quedó sin responder. Los `handoff` (un humano está/estuvo a cargo) se EXCLUYEN a propósito
+  (anti-interrupción — no le mandamos una plantilla automática a un cliente que un asesor atiende). Si algún
+  día querés incluirlos, relajá el RPC de `c.status = 'bot'` a `c.status <> 'cerrada'`. El dry-run dirá el volumen real.
+- **Interruptor independiente:** el cron se gobierna SOLO por `REENGAGE_MODE`. NO mira `COPILOT_MODE` ni
+  `COPILOT_LIVE_ALLOWLIST` → un rollback del copiloto a shadow/allowlist **no frena el cron**. Si querés
+  pausarlo, poné `REENGAGE_MODE=shadow` (o desprogramá el cron).
+- **Endpoint de plantilla a confirmar en vivo:** el helper usa `POST /api/v1/sendTemplateMessage/{numero}`
+  con `{template_name, broadcast_name, parameters:[]}`. Algunas cuentas de WATI exponen el bulk
+  `POST /api/v1/sendTemplateMessages` (plural, con `receivers[]`). En el test `force=1` inicial, si el
+  single-send da 404/400, cambiar al bulk es un ajuste chico en `_shared/watiapi.ts`.
 - **Frecuencia:** default lunes. Cambiar a `0 14 * * 1-5` (Lun-Vie) recupera también chats de entre semana.
 - **Calidad de WhatsApp:** enviar plantillas a mucha gente que no responde baja el rating de calidad del número.
   El tope `REENGAGE_MAX` + el opt-out + la idempotencia lo acotan; empezar conservador (lunes, solo sin-responder).

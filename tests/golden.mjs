@@ -358,6 +358,8 @@ console.log("v51 guard plantilla saliente");
 // El cron reengage-expired envía plantillas HSM; WATI eco-notifica "Template Message Sent". El copiloto
 // debe SALTARLO (no tratarlo como asesor humano → falso handoff). Lock sobre el source real.
 caso("v51: copilot salta eventos de plantilla saliente", /eventType\.includes\("template"\)/.test(src) && /evento_plantilla_saliente/.test(src));
+// v51 (revisión adversarial): el guard exige esDelNegocio → un ENTRANTE con "template" en el tipo NO se descarta.
+caso("v51: el guard de plantilla exige esDelNegocio (owner=true)", /esDelNegocio && \(eventType\.includes\("template"\)/.test(src));
 caso("v51: el guard de plantilla va ANTES del path owner=true (human-agent)", (() => {
   const iGuard = src.indexOf('skipped: "template_message_sent"');
   const iOwner = src.indexOf("Mensaje del NEGOCIO (owner=true)");
