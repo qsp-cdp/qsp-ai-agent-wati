@@ -1,3 +1,17 @@
+// === copilot-webhook v49 — Copiloto AI de WATI — DEBOUNCE de ráfagas + visión multi-imagen ===
+// v49 (2026-07-08): auditoría real (conv 50764417334): el cliente mandó [foto][foto]"¿estas no hay?" en 3 s
+//   → 3 invocaciones; el anti-duplicado v20 mató 2 (una DESPUÉS de gastar el LLM) y la que respondió era la
+//   del TEXTO, sin las fotos → "No logro visualizar las imágenes". Además, cada mensaje suelto de una ráfaga
+//   de 2-3 líneas respondía a media pregunta. Fix (decisión de Gerencia: el baseline humano era un loop de
+//   ~minutos, 10 s no son nada): (1) **DEBOUNCE** — todas las invocaciones esperan DEBOUNCE_MS (default 10 s,
+//   secreto COPILOT_DEBOUNCE_MS, 0=off, tope 60 s) ANTES del chequeo pre-LLM; las superadas mueren baratas
+//   (sin gastar LLM) y solo la del último mensaje responde con la ráfaga completa. (2) **VISIÓN DE RÁFAGA** —
+//   el mensaje del cliente guarda su `media_url` (migración 20260708150000, APLICARLA ANTES de desplegar);
+//   el ganador junta las imágenes de los "user" consecutivos del final del historial (últimos 5 min, máx 3),
+//   las descarga y las adjunta TODAS a Claude vision (antes solo veía la del propio mensaje ganador).
+//   (3) anti-carrera temprano post-debounce (si el asesor entró durante la espera, ni se llama al LLM).
+//   El modo asistencia (v31) también debounce-a. `latency_ms` ahora INCLUYE la espera (~+10 s, es la
+//   latencia percibida real). No toca prompt/tools/system ni el caché de v35.
 // === copilot-webhook v48 — Copiloto AI de WATI — CONCIENCIA DE PEDIDOS (el bot sabe en qué va la entrega) ===
 // v48 (2026-07-07): el bot no sabía si un cliente tenía un pedido en curso; ante "¿dónde está mi pedido?"
 //   adivinaba o derivaba a ciegas. Fix grounded: nueva tool `estado_pedido` (sin args del modelo: toma el
@@ -420,6 +434,13 @@ const MAX_TURNS_DIA = 40;
 // lleva > H horas sin escribir, la conversación se considera fría → el bot la RETOMA (status='bot').
 const HANDOFF_ASSIST_MIN = parseInt(Deno.env.get("COPILOT_HANDOFF_ASSIST_MIN") ?? "15", 10) || 15;
 const HANDOFF_COLD_HOURS = parseInt(Deno.env.get("COPILOT_HANDOFF_COLD_HOURS") ?? "24", 10) || 24;
+// v49 — DEBOUNCE de ráfagas (ms): el bot espera a que el cliente TERMINE de escribir antes de responder
+// (2-3 líneas y/o imágenes llegan como mensajes separados con segundos de diferencia). Cada mensaje nuevo
+// "reinicia" el ciclo: las invocaciones superadas mueren baratas en el chequeo pre-LLM y SOLO la del último
+// mensaje responde, con la ráfaga completa como contexto. 0 = desactivado. Default 10s (decisión de
+// Gerencia: el baseline humano era un loop de minutos; 10s compran contexto completo y siguen siendo
+// muchísimo más rápidos). Tuneable por secreto sin redesplegar. Tope 60s por sanidad.
+const DEBOUNCE_MS = (() => { const n = parseInt((Deno.env.get("COPILOT_DEBOUNCE_MS") ?? "").trim(), 10); return Number.isFinite(n) && n >= 0 ? Math.min(n, 60000) : 10000; })();
 const STORE = "https://www.quickservicepanama.com";
 // v21 — Shopify Admin (solo lectura) para la CANTIDAD real de inventario (totalInventory).
 // SHOPIFY_ADMIN_API_BASE: https://<tienda>.myshopify.com/admin/api/2024-10 (sin / al final).
@@ -1152,7 +1173,7 @@ async function estadoPedido(waId: string = ""): Promise<string> {
   }
 }
 
-async function responderLLM(history: { role: string; content: string; model?: string | null; created_at?: string | null }[], forceTool: boolean, imagen?: { b64: string; mediaType: string } | null, imagenFallo?: boolean, waId: string = "", atributos: Record<string, string> = {}, linksTracked: Record<string, string> = {}, modoAsistencia: boolean = false): Promise<{ text: string | null; toolCalls: unknown[]; tokensIn: number; tokensOut: number; cacheRead: number; cacheWrite: number }> {
+async function responderLLM(history: { role: string; content: string; model?: string | null; created_at?: string | null }[], forceTool: boolean, imagenes?: { b64: string; mediaType: string }[] | null, imagenFallo?: boolean, waId: string = "", atributos: Record<string, string> = {}, linksTracked: Record<string, string> = {}, modoAsistencia: boolean = false): Promise<{ text: string | null; toolCalls: unknown[]; tokensIn: number; tokensOut: number; cacheRead: number; cacheWrite: number }> {
   if (!anthropic) return { text: null, toolCalls: [], tokensIn: 0, tokensOut: 0, cacheRead: 0, cacheWrite: 0 };
   // La API exige que el primer mensaje sea del usuario: descarta "assistant" al inicio
   // (puede pasar si un asesor escribió primero).
@@ -1221,15 +1242,17 @@ async function responderLLM(history: { role: string; content: string; model?: st
   // entró último), se descartan los assistant finales para no romper la llamada (error 400).
   while (messages.length && messages[messages.length - 1].role === "assistant") messages.pop();
   if (!messages.length) return { text: null, toolCalls: [], tokensIn: 0, tokensOut: 0, cacheRead: 0, cacheWrite: 0 };
-  // v19 (visión): adjunta la imagen del cliente al ÚLTIMO mensaje de usuario (el que la trae).
-  if ((imagen || imagenFallo) && messages.length) {
+  // v19 (visión) + v49 (ráfaga): adjunta las imágenes del cliente al ÚLTIMO mensaje de usuario. Con el
+  // debounce, ese mensaje puede ser texto ("¿estas no hay?") y las fotos venir de mensajes anteriores de
+  // la misma ráfaga — se adjuntan TODAS (máx 3) en orden cronológico, antes del texto.
+  if (((imagenes && imagenes.length) || imagenFallo) && messages.length) {
     const last = messages[messages.length - 1];
     if (last.role === "user" && typeof last.content === "string") {
       const cap = (last.content && last.content !== "[imagen]" && last.content !== "(vacío)") ? last.content : "";
-      if (imagen) {
+      if (imagenes && imagenes.length) {
         last.content = [
-          { type: "image", source: { type: "base64", media_type: imagen.mediaType as any, data: imagen.b64 } },
-          { type: "text", text: cap || "El cliente envió esta imagen. Si muestra un producto, identifica marca y modelo y búscalo con buscar_producto." },
+          ...imagenes.map((im) => ({ type: "image", source: { type: "base64", media_type: im.mediaType as any, data: im.b64 } })),
+          { type: "text", text: cap || "El cliente envió esta(s) imagen(es). Si muestran un producto, identifica marca y modelo y búscalo con buscar_producto." },
         ] as any;
       } else {
         last.content = (cap ? cap + " " : "") + "[Nota interna: el cliente envió una imagen que no se pudo cargar. Pídele el modelo exacto o deriva a un asesor.]";
@@ -1448,7 +1471,7 @@ Deno.serve(async (req) => {
       const diag = await inventarioSelfTest(pid);
       return Response.json({ selftest: "inventario", ...diag, ts: new Date().toISOString() });
     }
-    return Response.json({ status: "ok", function: "copilot-webhook", version: "v48-conciencia-pedidos", mode: MODE, mode_raw: MODE_RAW, model: MODEL, llm_configured: !!anthropic, wati_send_configured: !!(WATI_API_TOKEN && WATI_API_BASE), inventario_configurado: !!(SHOPIFY_ADMIN_TOKEN && SHOPIFY_ADMIN_API_BASE), resolve_configured: !!RESOLVE_SECRET, webhook_key_es_default: WEBHOOK_KEY_ES_DEFAULT, handoff_assist_min: HANDOFF_ASSIST_MIN, handoff_cold_hours: HANDOFF_COLD_HOURS, live_targets: MODE === "live" ? (LIVE_ALL ? "all" : LIVE_ALLOWLIST.length) : 0, ts: new Date().toISOString() });
+    return Response.json({ status: "ok", function: "copilot-webhook", version: "v49-debounce-rafaga", mode: MODE, mode_raw: MODE_RAW, model: MODEL, llm_configured: !!anthropic, wati_send_configured: !!(WATI_API_TOKEN && WATI_API_BASE), inventario_configurado: !!(SHOPIFY_ADMIN_TOKEN && SHOPIFY_ADMIN_API_BASE), resolve_configured: !!RESOLVE_SECRET, webhook_key_es_default: WEBHOOK_KEY_ES_DEFAULT, handoff_assist_min: HANDOFF_ASSIST_MIN, handoff_cold_hours: HANDOFF_COLD_HOURS, debounce_ms: DEBOUNCE_MS, live_targets: MODE === "live" ? (LIVE_ALL ? "all" : LIVE_ALLOWLIST.length) : 0, ts: new Date().toISOString() });
   }
   if (req.method !== "POST") return Response.json({ error: "method_not_allowed" }, { status: 405 });
   if (url.searchParams.get("key") !== WEBHOOK_KEY) return Response.json({ error: "forbidden" }, { status: 403 });
@@ -1534,7 +1557,10 @@ Deno.serve(async (req) => {
     const watiMsgId = (p.id ?? p.whatsappMessageId ?? null)?.toString() ?? null;
     // Para una imagen el caption va en `texto`; si no hay caption, se guarda un marcador.
     const contenido = esImagenCliente ? (texto || "[imagen]") : texto;
-    const ins = await sb.from("messages").insert({ conversation_id: conv.id, role: "user", content: contenido.slice(0, 4000), mode: MODE, wati_message_id: watiMsgId }).select("id,created_at");
+    // v49: se guarda la URL del media — antes solo quedaba "[imagen]" y una foto que llegaba ANTES del
+    // último mensaje de la ráfaga era imposible de recuperar (el ganador no podía verla). Requiere la
+    // migración 20260708150000_messages_media_url (aplicarla ANTES de desplegar v49).
+    const ins = await sb.from("messages").insert({ conversation_id: conv.id, role: "user", content: contenido.slice(0, 4000), mode: MODE, wati_message_id: watiMsgId, media_url: esImagenCliente ? (String(p.data ?? "").slice(0, 500) || null) : null }).select("id,created_at");
     if (ins.error) {
       if (ins.error.code === "23505") return Response.json({ ok: true, skipped: "duplicado" });
       throw new Error(`insert user msg: ${ins.error.message}`);
@@ -1575,6 +1601,7 @@ Deno.serve(async (req) => {
         // no saca la conversación de handoff y no le quita la venta al asesor.
         const asistir = (async () => {
           try {
+            if (DEBOUNCE_MS > 0) await new Promise((res) => setTimeout(res, DEBOUNCE_MS)); // v49: misma espera de ráfaga
             if (await hayMensajeClienteMasNuevo(conv.id, userCreatedAt)) { await log("descartado_superado", true, { waId, fase: "asist-pre" }); return; }
             const { data: hist } = await sb.from("messages").select("role,content,model,created_at").eq("conversation_id", conv.id).in("role", ["user", "assistant"]).order("created_at", { ascending: false }).limit(10);
             const history = (hist ?? []).reverse();
@@ -1646,19 +1673,39 @@ Deno.serve(async (req) => {
     const procesar = (async () => {
       let respondido = false; // v23: marca si ya enviamos respuesta (para el respaldo del catch)
       try {
-        // v19: si es una imagen del cliente, descárgala de WATI para pasarla a Claude vision.
-        let imagen: { b64: string; mediaType: string } | null = null;
-        if (esImagenCliente) {
-          imagen = await descargarMediaWati(String(p.data ?? ""));
-          if (!imagen) await log("imagen_no_descargada", false, { waId, url: String(p.data ?? "").slice(0, 160) });
-        }
+        // v49 — DEBOUNCE: esperar a que la ráfaga se asiente. El cliente que escribe 2-3 líneas (o manda
+        // fotos y luego pregunta) genera mensajes separados por segundos; antes, cada uno corría su propio
+        // LLM y el anti-duplicado (v20) tiraba respuestas ya generadas (plata quemada) o respondía a media
+        // pregunta. Ahora TODAS las invocaciones esperan DEBOUNCE_MS; las superadas mueren baratas en el
+        // chequeo pre-LLM (sin llamar al modelo) y solo la del ÚLTIMO mensaje responde con todo el contexto.
+        if (DEBOUNCE_MS > 0) await new Promise((res) => setTimeout(res, DEBOUNCE_MS));
         // v20 (anti-duplicado, pre-LLM): si ya llegó un mensaje más nuevo, ni gastamos el LLM.
         if (await hayMensajeClienteMasNuevo(conv.id, userCreatedAt)) { await log("descartado_superado", true, { waId, fase: "pre-llm" }); return; }
-        const { data: hist } = await sb.from("messages").select("role,content,model,created_at").eq("conversation_id", conv.id).in("role", ["user", "assistant"]).order("created_at", { ascending: false }).limit(10);
+        // v49 (anti-carrera temprano): si un asesor tomó la conversación DURANTE la espera, no gastamos
+        // el LLM ni la pisamos (el chequeo v20 post-LLM seguía existiendo, pero este ahorra la llamada).
+        const { data: convTrasEspera } = await sb.from("conversations").select("status").eq("id", conv.id).maybeSingle();
+        if (convTrasEspera?.status === "handoff") { await log("descartado_handoff_tardio", true, { waId, fase: "post-debounce" }); return; }
+        const { data: hist } = await sb.from("messages").select("role,content,model,created_at,media_url").eq("conversation_id", conv.id).in("role", ["user", "assistant"]).order("created_at", { ascending: false }).limit(10);
         const history = (hist ?? []).reverse();
+        // v49 — VISIÓN de ráfaga: junta las imágenes de la COLA de mensajes del cliente (los "user"
+        // consecutivos del final del historial, últimos 5 min) y descarga hasta 3. Antes solo se veía la
+        // imagen del mensaje ganador: si el cliente mandaba [foto][foto]"¿estas no hay?", el ganador era el
+        // texto y las fotos se perdían ("No logro visualizar…" — caso real auditado el 08-jul).
+        const hace5min = Date.now() - 5 * 60 * 1000;
+        const urlsRafaga: string[] = [];
+        for (let i = history.length - 1; i >= 0 && (history[i] as any).role === "user"; i--) {
+          const m = history[i] as any;
+          if (m.media_url && new Date(m.created_at).getTime() > hace5min) urlsRafaga.unshift(String(m.media_url));
+        }
+        const imagenes: { b64: string; mediaType: string }[] = [];
+        for (const u of urlsRafaga.slice(-3)) { // máx 3 (payload); las más recientes, en orden cronológico
+          const img = await descargarMediaWati(u);
+          if (img) imagenes.push(img);
+        }
+        if (urlsRafaga.length && !imagenes.length) await log("imagen_no_descargada", false, { waId, urls_en_rafaga: urlsRafaga.length });
         const atributosWati = extraerCustomParams(p); // v25: datos que ya tenemos (best-effort, del payload)
         const linksTracked: Record<string, string> = {}; // v29 — handle → URL con tracking (lo llena buscar_producto)
-        const r = await responderLLM(history as any, imagen ? false : NEEDS_TOOL_RE.test(texto), imagen, esImagenCliente && !imagen, waId, atributosWati, linksTracked);
+        const r = await responderLLM(history as any, imagenes.length ? false : NEEDS_TOOL_RE.test(texto), imagenes, urlsRafaga.length > 0 && imagenes.length === 0, waId, atributosWati, linksTracked);
         let salida = r.text ? reaplicarTracking(limpiarWhatsApp(r.text), linksTracked) : null; // v16 formato + v29 tracking
         // v44 (guard anti-fuga de tool-call): si el modelo escribió la llamada como TEXTO (visto en Sonnet 5)
         // en vez de invocarla nativa, NO mandamos ese XML; va la respuesta de respaldo (consciente del
@@ -1687,7 +1734,7 @@ Deno.serve(async (req) => {
           if (!enviado) { modoFinal = "shadow"; await sb.from("messages").update({ mode: "shadow" }).eq("id", insAsst.data?.[0]?.id); }
         }
         respondido = true; // v23: ya insertamos/enviamos la respuesta del bot
-        if (esImagenCliente) await log("imagen_procesada", true, { waId, descargada: !!imagen, enviado });
+        if (urlsRafaga.length) await log("imagen_procesada", true, { waId, en_rafaga: urlsRafaga.length, descargadas: imagenes.length, enviado });
         if (fugaTool) await log("fuga_tool_texto", false, { waId, enviado, muestra: (r.text ?? "").slice(0, 200) });
         if (!anthropic) await log("llm_no_configurado", true, { waId });
       } catch (e) {

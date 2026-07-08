@@ -300,6 +300,21 @@ caso("estadoPedido llama al RPC estado_pedido", /sb\.rpc\("estado_pedido"/.test(
 // v48: estado_pedido NO va en MODO ASISTENCIA (un humano lleva el caso) — chequeo sobre el filtro real.
 caso("asistencia NO incluye estado_pedido", assistFilter.length > 0 && !/estado_pedido/.test(assistFilter));
 
+// --- v49: DEBOUNCE de ráfagas + visión multi-imagen (locks sobre el source real) -------------------
+console.log("v49 debounce + visión de ráfaga");
+caso("DEBOUNCE_MS configurable vía COPILOT_DEBOUNCE_MS", /COPILOT_DEBOUNCE_MS/.test(src));
+// el sleep del debounce ocurre ANTES del chequeo pre-LLM (si no, no coalesce nada)
+const iSleep = src.indexOf("setTimeout(res, DEBOUNCE_MS)");
+const iPreLlm = src.indexOf('fase: "pre-llm"');
+caso("sleep de debounce presente y antes del chequeo pre-LLM", iSleep > -1 && iPreLlm > -1 && iSleep < iPreLlm);
+caso("anti-carrera temprano post-debounce", /post-debounce/.test(src));
+caso("se persiste media_url del mensaje del cliente", /media_url: esImagenCliente/.test(src));
+caso("el historial trae media_url", /select\("role,content,model,created_at,media_url"\)/.test(src));
+caso("visión multi-imagen (adjunta el array completo)", /\.\.\.imagenes\.map\(\(im\)/.test(src));
+caso("ráfaga acotada: máx 3 imágenes", /urlsRafaga\.slice\(-3\)/.test(src));
+caso("healthcheck expone debounce_ms", /debounce_ms: DEBOUNCE_MS/.test(src));
+caso("asistencia también debounce-a", /v49: misma espera de r[aá]faga/.test(src));
+
 // --- resumen --------------------------------------------------------------------------------------
 console.log(`\n${ok} OK, ${mal} FALLA${mal === 1 ? "" : "S"}`);
 if (mal > 0) process.exit(1);

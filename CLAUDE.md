@@ -20,6 +20,18 @@ con certeza, y calla/deriva cuando es mejor que responda un humano. Tienda:
 **quickservicepanama.com** (suministros de impresión y tecnología en Panamá).
 
 ## Estado actual (2026-07-08)
+- **EN EL REPO, LISTO PARA DESPLEGAR: v49 (`v49-debounce-rafaga`).** De la auditoría real de la conv
+  50764417334 ([foto][foto]"¿estas no hay?" → el bot no vio las fotos) + decisión de Gerencia (baseline
+  humano = loop de minutos → 10 s no son nada): (1) **DEBOUNCE de ráfagas** — todas las invocaciones esperan
+  `COPILOT_DEBOUNCE_MS` (default 10000, 0=off, tope 60 s) antes del chequeo pre-LLM; las superadas mueren
+  SIN gastar LLM (antes se tiraban respuestas ya generadas) y solo el último mensaje responde con la ráfaga
+  completa; (2) **VISIÓN DE RÁFAGA** — el mensaje del cliente persiste su `media_url` (migración
+  **`20260708150000_messages_media_url` — APLICARLA ANTES de desplegar v49**, si no el insert del mensaje
+  falla y el bot queda MUDO) y el ganador adjunta TODAS las imágenes de la cola de user consecutivos
+  (últimos 5 min, máx 3) a Claude vision; (3) anti-carrera temprano post-debounce (asesor que entra durante
+  la espera gana sin gastar LLM). El modo asistencia también debounce-a. `latency_ms` ahora INCLUYE la
+  espera (~+10 s — es latencia percibida real; ajustar expectativas en las auditorías). 181 golden tests.
+  No toca prompt/tools/caché v35. Deploy: migración primero → `.\deploy.ps1 copilot-webhook`.
 - **🎉 CÍRCULO DE PEDIDOS COMPLETO Y PROBADO EN VIVO (08-jul).** Las 3 patas verificadas end-to-end con tráfico
   real (no solo código desplegado):
   1. **Captura:** flujo WATI "Dirección de envío" (regla `Contiene: registrar envio` → 3 preguntas → webhook a
@@ -460,6 +472,8 @@ Migraciones (ver `supabase/migrations/`):
 Tookan; **en prod desde 01-jul**; llegaron al repo con el merge de Opción A),
 `20260707130000_contacts_grant` (v48 — **APLICADA 07-jul**, `grant … contacts to service_role` que
 faltaba en la migración original; idempotente),
+`20260708150000_messages_media_url` (v49 — **FALTA APLICAR, ANTES de desplegar v49** [si no, el insert del
+mensaje del cliente falla y el bot queda mudo]: columna `media_url` en `messages` para la visión de ráfaga),
 `20260706170000_zonas_entrega` (v47 — **aplicada**, tablas `zonas_entrega`+`sectores_entrega` [419 sectores de
 Panamá+San Miguelito] + RPC `resolver_tarifa`, fuente ÚNICA de envíos por sector),
 `20260706180000_zonas_este_retiro` (v47 — **aplicada**, refactor de la zona este: retiro $6 / puerta $9 / asesor),
@@ -636,7 +650,10 @@ base `https://quick-service-supplies.myshopify.com/admin/api/2025-10`; si faltan
 "un asesor confirma"). **`RESOLVE_SECRET`** (v28/v30 — guard del endpoint GET `?ref_code=`; el CDP lo lee
 por `Authorization: Bearer`; si falta, el endpoint da 403). **`COPILOT_HANDOFF_ASSIST_MIN`** (v31, default
 **15**) y **`COPILOT_HANDOFF_COLD_HOURS`** (v31, default **24**) — umbrales del ciclo de vida del handoff.
-El healthcheck expone `inventario_configurado`, `resolve_configured`, `handoff_assist_min`, `handoff_cold_hours`.
+**`COPILOT_DEBOUNCE_MS`** (v49, default **10000**, 0=off, tope 60000) — espera de ráfaga antes de responder
+(el bot junta 2-3 líneas y/o imágenes del cliente como UN contexto; tuneable sin redesplegar).
+El healthcheck expone `inventario_configurado`, `resolve_configured`, `handoff_assist_min`, `handoff_cold_hours`,
+`debounce_ms`.
 
 > ⚠️ **OJO — no cruzar `COPILOT_MODE` con `COPILOT_MODEL`** (pasó 3 veces): el ID del
 > modelo (`claude-…`) va SIEMPRE en `COPILOT_MODE**L**` (la L = modeLo). `COPILOT_MODE`

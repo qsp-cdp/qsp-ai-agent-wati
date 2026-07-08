@@ -1,0 +1,11 @@
+-- v49 — visión de ráfaga: URL del media (imagen) que WATI adjunta al mensaje del cliente.
+-- Antes solo se guardaba el marcador "[imagen]" y la URL se perdía tras la invocación → si el cliente
+-- mandaba [foto][foto]"¿estas no hay?", el mensaje ganador del debounce (el texto) no podía recuperar
+-- las fotos anteriores. Con la URL persistida, el ganador junta las imágenes de la ráfaga (máx 3,
+-- últimos 5 min) y las adjunta todas a Claude vision.
+-- Nota: la URL es de live-mt-server.wati.io y requiere el Bearer WATI_API_TOKEN para descargarse — no es
+-- un dato público. Se trunca a 500 chars. Sin GRANT nuevo (el grant a service_role es a nivel de tabla).
+-- ⚠ APLICAR ANTES de desplegar copilot-webhook v49 (el insert ya incluye la columna; sin ella, PostgREST
+-- rechaza el insert del mensaje del cliente y el bot queda mudo).
+-- Idempotente. Aplicar en el SQL Editor.
+alter table public.messages add column if not exists media_url text;
