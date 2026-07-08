@@ -706,6 +706,12 @@ const INTERRUPT_RE = new RegExp([
   // pago/comprobante EN CURSO (no "¿aceptan X?" / "¿cómo pago?", que son métodos → info_tienda)
   "le adjunto", "adjunto (el|la|mi) ?(pago|comprobante|transferencia|recibo)", "comprobante", "ya (le |te )?(hice|mand[eé]|envi[eé]|pagu[eé])", "dep[oó]sit",
   "pagar\\s+(ya|ahora|de una|hoy|mañana)", // intención de pagar YA (no "pagar con tarjeta/yappy" — eso no lleva ya/ahora/hoy)
+  // v50 (revisión adversarial): pago COMPLETADO sin "ya" — "hice/realicé el pago", "acabo de pagar",
+  // "te mandé el pago", "mi pago". Cruzaban NEEDS_TOOL_RE (\bpago/pagar) pero NO INTERRUPT → con la
+  // asistencia ampliada, el bot podía responder sobre un pago en curso. Requieren VERBO+sustantivo de pago
+  // o "mi/su pago" → NO tocan las PREGUNTAS de método ("¿cómo pago?", "¿aceptan yappy?", "formas de pago").
+  "(hice|mand[eé]|pas[eé]|envi[eé]|pagu[eé]|realic[eé]|deposit[eé]|transfer[ií]) (le |te |ya |el |la |mi |su )*(pago|transferencia|dep[oó]sito|comprobante)",
+  "acabo de (pagar|transferir|depositar)", "\\b(mi|su) pago\\b",
   "\\btransfiero\\b", "le transfiero", "a qu[eé] cuenta", "n[uú]mero de cuenta", "a d[oó]nde (le |te )?(pago|deposito|transfiero|consigno)", // a dónde pago/transfiero (el bot NUNCA da la cuenta)
   // entrega/retiro EN CURSO
   "mensajer[oa]", "el chico", "va en camino", "que retir", "va a retirar", "pas(o|a|ar[eé]) (el |la )?(lunes|martes|mi[eé]rcoles|jueves|viernes|s[aá]bado|domingo|mañana|hoy)",
@@ -1588,10 +1594,12 @@ Deno.serve(async (req) => {
       const frio = !!ultHumano && minsSinHumano > HANDOFF_COLD_HOURS * 60 && !interrumpe;
       // v50 — asistencia ampliada a PREVENTA: además de las preguntas básicas de tienda (BASIC_INFO_RE),
       // ahora también asiste ante catálogo/precio/stock/estado de pedido (NEEDS_TOOL_RE) → el bot da precios
-      // grounded (buscar_producto) sin retomar la venta. INTERRUPT_RE (pago/fiscal/coordinar entrega) sigue
-      // bloqueando ANTES; ASSIST_SUFFIX le prohíbe cerrar la venta, cotizar envío por sector y pedir datos.
+      // grounded (buscar_producto) sin retomar la venta. Guardrails ANTES del OR (revisión adversarial v50):
+      // INTERRUPT_RE (pago/fiscal/coordinar entrega en curso) y HANDOFF_RE (reclamo/devolución/garantía/
+      // "quiero un asesor") bloquean la asistencia → esos casos los lleva el humano, el bot calla.
       const puedeAsistir = !!ultHumano && !frio && minsSinHumano >= HANDOFF_ASSIST_MIN
-        && conv.turns_today <= MAX_TURNS_DIA && !interrumpe && (BASIC_INFO_RE.test(texto) || NEEDS_TOOL_RE.test(texto));
+        && conv.turns_today <= MAX_TURNS_DIA && !interrumpe && !HANDOFF_RE.test(texto)
+        && (BASIC_INFO_RE.test(texto) || NEEDS_TOOL_RE.test(texto));
 
       if (frio) {
         // COLD-RETURN: el asesor lleva >umbral sin escribir → conversación fría. El bot la retoma por
@@ -1611,12 +1619,14 @@ Deno.serve(async (req) => {
             if (await hayMensajeClienteMasNuevo(conv.id, userCreatedAt)) { await log("descartado_superado", true, { waId, fase: "asist-pre" }); return; }
             const { data: hist } = await sb.from("messages").select("role,content,model,created_at").eq("conversation_id", conv.id).in("role", ["user", "assistant"]).order("created_at", { ascending: false }).limit(10);
             const history = (hist ?? []).reverse();
-            // v50 — asistencia hace preventa grounded: forceTool=true (siempre consulta una herramienta) +
-            // modoAsistencia=true (tools acotadas a buscar_producto/info_tienda/sucursales_interior/estado_pedido).
-            // linksTracked recoge los links con ref_code de buscar_producto y reaplicarTracking los repone
-            // post-LLM (v29), igual que el flujo normal — si no, el modelo podría "limpiar" el tracking.
+            // v50 — asistencia hace preventa grounded. forceTool=FALSE a propósito (revisión adversarial):
+            // aquí la respuesta correcta suele ser CALLARSE (el humano lleva el caso), así que NO forzamos una
+            // tool — el modelo puede devolver vacío ante un pago/descuento/cotización/reclamo (guiado por
+            // ASSIST_SUFFIX) en vez de ser empujado a cotizar. El grounding se mantiene por la REGLA DE ORO +
+            // ASSIST_SUFFIX ("todo debe salir de una herramienta, nunca de memoria"). modoAsistencia=true acota
+            // las tools. linksTracked + reaplicarTracking reponen el tracking de buscar_producto (v29).
             const linksTracked: Record<string, string> = {};
-            const r = await responderLLM(history as any, true, null, false, waId, {}, linksTracked, true);
+            const r = await responderLLM(history as any, false, null, false, waId, {}, linksTracked, true);
             let salida = r.text ? reaplicarTracking(limpiarWhatsApp(r.text), linksTracked) : null;
             // v44 guard anti-fuga: si la tool-call se filtró como texto, no la enviamos (aquí un humano ya
             // tiene el caso → basta con no responder). Loggea para telemetría.

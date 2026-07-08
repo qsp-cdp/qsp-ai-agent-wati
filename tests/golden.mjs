@@ -127,7 +127,9 @@ for (const t of ["¿qué garantía tienen los toners?", "¿cuál es la política
 console.log("INTERRUPT_RE");
 for (const t of ["le adjunto el comprobante", "ya le hice la transferencia", "RUC 155743728-2-2023",
   "factura a nombre de ACME", "¿a qué cuenta le transfiero?", "puedo pagar ya",
-  "E-8-104720", "mi cédula PE-12-3456"]) { // v45: cédula PA con letra también abstiene
+  "E-8-104720", "mi cédula PE-12-3456", // v45: cédula PA con letra también abstiene
+  // v50 (revisión adversarial): pago COMPLETADO sin "ya" — cruzaban NEEDS_TOOL_RE pero no INTERRUPT.
+  "ya realicé el pago", "hice el pago", "acabo de pagar", "te mandé el pago", "aquí está mi pago", "ya te pasé el pago"]) {
   caso(`"${t}" → abstención`, INTERRUPT_RE.test(t));
 }
 caso(`"GI-190" NO → abstención (SKU, no cédula)`, !INTERRUPT_RE.test("GI-190"));
@@ -322,12 +324,17 @@ caso("asistencia también debounce-a", /v49: misma espera de r[aá]faga/.test(sr
 console.log("v50 asistencia → preventa");
 // trigger: puedeAsistir ahora admite catálogo/precio/pedido (NEEDS_TOOL_RE), no solo info básica.
 caso("v50: trigger de asistencia ampliado a NEEDS_TOOL_RE", /\(BASIC_INFO_RE\.test\(texto\) \|\| NEEDS_TOOL_RE\.test\(texto\)\)/.test(src));
-// INTERRUPT_RE sigue gateando (pago/fiscal/coordinar entrega bloquean la asistencia ANTES del OR).
-caso("v50: INTERRUPT_RE sigue gateando la asistencia (!interrumpe && (...))", /!interrumpe && \(BASIC_INFO_RE\.test\(texto\) \|\| NEEDS_TOOL_RE\.test\(texto\)\)/.test(src));
+// INTERRUPT_RE + HANDOFF_RE gatean la asistencia ANTES del OR (revisión adversarial v50): pago/fiscal/
+// coordinar entrega Y reclamo/devolución/garantía → el humano lleva el caso, el bot calla.
+caso("v50: INTERRUPT_RE + HANDOFF_RE gatean la asistencia antes del OR", /!interrumpe && !HANDOFF_RE\.test\(texto\)\s*&&\s*\(BASIC_INFO_RE\.test\(texto\) \|\| NEEDS_TOOL_RE\.test\(texto\)\)/.test(src));
 // una pregunta de PRECIO habilita la asistencia (matchea NEEDS_TOOL_RE) — antes se callaba.
 caso('v50: "¿cuánto cuesta el tóner 105A?" habilitaría asistencia', NEEDS_TOOL_RE.test("¿cuánto cuesta el tóner 105A?"));
 // pero un PAGO EN CURSO que menciona un producto sigue bloqueado por INTERRUPT_RE (interrumpe=true).
 caso('v50: "a qué cuenta te transfiero por el tóner" NO asiste (INTERRUPT gana)', INTERRUPT_RE.test("a qué cuenta te transfiero por el tóner"));
+// finding 2: un reclamo/devolución/garantía (HANDOFF_RE) NO activa la asistencia (→ humano).
+caso('v50: reclamo "el toner que compré salió dañado" es HANDOFF_RE (excluido de asistencia)', HANDOFF_RE.test("el toner que compré salió dañado"));
+// findings 3/4: la asistencia NO fuerza tool → el modelo puede CALLARSE ante pago/descuento/cotización.
+caso("v50: asistencia NO fuerza tool (forceTool=false, deja elegir silencio)", /const r = await responderLLM\(history as any, false, null, false, waId, \{\}, linksTracked, true\)/.test(src));
 // la asistencia repone el tracking de links de buscar_producto (v29) — igual que el flujo normal.
 caso("v50: asistencia reaplica tracking (linksTracked) en ambos flujos", (src.match(/reaplicarTracking\(limpiarWhatsApp\(r\.text\), linksTracked\)/g) || []).length >= 2);
 

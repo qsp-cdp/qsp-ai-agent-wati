@@ -34,8 +34,16 @@ con certeza, y calla/deriva cuando es mejor que responda un humano. Tienda:
   (`reaplicarTracking`, v29) igual que el flujo normal. **Guardrails intactos:** `INTERRUPT_RE`
   (pago/fiscal/coordinar entrega) sigue bloqueando ANTES del OR; si el asesor vuelve a escribir, `owner=true`
   regresa a handoff y el anti-carrera lo protege; la respuesta sigue marcada `model='assist-handoff'`
-  (anti-eco). 195 golden tests (14 nuevos/cambiados: el lock v48 que EXCLUÍA `estado_pedido` de asistencia se
-  invirtió). Revisión adversarial pre-deploy en curso. Acumulativo sobre v49 → desplegar trae v49+v50 (aplicar
+  (anti-eco). Golden (v50 cambia: el lock v48 que EXCLUÍA `estado_pedido` de asistencia se
+  invirtió; +6 casos de pago-en-curso + locks de F2/F3). **Revisión adversarial pre-deploy HECHA — cerró 3
+  hallazgos** que la asistencia ampliada abría (v49 los silenciaba): F1 frases de pago COMPLETADO sin "ya"
+  (`hice/realicé el pago`, `acabo de pagar`, `mi pago`) cruzaban `NEEDS_TOOL_RE` pero no `INTERRUPT_RE` → se
+  ampliaron los patrones de pago-en-curso de `INTERRUPT_RE` (endurece también el flujo normal; no toca
+  `¿cómo pago?`/`¿aceptan yappy?`); F2 un reclamo/devolución/garantía activaba la asistencia → se agregó
+  `!HANDOFF_RE.test(texto)` al gate (reclamo → humano); F3/F4 `forceTool` empujaba a cotizar aun cuando
+  correspondía callar → en asistencia ahora `forceTool=false` (el modelo puede devolver vacío ante
+  pago/descuento/cotización; el grounding lo mantiene la REGLA DE ORO + `ASSIST_SUFFIX`). 203 golden tests.
+  Acumulativo sobre v49 → desplegar trae v49+v50 (aplicar
   la migración `20260708150000_messages_media_url` de v49 ANTES). Deploy: `.\deploy.ps1 copilot-webhook`.
 - **EN EL REPO, LISTO PARA DESPLEGAR: v49 (`v49-debounce-rafaga`).** De la auditoría real de la conv
   50764417334 ([foto][foto]"¿estas no hay?" → el bot no vio las fotos) + decisión de Gerencia (baseline
