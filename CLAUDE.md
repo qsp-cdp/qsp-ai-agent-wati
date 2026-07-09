@@ -19,8 +19,10 @@ equipo humano: contesta preguntas generales, indica disponibilidad/stock y da pr
 con certeza, y calla/deriva cuando es mejor que responda un humano. Tienda:
 **quickservicepanama.com** (suministros de impresión y tecnología en Panamá).
 
-## Estado actual (2026-07-08)
-- **EN EL REPO, LISTO PARA DESPLEGAR: v51 (`v51-reengage`) — RECUPERACIÓN DE FIN DE SEMANA (cron).** Los
+## Estado actual (2026-07-09)
+- **🚀 EN VIVO (desplegado 09-jul por CLI, healthcheck `version:v51-reengage`, `debounce_ms:10000`): v49+v50+v51.**
+  El deploy del 09-jul subió las 7 funciones (copiloto + puente + `reengage-expired`).
+- **v51 (`v51-reengage`) — RECUPERACIÓN DE FIN DE SEMANA (cron).** Los
   clientes que escriben viernes/sábado noche expiran la ventana de 24h de WhatsApp; el lunes había que
   reabrir cada chat a mano con una plantilla. Ahora hay un **cron** que lo automatiza. Decisión de diseño
   tras investigar WATI (agente): NO se puede 100% dentro de WATI (Broadcast sí, pero no filtra por
@@ -38,10 +40,18 @@ con certeza, y calla/deriva cuando es mejor que responda un humano. Tienda:
   `markReengaged`/`logJob`, `panama.ts` (feriados/TZ reusable), `.trim()` defensivo a los secretos WATI.
   (4) **Copiloto v51 (`v51-reengage`)**: guard que **salta el evento "Template Message Sent"** de WATI
   (`evento_plantilla_saliente`) → el envío del cron NO se confunde con un asesor humano (evita falso handoff).
-  206 golden tests. Revisión adversarial pre-deploy en curso. **Migración `20260708190000_reengage.sql` PRIMERO**;
-  deploy `.\deploy.ps1` (copiloto + `reengage-expired`); luego crear la plantilla HSM en WATI, setear env vars y
-  programar el cron. Puesta en marcha + SQL del cron + borrador de plantilla: `docs/reengage-cron.md`.
-- **EN EL REPO, LISTO PARA DESPLEGAR: v50 (`v50-asistencia-preventa`).** Decisión de Gerencia sobre el
+  207 golden tests. **Revisión adversarial pre-deploy HECHA — cerró 4:** el RPC re-enganchaba `handoff`
+  (pisaba al asesor) → ahora exige `status='bot'`; envío/marcado desacoplados con reintento (sin doble envío
+  si falla el marcado; `reengage_marca_fallo`); el guard de plantilla exige `esDelNegocio`; deadline 120s
+  anti wall-limit. **ESTADO OPERATIVO (09-jul):** migraciones APLICADAS y verificadas (1,1,1,1); función
+  DESPLEGADA; plantilla **`reenganche_conversacion` APROBADA por Meta** (⚠️ reclasificada UTILITY→MARKETING,
+  aceptable — ver `docs/reengage-cron.md`); **cron programado** (`reengage-lunes-9am-pa`, lunes 14:00 UTC);
+  RPC probado contra PROD: devolvió 1 candidato real. **PENDIENTE para activar:** rotar `REENGAGE_KEY` (la
+  1ª quedó expuesta en chat → generar nueva + re-correr `cron.schedule` + secret), setear
+  `WATI_REENGAGE_TEMPLATE=reenganche_conversacion`, dry-run `?key=…&force=1` (ver `reengage_dryrun` en
+  job_log) y recién ahí `REENGAGE_MODE=live` (hoy default shadow = no envía).
+  Puesta en marcha + SQL del cron + plantilla: `docs/reengage-cron.md`.
+- **EN VIVO (incluido en el deploy del 09-jul): v50 (`v50-asistencia-preventa`).** Decisión de Gerencia sobre el
   ciclo de vida del handoff: tras 15 min sin el asesor, el bot ya NO se limita a info básica de tienda —
   ahora hace **PREVENTA grounded** para no dejar al cliente esperando. Cambios (solo prompt + lógica del
   handoff, sin esquema): (1) el trigger `puedeAsistir` se amplía de `BASIC_INFO_RE` a
@@ -66,7 +76,8 @@ con certeza, y calla/deriva cuando es mejor que responda un humano. Tienda:
   pago/descuento/cotización; el grounding lo mantiene la REGLA DE ORO + `ASSIST_SUFFIX`). 203 golden tests.
   Acumulativo sobre v49 → desplegar trae v49+v50 (aplicar
   la migración `20260708150000_messages_media_url` de v49 ANTES). Deploy: `.\deploy.ps1 copilot-webhook`.
-- **EN EL REPO, LISTO PARA DESPLEGAR: v49 (`v49-debounce-rafaga`).** De la auditoría real de la conv
+- **EN VIVO (incluido en el deploy del 09-jul; migración `media_url` APLICADA 08-jul): v49
+  (`v49-debounce-rafaga`).** De la auditoría real de la conv
   50764417334 ([foto][foto]"¿estas no hay?" → el bot no vio las fotos) + decisión de Gerencia (baseline
   humano = loop de minutos → 10 s no son nada): (1) **DEBOUNCE de ráfagas** — todas las invocaciones esperan
   `COPILOT_DEBOUNCE_MS` (default 10000, 0=off, tope 60 s) antes del chequeo pre-LLM; las superadas mueren
@@ -95,8 +106,8 @@ con certeza, y calla/deriva cuando es mejor que responda un humano. Tienda:
   WATI-1783524383338); limpiar la fila de contacto de prueba si se desea. Los 5 atributos "cosméticos" de WATI
   (`direccion_envio` etc., solo para que el asesor los vea en el panel) siguen sin crear — no son necesarios
   para que el circuito funcione.
-- **EN VIVO: `copilot-webhook` v48 (`v48-conciencia-pedidos`), ACTIVE (desplegado 07-jul por Browse, byte-exacto,
-  verify_jwt=false; healthcheck `version:v48-conciencia-pedidos`, `model:claude-sonnet-5`, `webhook_key_es_default:false`).**
+- **Base histórica (v48, fue EN VIVO 07→09-jul, hoy corriendo bajo v51): `copilot-webhook` v48
+  (`v48-conciencia-pedidos`)** (desplegado 07-jul por Browse; superseded por el deploy CLI del 09-jul).
   Acumulado v40–v47 + el **LECTOR** de conciencia de pedidos (tool `estado_pedido`). Migraciones `pedidos` +
   `contacts_grant` **APLICADAS** (07-jul). Los **ESCRITORES** del puente Shipday ya se desplegaron por CLI
   (`.\deploy.ps1`, sin argumentos = las 6 funciones) — `pedidos` ya se llena con tráfico real. Secretos del

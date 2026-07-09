@@ -30,7 +30,8 @@ Este repositorio unifica dos piezas del stack de QSP que comparten la llave natu
 CLAUDE.md                                  # contexto autoritativo (leer primero)
 docs/base-conocimiento-qsp.md              # base de conocimiento del negocio (fuente → prompt + store_facts)
 supabase/
-  functions/copilot-webhook/index.ts       # la edge function (v50 en repo: v49 debounce+visión de ráfaga, v50 asistencia→preventa; v48 EN VIVO, probando Sonnet 5)
+  functions/copilot-webhook/index.ts       # la edge function (v51 EN VIVO desde 09-jul: v49 debounce+visión, v50 asistencia→preventa, v51 reengage; probando Sonnet 5)
+  functions/reengage-expired/index.ts      # cron de recuperación de fin de semana (v51, shadow-first; docs/reengage-cron.md)
 tests/golden.mjs                            # golden tests (regex + helpers, extraídos del index.ts real) — node tests/golden.mjs
   migrations/*.sql                          # esquema reproducible (16 migraciones; v48 añade pedidos + el puente Shipday trae contacts/contacts_envio/contacts_grant)
 deploy.ps1                                  # deploy byte-exacto por CLI + verificación de healthcheck
@@ -43,7 +44,7 @@ web/
   envío" → `wati-address` → libreta `contacts`) + despacho (flujo WATI "Despachar pedido" → `wati-order` →
   Shipday + tabla `pedidos`) + lectura (copiloto, tool `estado_pedido`). Las 3 patas verificadas con tráfico
   real, no solo desplegadas. Detalle de la implementación (reglas, keywords, aprendizajes): `docs/plantilla-wati.md`.
-- Edge function `copilot-webhook` **v48 (`v48-conciencia-pedidos`), ACTIVE** (desplegado 07-jul) — EN VIVO a todos.
+- Edge function `copilot-webhook` **v51 (`v51-reengage`), ACTIVE** (desplegado 09-jul por CLI; incluye v49 debounce+visión de ráfaga y v50 asistencia→preventa) — EN VIVO a todos. `reengage-expired` desplegada en **shadow** (cron lunes 9am PA; pendiente rotar key + secrets + dry-run para pasar a live).
   Trae acumulado v40–v47 (`.trim()` a secretos, trato de usted, guardrails, sucursales, autotest de inventario,
   envío por sector) + el **LECTOR** de conciencia de pedidos (tool `estado_pedido`). Coexistencia validada (v15) ·
   visión (v19) · anti-duplicado/anti-carrera (v20). **Probando Claude Sonnet 5** (`COPILOT_MODEL=claude-sonnet-5`).
