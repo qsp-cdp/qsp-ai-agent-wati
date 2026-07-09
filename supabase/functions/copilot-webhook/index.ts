@@ -571,7 +571,7 @@ REGLA DE ORO — precio, stock y promociones
 - NUNCA menciones un producto, modelo, precio o disponibilidad que no provenga de un resultado de buscar_producto EN ESTE MISMO TURNO. Si no llamaste a la tool, NO nombres modelos ni des precios/stock: búscalo primero. Aplica también a preguntas de categoría ("¿venden impresoras Epson?"): primero busca, luego responde con lo que devuelva.
 - NO NIEGUES DE MEMORIA: nunca digas que NO ofrecemos un producto o categoría sin haber buscado con buscar_producto en este turno. QSP vende MÁS que impresión (también monitores, escáneres, UPS, baterías, accesorios y tecnología en general). Ante CUALQUIER consulta de producto, BUSCA primero; solo di "no lo encontré" o "eso no lo manejamos" DESPUÉS de haber buscado.
 - NUNCA inventes precios, existencias, descuentos ni promociones.
-- SOLO afirma datos del producto que devuelva buscar_producto: título/modelo, precio, ITBMS, stock, el enlace, la compatibilidad que figure EN EL TÍTULO y las características que mencione el campo "especificaciones" (cuando venga: bandeja/tamaño de papel, dúplex, conectividad, velocidad, resolución, etc. — es texto real de la ficha del producto). Si el cliente pregunta por una característica y NI el título NI "especificaciones" la mencionan, dilo con honestidad ("no tengo ese dato confirmado") o deja que un asesor la detalle — nunca la inventes ni la asumas de memoria (ni "por lógica": una impresora de oficina normalmente imprime carta, pero SOLO lo confirmas si "especificaciones" lo dice).
+- SOLO afirma datos del producto que devuelva buscar_producto: título/modelo, precio, ITBMS, stock, el enlace, la compatibilidad que figure EN EL TÍTULO y las características FÍSICAS/TÉCNICAS que mencione el campo "especificaciones" (bandeja/tamaño de papel, dúplex, conectividad, velocidad, resolución, dimensiones, memoria — es texto real de la ficha del producto). "especificaciones" pertenece EXCLUSIVAMENTE al producto de ESE MISMO resultado — con varios modelos de la MISMA familia en la lista (ej. MF269dw/MF267dw/MF264dw), verifica que el título que estás citando coincide exactamente antes de afirmar una característica; nunca cruces la ficha de un resultado con el título/link de otro. NUNCA cites de "especificaciones" precio, descuento, promoción, teléfono ni links (esos SIEMPRE salen de precio_usd/itbms_7pct/total_con_itbms/url o de info_tienda, nunca del texto libre de la descripción). Si el cliente pregunta por una característica y NI el título NI "especificaciones" la mencionan, dilo con honestidad ("no tengo ese dato confirmado") o deja que un asesor la detalle — nunca la inventes ni la asumas de memoria (ni "por lógica": una impresora de oficina normalmente imprime carta, pero SOLO lo confirmas si "especificaciones" lo dice). Si "especificaciones_truncada" viene en true, el resumen puede tener más datos que no alcanzaste a ver: en vez de decir tajante que no lo tiene, di que no ves ese dato en el resumen y ofrece que un asesor confirme con la ficha completa.
 - Incluye el link del producto cuando lo tengas, copiándolo EXACTO como viene en el campo "url" de buscar_producto — con TODO lo que esté después del "?" (parámetros utm/ref_code de seguimiento). NUNCA acortes el link ni le quites esos parámetros.
 - PRECIO + ITBMS: los precios son SIN ITBMS. Muestra SIEMPRE el precio, el ITBMS (7%) y el total usando EXACTAMENTE los valores que devuelve la tool (precio_usd, itbms_7pct, total_con_itbms). Formato: "*$116.00 + ITBMS (7%) = $124.12*". NUNCA calcules el impuesto de memoria.
 - STOCK / CANTIDAD: indica la disponibilidad usando el campo "stock" que devuelve la tool, TAL CUAL. Si dice "X unidades", dilo; si dice "stock bajo — un asesor verifica…", dilo así. NUNCA inventes ni adivines una cantidad: di solo lo que aparezca en ese campo "stock".
@@ -618,6 +618,7 @@ LOGÍSTICA, PAGOS Y DATOS DE LA TIENDA (envíos, ubicación, horarios, métodos 
 - NUNCA inventes montos, direcciones, horarios ni formas de pago, y NUNCA compartas números de cuenta (Yappy/ACH/transferencia). Para "cómo pago", responde con lo que devuelva info_tienda y deja la coordinación a un asesor.
 - DISTINGUE métodos vs trámite EN CURSO: explicar QUÉ formas de pago aceptamos o las tarifas de envío (vía info_tienda) está bien; pero COORDINAR el pago o la entrega de un pedido concreto (cuándo paga, a qué cuenta transfiere, cuándo le llega) es un trámite de un asesor. NUNCA te comprometas con "puede pagar hoy", "le llega mañana" ni des una cuenta para transferir: deriva esa coordinación a un asesor.
 - Si info_tienda no tiene el dato (devuelve "sin datos disponibles"): dilo con honestidad y deriva a un asesor para confirmarlo. No prometas plazos ni costos específicos.
+- DÍA DE LA SEMANA (caso real: un cliente dijo "el sábado paso a verificar" y el bot confirmó "puede pasar el sábado" sin consultar nada — la tienda NO atiende sábados, un cliente pudo hacer un viaje en vano): si el cliente menciona CUALQUIER día de la semana (lunes a domingo) al hablar de visitar, pasar, retirar o coordinar algo con la tienda, llama a info_tienda ANTES de confirmar o negar que ese día atienden — nunca lo asumas por la conversación ni por inercia ("sin problema, ahí estamos"). Si el día que menciona es sábado, domingo o feriado, acláralo con el horario real de info_tienda en vez de seguirle la corriente.
 - POLÍTICAS COMERCIALES (descuentos, precios especiales, cliente frecuente, mayoreo/revendedor, crédito): si info_tienda NO trae el dato, NO las afirmes NI las niegues — nada de "no manejamos descuentos" ni "el precio es el mismo para todos" (solo un asesor decide precios especiales, y a veces los da). Di que un asesor le confirma si hay alguna opción para su caso.
 - SUCURSALES DEL INTERIOR (recogida) — EXPLICA EL PROCESO, no sueltes solo el dato: QSP NO tiene tiendas propias en el interior; el envío va por la red de Servientrega (sucursales y agentes/aliados autorizados). Si el cliente del interior pregunta dónde recoger/retirar o si hay sucursal/agencia en su zona, usa la herramienta sucursales_interior con su provincia o ciudad (ej. "David", "Chiriquí", "Penonomé") y arma la respuesta como PROCESO: "puede optar por enviarlo a [ciudad] ([provincia]) y retirarlo en el punto Servientrega [nombre]" + el teléfono y horario que devuelva la tool. NUNCA digas "tenemos el punto/sucursal en [ciudad]" (suena a tienda propia de QSP) — deja claro que el pedido SE ENVÍA ahí para que el cliente lo retire (con su cédula). NUNCA inventes una sucursal, dirección ni teléfono: usa solo lo que devuelva la tool. Si la ciudad exacta no aparece, deduce la provincia (sabes la geografía de Panamá) y vuelve a consultar por la provincia; si aun así no hay punto, dilo y comparte el listado completo. Para tarifas y plazos del interior (cuándo llega) usa info_tienda y súmalo a la misma respuesta si aporta.
 - COSTO/MÉTODO DE ENVÍO POR SECTOR (Ciudad de Panamá y San Miguelito): cuando el cliente pida cuánto cuesta el envío, cómo le llega, o DÓNDE RETIRAR en un lugar CONCRETO de la ciudad (su corregimiento o barrio: Tocumen, Betania, Juan Díaz, San Miguelito, Las Cumbres…), usa la herramienta tarifa_entrega con ese lugar y RELAYA su "respuesta_sugerida" (puedes adaptar el tono, pero NUNCA cambies el método ni el precio que devuelve). OJO — el error más grave a evitar: en algunas zonas NO ofrecemos entrega a domicilio, SOLO retiro en un punto Servientrega; dilo tal cual y NO ofrezcas domicilio ahí. IMPORTANTE — el punto de retiro de un SECTOR DE LA CIUDAD (ej. "¿dónde retiro en Tocumen?") sale de tarifa_entrega, NO de sucursales_interior (esa herramienta es SOLO para el INTERIOR/provincias). Si tarifa_entrega devuelve estado "ambiguo", pregunta en qué corregimiento está; si "sin_match" y el cliente es del INTERIOR, usa sucursales_interior + info_tienda; si "sin_match" y no ubicas el lugar, o "error"/"sin_dato", deriva a un asesor. (El método "asesor" llega como estado "ok" con la respuesta ya armada: relayala.) Para el costo GENÉRICO de envío (sin un sector concreto) usa info_tienda.
@@ -657,7 +658,7 @@ Un compañero del equipo tiene esta conversación, pero lleva un rato sin respon
 
 const TOOLS: Anthropic.Tool[] = [{
   name: "buscar_producto",
-  description: "Busca productos en el catálogo de Quick Service Panamá (Shopify). Llámala SIEMPRE que el cliente pregunte precio, disponibilidad/stock, compatibilidad, características (bandeja de papel, dúplex, conectividad, etc.), o mencione/insinúe un producto, marca o categoría (tinta, toner, impresora Epson/Canon/HP, etc.). Pasa términos CONCISOS: marca + MODELO (el número de modelo es la mejor señal); para 'tinta para [impresora]' busca por el modelo de la impresora; para una CARACTERÍSTICA (ej. 'bandeja legal y carta') pasa la característica en los términos, no solo la marca. Puedes llamarla varias veces reformulando si no encuentras. Devuelve título, precio (precio_usd SIN ITBMS + itbms_7pct + total_con_itbms), stock (disponibilidad ya resuelta: muestra el número si hay >3, si no deriva a un asesor), marca, tipo, link y especificaciones (texto real de la ficha del producto, cuando la tienda lo tenga — úsalo para confirmar características, nunca inventes más allá de lo que diga) (máx 5).",
+  description: "Busca productos en el catálogo de Quick Service Panamá (Shopify). Llámala SIEMPRE que el cliente pregunte precio, disponibilidad/stock, compatibilidad, características (bandeja de papel, dúplex, conectividad, etc.), o mencione/insinúe un producto, marca o categoría (tinta, toner, impresora Epson/Canon/HP, etc.). Pasa términos CONCISOS: marca + MODELO (el número de modelo es la mejor señal); para 'tinta para [impresora]' busca por el modelo de la impresora; para una CARACTERÍSTICA (ej. 'bandeja legal y carta') pasa la característica en los términos, no solo la marca. Puedes llamarla varias veces reformulando si no encuentras. Devuelve título, precio (precio_usd SIN ITBMS + itbms_7pct + total_con_itbms), stock (disponibilidad ya resuelta: muestra el número si hay >3, si no deriva a un asesor), marca, tipo, link y especificaciones (texto real de la ficha del producto, cuando la tienda lo tenga — pertenece SOLO a ese resultado, nunca la mezcles con otro producto de la lista; úsala solo para características físicas/técnicas, NUNCA para precio/promo; si especificaciones_truncada=true puede haber más datos que no viste) (máx 5).",
   strict: true,
   input_schema: { type: "object", properties: { consulta: { type: "string", description: "Términos de búsqueda, ej: 'tinta hp 954 negra'" } }, required: ["consulta"], additionalProperties: false },
 } as Anthropic.Tool, {
@@ -696,7 +697,14 @@ const TOOLS: Anthropic.Tool[] = [{
 // concreto (misma familia que devolución/garantía): "nota de crédito" es inequívoco; "me factur(a/aron)
 // de más/mal/los N" y "me cobraron de más" exigen el verbo pegado al sustantivo para no rozar preguntas
 // benignas de facturación ("factura a nombre de…", ya cubierto aparte por INTERRUPT_RE).
-const HANDOFF_RE = /\b(humano|persona|asesor|agente|reclamo|queja|hablar con alguien|supervisor|quiero devolver|devolver (el|la|lo|los|las|un|una|mi|este|esta|esto|eso)|devolverl[oa]s?|devuelvan|cambiarl[oa]s?|(una|la|mi|su|esa|esta) devoluci[oó]n|(aplicar|usar|reclamar|validar|activar|hacer (v[aá]lida|efectiva)) (la |mi |su )?garant[ií]a|(mi|su) garant[ií]a|en garant[ií]a|tiene garant[ií]a|sali[oó] (mal|malo|mala|da[ñn]ad[oa]|defectuos[oa])|(lleg[oó]|vino) (mal|malo|mala|da[ñn]ad[oa]|roto|rota|defectuos[oa])|defectuos[oa]s?|me vendieron (uno|una|algo) (malo|mala|da[ñn]ad[oa]|defectuos[oa])|nota de cr[eé]dito|me factur(aron|a) (de m[aá]s|mal|otra cantidad|los? \d+)|me cobr(aron|a) de m[aá]s|factura(ci[oó]n)? (incorrecta|equivocada|mal (hecha|emitida)))\b/i;
+// v52 (revisión adversarial): dos correcciones sobre el paquete de facturación.
+// (1) faltaba la 3ª persona singular del pretérito ("facturó"/"cobró" — ni "aron" ni "a" lo cubrían,
+// el mismo tipo de hueco de conjugación que el propio v52 ya había cerrado para INTERRUPT_RE).
+// (2) "los? \d+" era un catch-all demasiado amplio: cualquier "me facturaron los N" disparaba, INCLUSO
+// un agradecimiento sin reclamo ("ya me facturaron los 3 que pedí, gracias, todo perfecto"). Se
+// reemplaza por un patrón de CONTRASTE explícito (palabra de contraste + verbo de entrega + "factur",
+// en cualquier orden) que exige la señal real del reclamo (recibí menos de lo que me facturaron).
+const HANDOFF_RE = /\b(humano|persona|asesor|agente|reclamo|queja|hablar con alguien|supervisor|quiero devolver|devolver (el|la|lo|los|las|un|una|mi|este|esta|esto|eso)|devolverl[oa]s?|devuelvan|cambiarl[oa]s?|(una|la|mi|su|esa|esta) devoluci[oó]n|(aplicar|usar|reclamar|validar|activar|hacer (v[aá]lida|efectiva)) (la |mi |su )?garant[ií]a|(mi|su) garant[ií]a|en garant[ií]a|tiene garant[ií]a|sali[oó] (mal|malo|mala|da[ñn]ad[oa]|defectuos[oa])|(lleg[oó]|vino) (mal|malo|mala|da[ñn]ad[oa]|roto|rota|defectuos[oa])|defectuos[oa]s?|me vendieron (uno|una|algo) (malo|mala|da[ñn]ad[oa]|defectuos[oa])|nota de cr[eé]dito|me factur(aron|a|[oó]) (de m[aá]s|mal|otra cantidad)|me cobr(aron|a|[oó]) de m[aá]s|factura(ci[oó]n)? (incorrecta|equivocada|mal (hecha|emitida))|(solo|nom[aá]s|pero) .{0,40}(entregaron|entreg[oó]|dieron|lleg(aron|[oó])) .{0,60}factur\w*|factur\w* .{0,60}(solo|nom[aá]s|pero) .{0,40}(entregaron|entreg[oó]|dieron|lleg(aron|[oó])))\b/i;
 
 // v52 — TICKET DE PROMESA (auditoría real: el bot le prometió "un asesor confirma" a una clienta DOS
 // veces por una impresora con doble bandeja y nadie la contactó nunca; 5 días después tuvo que volver
@@ -710,8 +718,12 @@ const HANDOFF_RE = /\b(humano|persona|asesor|agente|reclamo|queja|hablar con alg
 // tras una vocal acentuada ("encontré", "está") porque la "é"/"á" no cuenta como \w. Por eso aquí NO se
 // pone \w+/\b pegado a una vocal que pueda llevar tilde: se usa el radical solo ("no encontr", sin
 // sufijo) o un espacio literal en vez de \b ("est[aá]\s").
-const RESPUESTA_NO_RESUELTA_RE = /(no encontr|no (tengo|pude|logro)\b|sin stock\b|no hay stock\b|no (est[aá]|estamos)\s.{0,15}disponible)/i;
-const PROMESA_ASESOR_RE = /\basesor\w*\b[\s\S]{0,150}\b(confirm\w*|verific\w*|revis\w*|contact\w*|escribir[aá]?n?|responder[aá]?n?|dar[aá]?n? seguimiento)\w*/i;
+// v52 (revisión adversarial): faltaban conjugaciones comunes de 1ª persona plural/presente ("no puedo
+// confirmar…", "no tenemos ese color…") — mismo tipo de hueco de persona/número que ya se había
+// cerrado para INTERRUPT_RE. "puedo/podemos" y "tenemos/logramos" terminan en vocal/consonante ASCII,
+// sin riesgo del bug \b-tras-tilde documentado arriba.
+const RESPUESTA_NO_RESUELTA_RE = /(no encontr|no (tengo|puedo|pude|logro|tenemos|podemos|logramos)\b|sin stock\b|no hay stock\b|no (est[aá]|estamos)\s.{0,15}disponible)/i;
+const PROMESA_ASESOR_RE = /\basesor\w*\b[\s\S]{0,150}\b(confirm\w*|verific\w*|verifiqu\w*|revis\w*|contact\w*|escribir[aá]?n?|responder[aá]?n?|dar[aá]?n? seguimiento)\w*/i;
 function prometeSeguimientoSinResolver(texto: string): boolean {
   return RESPUESTA_NO_RESUELTA_RE.test(texto) && PROMESA_ASESOR_RE.test(texto);
 }
@@ -753,6 +765,13 @@ const NEEDS_TOOL_RE = new RegExp([
   "epson", "canon", "\\bhp\\b", "brother", "pixma", "ecotank", "workforce", "laserjet", "deskjet", "officejet", "\\bg\\d{3,4}\\b", "\\bl\\d{3,4}\\b", "gi-?\\d",
   "env[ií]o", "entrega", "delivery", "domicilio", "horario", "ubicaci", "direcci", "\\bd[oó]nde\\b", "\\bpago", "pagar", "yappy", "\\bach\\b", "transferen", "tarjeta", "reembols",
   "repar", "soporte t[eé]cnico", "averi", "da[ñn]ad", "no enciende", "no prende", "no imprime", "sucursal", "recoger", "retir",
+  // v52 (auditoría real): un cliente dijo "el sábado trataré de ir" y el bot confirmó "puede pasar el
+  // sábado" sin consultar nada (la tienda NO atiende sábados). El patrón de INTERRUPT_RE para esto
+  // ("paso el sábado") exige el verbo "pasar" pegado al día — este mensaje usaba otro verbo y otro
+  // orden y se coló. Forzar tool cuando un DÍA de la semana aparece junto a un verbo de visitar/ir,
+  // en cualquier orden, para que el modelo SIEMPRE vea el horario real antes de confirmar/negar un día.
+  "(lunes|martes|mi[eé]rcoles|jueves|viernes|s[aá]bado|domingo).{0,40}(paso|pasar|pasamos|pasar[ée]|\\bvoy\\b|vamos|\\bir\\b|retir|recog|visit)",
+  "(paso|pasar|pasamos|pasar[ée]|\\bvoy\\b|vamos|\\bir\\b|retir|recog|visit).{0,40}(lunes|martes|mi[eé]rcoles|jueves|viernes|s[aá]bado|domingo)",
   // v25: catálogo completo (no solo impresión) → fuerza la búsqueda antes de negar.
   "monitor", "pantalla", "esc[aá]ner", "escaner", "scanner", "\\bups\\b", "bater[ií]a", "estabilizador", "regulador", "no.?break",
   "laptop", "port[aá]til", "computador", "comput", "\\bpc\\b", "all.?in.?one", "mouse", "rat[oó]n", "teclado", "webcam", "c[aá]mara",
@@ -1018,7 +1037,11 @@ async function buscarProducto(consulta: string, waId: string = "", linksTracked?
           // largo suficiente para alcanzar specs que la marketing copy entierra a mitad de la
           // descripción (caso real: "bandeja tamaño carta o legal" del Canon MF289dw aparece ~carácter
           // 1200). El modelo SOLO puede citar lo que esté aquí (regla de oro); si no viene, no inventa.
-          const specs = p.descripcion_html ? limpiarHtml(p.descripcion_html).slice(0, 1500) : "";
+          // v52 (revisión adversarial): el corte se marca — sin esto, el modelo no distingue "la ficha
+          // no lo menciona" de "la ficha es más larga que lo que vi" y podría decir un "no lo tiene"
+          // tajante cuando en realidad el dato pudo quedar después del corte.
+          const specsLimpias = p.descripcion_html ? limpiarHtml(p.descripcion_html) : "";
+          const specs = specsLimpias.slice(0, 1500);
           return {
             titulo: p.titulo,
             precio_usd: precio.precio_usd,
@@ -1029,6 +1052,7 @@ async function buscarProducto(consulta: string, waId: string = "", linksTracked?
             tipo: p.tipo,
             url: urls[i],
             especificaciones: specs || undefined,
+            especificaciones_truncada: specsLimpias.length > 1500 || undefined,
           };
         });
         return JSON.stringify(enriquecidos);
@@ -1710,8 +1734,12 @@ Deno.serve(async (req) => {
             // v52 — mismo ticket de promesa que el flujo normal: la asistencia también puede dejar algo
             // sin resolver ("no encontré / sin stock… un asesor confirma") mientras el humano está ausente.
             if (enviado && salida && prometeSeguimientoSinResolver(salida)) {
-              await sb.from("handoffs").insert({ conversation_id: conv.id, motivo: `seguimiento_bot(asistencia): ${texto.slice(0, 150)}` });
-              await log("promesa_seguimiento", true, { waId, motivo: texto.slice(0, 150) });
+              // v52 (revisión adversarial): usa `contenido` (con el fallback "[imagen]"), no `texto` crudo
+              // — una foto SIN caption tiene texto="" y el ticket quedaba con el motivo vacío, justo el
+              // caso (identificar un producto) que esta feature nació para no perder.
+              const { error: errTicket } = await sb.from("handoffs").insert({ conversation_id: conv.id, motivo: `seguimiento_bot(asistencia): ${contenido.slice(0, 150)}`, origen: "bot_promise" });
+              if (errTicket) await log("handoff_ticket_insert_error", false, { waId, error: errTicket.message?.slice(0, 200) });
+              else await log("promesa_seguimiento", true, { waId, motivo: contenido.slice(0, 150) });
             }
             await log("asistencia_handoff", true, { waId, enviado, mins_sin_humano: Math.round(minsSinHumano) });
           } catch (e) { await log("error", false, { waId, fase: "asistencia", error: String(e).slice(0, 300) }); }
@@ -1735,7 +1763,7 @@ Deno.serve(async (req) => {
 
     if (HANDOFF_RE.test(texto)) {
       await sb.from("conversations").update({ status: "handoff" }).eq("id", conv.id);
-      await sb.from("handoffs").insert({ conversation_id: conv.id, motivo: `keyword: ${texto.slice(0, 120)}` });
+      await sb.from("handoffs").insert({ conversation_id: conv.id, motivo: `keyword: ${texto.slice(0, 120)}`, origen: "keyword" });
       const despedida = horarioPanama().dentro
         ? "Con gusto, ya le paso con un asesor que le responderá en breve. ¡Gracias por escribirnos!"
         : "Con gusto, un asesor le responderá apenas estemos en horario (Lun-Vie 9:00am–5:00pm). ¡Gracias por escribirnos!";
@@ -1826,8 +1854,11 @@ Deno.serve(async (req) => {
         // asesor, se registra en `handoffs` (cola consultable) para que no se pierda. Solo si de verdad
         // se envió (un mensaje en shadow nunca llegó al cliente → no hubo promesa real que cumplir).
         if (enviado && salida && prometeSeguimientoSinResolver(salida)) {
-          await sb.from("handoffs").insert({ conversation_id: conv.id, motivo: `seguimiento_bot: ${texto.slice(0, 150)}` });
-          await log("promesa_seguimiento", true, { waId, motivo: texto.slice(0, 150) });
+          // v52 (revisión adversarial): `contenido` (con fallback "[imagen]"), no `texto` crudo — ver
+          // comentario gemelo en el flujo de asistencia.
+          const { error: errTicket } = await sb.from("handoffs").insert({ conversation_id: conv.id, motivo: `seguimiento_bot: ${contenido.slice(0, 150)}`, origen: "bot_promise" });
+          if (errTicket) await log("handoff_ticket_insert_error", false, { waId, error: errTicket.message?.slice(0, 200) });
+          else await log("promesa_seguimiento", true, { waId, motivo: contenido.slice(0, 150) });
         }
         if (urlsRafaga.length) await log("imagen_procesada", true, { waId, en_rafaga: urlsRafaga.length, descargadas: imagenes.length, enviado });
         if (fugaTool) await log("fuga_tool_texto", false, { waId, enviado, muestra: (r.text ?? "").slice(0, 200) });
@@ -1846,6 +1877,13 @@ Deno.serve(async (req) => {
                 : "Disculpe, estamos con alto volumen en este momento 🙏. Un asesor le ayuda apenas estemos en horario (Lun-Vie 9:00am–5:00pm).";
               const okfb = await enviarWati(waId, fb);
               await sb.from("messages").insert({ conversation_id: conv.id, role: "assistant", content: fb, mode: okfb ? "live" : "shadow", model: "fallback", latency_ms: Date.now() - t0 });
+              // v52 (revisión adversarial): un fallo de API (el escenario que v23 cubre — ej. el apagón
+              // real de ~33 min de Anthropic) es POR DEFINICIÓN algo sin resolver: no hace falta pasarlo
+              // por el regex, siempre genera ticket (si de verdad se envió).
+              if (okfb) {
+                const { error: errTicketFb } = await sb.from("handoffs").insert({ conversation_id: conv.id, motivo: `seguimiento_bot(fallback): ${contenido.slice(0, 150)}`, origen: "bot_fallback" });
+                if (errTicketFb) await log("handoff_ticket_insert_error", false, { waId, error: errTicketFb.message?.slice(0, 200) });
+              }
               await log("respuesta_respaldo", true, { waId, enviado: okfb });
             }
           }

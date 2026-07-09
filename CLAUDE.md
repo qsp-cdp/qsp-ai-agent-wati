@@ -49,12 +49,35 @@ con certeza, y calla/deriva cuando es mejor que responda un humano. Tienda:
      where resuelto=false order by created_at asc`). Detección determinista (2 regex: "quedó sin
      resolver" + "promete asesor"), NO depende de que el modelo llame una tool — cablea en ambos flujos
      (normal y asistencia v50). Solo se registra si el mensaje REALMENTE se envió (`enviado=true`).
-  **⚠️ Bug real hallado y corregido durante la construcción:** `\w`/`\b` en JS son ASCII-only (no
-  reconocen tildes) → `"no encontr\w+"` o `"est[aá]\b"` NUNCA matcheaban tras una vocal acentuada
-  ("encontré", "está") porque la é/á no cuenta como `\w`. Corregido usando el radical sin sufijo
-  ("no encontr") o un espacio literal en vez de `\b`. 235 golden tests. Revisión adversarial en curso
-  (3 lentes: riesgo de alucinación cruzada en especificaciones, regex de guardrails, la feature nueva
-  de ticket). Deploy: `.\deploy.ps1 copilot-webhook` (sin migración nueva).
+  5. **DÍA DE LA SEMANA (hallazgo en vivo el mismo 09-jul, mientras se construía v52):** un cliente dijo
+     "el sábado trataré de ir x allá" y el bot confirmó "puede pasar el sábado" **dos veces** sin
+     consultar nada — la tienda NO atiende sábados (Lun-Vie 9-5), un cliente pudo hacer un viaje en
+     vano. `INTERRUPT_RE` ya tenía un patrón para esto ("paso el sábado") pero exigía el verbo "pasar"
+     pegado al día; este mensaje usaba otro verbo ("trataré de ir") y otro orden de palabras y se coló
+     por ambos guardrails. Fix: `NEEDS_TOOL_RE` ahora fuerza tool cuando un DÍA de la semana aparece
+     junto a un verbo de visitar/ir (en cualquier orden) + nueva regla de prompt explícita (nunca
+     confirmar/negar un día sin consultar `info_tienda` primero, ni "por inercia conversacional").
+  **⚠️ 2 bugs reales hallados y corregidos durante la construcción:** (a) `\w`/`\b` en JS son ASCII-only
+  (no reconocen tildes) → `"no encontr\w+"` o `"est[aá]\b"` NUNCA matcheaban tras una vocal acentuada
+  ("encontré", "está") porque la é/á no cuenta como `\w`; corregido usando el radical sin sufijo o un
+  espacio literal en vez de `\b`. (b) el patrón de contraste de facturación terminaba en el radical
+  "factur" (no una palabra completa) → el `\b` global de HANDOFF_RE fallaba porque el texto real sigue
+  con "aron"/"ó" (facturaron); corregido con `factur\w*`. **Revisión adversarial pre-deploy HECHA —
+  cerró 8 hallazgos más:** especificaciones ahora avisa si el texto se truncó (`especificaciones_truncada`,
+  antes cortaba en silencio y el bot podía decir "no lo tiene" cuando el dato pudo quedar después del
+  corte); la REGLA DE ORO aclara que `especificaciones` pertenece EXCLUSIVAMENTE al producto de ESE
+  resultado (anti atribución cruzada entre modelos de la misma familia) y que NUNCA se cita precio/
+  promo/teléfono de ahí (solo características físicas/técnicas); el ticket de promesa usa `contenido`
+  (con fallback "[imagen]"), no `texto` crudo — una foto sin caption dejaba el motivo vacío, justo el
+  caso que la feature nació para no perder; los 3 inserts a `handoffs` ahora chequean error (antes
+  fallaban en silencio); el fallback v23 (apagón de Anthropic) también genera ticket ahora (antes era
+  el único de los 4 caminos de envío sin ninguno); nueva columna `origen` en `handoffs` (migración
+  `20260709120000_handoffs_origen.sql`, idempotente, validada en Postgres local) distingue el handoff
+  por keyword del ticket pasivo del bot; `HANDOFF_RE` sumó la 3ª persona singular ("facturó"/"cobró") y
+  acotó el catch-all "los? \d+" (disparaba con cualquier "me facturaron los N", incluido un
+  agradecimiento sin reclamo) a un patrón de CONTRASTE real; `RESPUESTA_NO_RESUELTA_RE` sumó
+  "puedo/tenemos/podemos/logramos". 254 golden tests. Deploy: `.\deploy.ps1 copilot-webhook` + la
+  migración `20260709120000_handoffs_origen.sql`.
 - **🚀 EN VIVO (desplegado 09-jul por CLI, healthcheck `version:v51-reengage`, `debounce_ms:10000`): v49+v50+v51.**
   El deploy del 09-jul subió las 7 funciones (copiloto + puente + `reengage-expired`).
 - **v51 (`v51-reengage`) — RECUPERACIÓN DE FIN DE SEMANA (cron).** Los

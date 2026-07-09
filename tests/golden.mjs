@@ -377,7 +377,7 @@ console.log("v52 búsqueda por característica + ticket de promesa");
 // probado contra la tienda real CON body → 5 impresoras reales, incluida la que necesitaba la clienta).
 caso("suggestShopify pide `body` en los fields", /resources%5Boptions%5D%5Bfields%5D=title,product_type,variants\.title,vendor,tag,body/.test(src));
 caso("suggestShopify pasa descripcion_html al resultado", /descripcion_html: p\.body/.test(src));
-caso("buscarProducto expone especificaciones (limpiarHtml + slice 1500)", /especificaciones: specs \|\| undefined/.test(src) && /limpiarHtml\(p\.descripcion_html\)\.slice\(0, 1500\)/.test(src));
+caso("buscarProducto expone especificaciones (limpiarHtml + slice 1500)", /especificaciones: specs \|\| undefined/.test(src) && /specsLimpias\.slice\(0, 1500\)/.test(src));
 
 // limpiarHtml: quita tags/entidades básicas, colapsa espacios — el modelo debe poder CITAR este texto.
 const htmlCanon = '<h2>Título</h2><p>Bandeja de entrada con capacidad para <strong>250 hojas</strong> de papel tamaño carta o legal.</p>&nbsp;&amp;';
@@ -400,28 +400,62 @@ for (const t of ["¿aceptan yappy?", "¿qué formas de pago tienen?", "podemos p
 
 // Fix 3: HANDOFF_RE — reclamo de FACTURACIÓN (auditoría real: "me facturaron los 4" cuando solo entregaron 2).
 for (const t of ["necesito una nota de crédito", "solo me entregaron 2 rollos y me facturaron los 4",
-  "me cobraron de más", "me llegó una factura incorrecta"]) {
+  "me cobraron de más", "me llegó una factura incorrecta",
+  // revisión adversarial: faltaba la 3ª persona singular del pretérito (facturó/cobró, ni "aron" ni "a").
+  "me facturó de más", "el sistema me cobró de más",
+  // revisión adversarial: el contraste también debe matchear en el otro orden (factura antes que entrega).
+  "me facturaron 4 y solo me llegaron 2"]) {
   caso(`v52: "${t}" → HANDOFF_RE (reclamo de facturación)`, HANDOFF_RE.test(t));
 }
 // no debe tocar pedidos benignos de facturación (ya cubiertos por INTERRUPT_RE aparte).
 caso('v52: "me pueden facturar a nombre de mi empresa" NO cruza el nuevo patrón de HANDOFF_RE', !/me factur|nota de cr[eé]dito|me cobr|factura(ci[oó]n)? (incorrecta|equivocada)/i.test("me pueden facturar a nombre de mi empresa"));
+// revisión adversarial: "los? \d+" suelto era un catch-all demasiado amplio — un agradecimiento SIN
+// reclamo ("ya me facturaron los 3 que pedí, gracias, todo perfecto") disparaba handoff por error.
+caso('v52: "sí, ya me facturaron los 3 que pedí, gracias, todo perfecto" NO dispara HANDOFF_RE (falso positivo cerrado)', !HANDOFF_RE.test("sí, ya me facturaron los 3 que pedí, gracias, todo perfecto"));
 
 // Fix 4: ticket de promesa — detección determinista (no depende de que el modelo llame una tool).
 const P_NO_ENCONTRE = "No encontré por ahora un modelo con doble bandeja en el catálogo. ¿Le parece si un asesor le confirma opciones disponibles?";
 const P_SIN_STOCK = "Actualmente está sin stock, un asesor le confirma reingreso.";
 const P_RESUELTO = "¡Perfecto! Le confirmo: HP 954XL cian por $48.00 + ITBMS = $51.36, con 8 unidades disponibles.";
 const P_ASESOR_SIN_PROMESA = "Un asesor sigue con su caso, gracias por su paciencia."; // deferente pero sin verbo de confirmación
+// revisión adversarial: faltaban conjugaciones comunes (1ª plural / "puedo") de "sin resolver".
+const P_NO_PUEDO = "No puedo confirmar el stock exacto en este momento; un asesor se lo confirma.";
+const P_NO_TENEMOS = "No tenemos ese color en este momento, un asesor le confirma cuándo llega.";
 caso("prometeSeguimientoSinResolver: 'no encontré... asesor confirma' → true (caso real Anaiska)", prometeSeguimientoSinResolver(P_NO_ENCONTRE));
 caso("prometeSeguimientoSinResolver: 'sin stock... asesor confirma reingreso' → true", prometeSeguimientoSinResolver(P_SIN_STOCK));
 caso("prometeSeguimientoSinResolver: respuesta YA resuelta (con precio/stock) → false", !prometeSeguimientoSinResolver(P_RESUELTO));
 caso("prometeSeguimientoSinResolver: cortesía deferente sin promesa de confirmar → false", !prometeSeguimientoSinResolver(P_ASESOR_SIN_PROMESA));
+caso("prometeSeguimientoSinResolver: 'no puedo confirmar... asesor confirma' → true", prometeSeguimientoSinResolver(P_NO_PUEDO));
+caso("prometeSeguimientoSinResolver: 'no tenemos... asesor confirma' → true", prometeSeguimientoSinResolver(P_NO_TENEMOS));
 
 // wiring: el ticket SOLO se crea si el mensaje realmente se envió (enviado=true) — un shadow nunca
 // llegó al cliente, no hay promesa real que registrar. Chequeo sobre el source real (ambos flujos).
 caso("v52: ticket de promesa gateado por `enviado` en el flujo normal", /if \(enviado && salida && prometeSeguimientoSinResolver\(salida\)\)/.test(src));
 caso("v52: ticket de promesa también en el flujo de asistencia (v50)", (src.match(/prometeSeguimientoSinResolver\(salida\)/g) || []).length >= 2);
-caso("v52: el ticket usa la tabla `handoffs` existente (sin migración nueva)", /await sb\.from\("handoffs"\)\.insert\(\{ conversation_id: conv\.id, motivo: `seguimiento_bot/.test(src));
+caso("v52: el ticket usa la tabla `handoffs` existente con `origen` (sin migración de esquema nueva más allá de la columna)", /await sb\.from\("handoffs"\)\.insert\(\{ conversation_id: conv\.id, motivo: `seguimiento_bot/.test(src) && (src.match(/origen: "bot_promise"/g) || []).length >= 2);
+caso("v52: el handoff por keyword también trae `origen: \"keyword\"`", /origen: "keyword"/.test(src));
+caso("v52: el fallback v23 también genera ticket (`origen: \"bot_fallback\"`)", /origen: "bot_fallback"/.test(src));
+caso("v52: los 3 inserts a `handoffs` chequean error (no fallan en silencio)", (src.match(/handoff_ticket_insert_error/g) || []).length >= 3);
+caso("v52: el motivo del ticket usa `contenido` (con fallback \"[imagen]\"), no `texto` crudo", !/motivo: `seguimiento_bot[^`]*\$\{texto\.slice/.test(src) && (src.match(/motivo: `seguimiento_bot[^`]*\$\{contenido\.slice/g) || []).length >= 2);
 caso("v52: healthcheck = v52-specs-ticket", /version: "v52-specs-ticket"/.test(src));
+
+// revisión adversarial: especificaciones ahora avisa si el texto real era más largo que el corte (1500
+// chars) — evita un "no lo tiene" tajante cuando el dato pudo quedar después del corte.
+caso("v52: especificaciones_truncada existe en el resultado enriquecido", /especificaciones_truncada: specsLimpias\.length > 1500/.test(src));
+caso('SYSTEM_PROMPT: instrucción para especificaciones_truncada', /especificaciones_truncada/i.test(SYSTEM_PROMPT));
+caso('SYSTEM_PROMPT: especificaciones pertenece SOLO al mismo resultado (anti atribución cruzada)', /EXCLUSIVAMENTE al producto de ESE MISMO resultado/i.test(SYSTEM_PROMPT));
+caso('SYSTEM_PROMPT: especificaciones NUNCA da precio/promo (anti contenido no confiable)', /NUNCA cites de "especificaciones" precio, descuento, promoci[oó]n/i.test(SYSTEM_PROMPT));
+
+// --- v52 (hallazgo en vivo): DÍA DE LA SEMANA sin consultar horario real ---------------------------
+// Caso real: cliente dijo "el sábado trataré de ir x allá" y el bot confirmó "puede pasar el sábado"
+// sin consultar nada — la tienda NO atiende sábados. Ningún trigger existente lo cazaba (INTERRUPT_RE
+// exigía el verbo "pasar" pegado al día; este mensaje usaba otro verbo y otro orden).
+console.log("v52 día de la semana → fuerza info_tienda");
+for (const t of ["el sábado trataré de ir x allá", "puedo ir el domingo?", "paso a retirar el lunes",
+  "voy el martes a buscarlo"]) {
+  caso(`v52: "${t}" fuerza tool (día + intención de visitar)`, NEEDS_TOOL_RE.test(t));
+}
+caso('SYSTEM_PROMPT: regla de DÍA DE LA SEMANA (no asumir que atienden un día sin confirmar)', /DÍA DE LA SEMANA/.test(SYSTEM_PROMPT) && /si el d[ií]a que menciona es s[aá]bado, domingo o feriado/i.test(SYSTEM_PROMPT));
 
 // --- resumen --------------------------------------------------------------------------------------
 console.log(`\n${ok} OK, ${mal} FALLA${mal === 1 ? "" : "S"}`);
