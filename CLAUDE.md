@@ -20,6 +20,41 @@ con certeza, y calla/deriva cuando es mejor que responda un humano. Tienda:
 **quickservicepanama.com** (suministros de impresión y tecnología en Panamá).
 
 ## Estado actual (2026-07-09)
+- **EN EL REPO, LISTO PARA DESPLEGAR: v52 (`v52-specs-ticket`).** De una auditoría real (conv
+  50765912382, Anaiska Córdoba): pidió una impresora con "bandeja legal y carta" → el bot hizo **10
+  búsquedas fallidas** (0 resultados) porque `suggest.json` no lee la DESCRIPCIÓN del producto, solo
+  título/tipo/tag/marca — y el dato SÍ estaba en la ficha. Prometió "un asesor confirma" DOS VECES y
+  **nadie la contactó nunca**; volvió sola 5 días después a insistir. Dos fixes de esa raíz + dos de
+  calibración de guardrails de la auditoría del 09-jul:
+  1. **Búsqueda por CARACTERÍSTICA** — se agrega `body` a `resources[options][fields]` de `suggest.json`
+     (mismo patrón que v34 con `tag`). **Probado contra la tienda real:** "bandeja legal" SIN body → 0
+     resultados; CON body → 5 impresoras reales, incluido el Canon MF289dw ($320, disponible) con la
+     frase exacta "Bandeja de entrada... papel tamaño carta o legal" en su ficha.
+  2. **`especificaciones` grounded** — `buscarProducto` limpia el HTML de la descripción (`limpiarHtml`)
+     y expone hasta 1500 chars como campo `especificaciones` (validado: a esa longitud alcanza specs
+     que el marketing entierra ~carácter 1200). REGLA DE ORO actualizada: el modelo puede confirmar una
+     característica SOLO si aparece en el título o en `especificaciones` — nunca por "lógica" (ni
+     "una impresora de oficina imprime carta" sin la fuente). Sigue 100% grounded, cero relajación real
+     del guardrail v42.
+  3. **Guardrails calibrados** (mensajes reales del 09-jul que se escaparon): `INTERRUPT_RE` ahora cubre
+     formas PLURALES de pago completado ("realizamos/hicimos/enviamos la transferencia" — antes solo
+     cubría 1ª persona singular); `HANDOFF_RE` ahora cubre reclamo de FACTURACIÓN ("nota de crédito",
+     "me facturaron de más/los N", "me cobraron de más", "factura incorrecta") — antes activaba
+     asistencia en vez de ir a un humano.
+  4. **TICKET DE PROMESA** (la pieza que cierra el caso Anaiska): cuando la respuesta del bot deja algo
+     GENUINAMENTE sin resolver (no encontró / sin stock / no pudo confirmar) Y promete que "un asesor
+     confirma", se inserta una fila en la tabla YA EXISTENTE `handoffs` (sin migración nueva; misma
+     tabla que ya usa el handoff por keyword) — **sin** forzar `status='handoff'` (no le quita el chat
+     al bot, es solo una cola consultable para que el equipo no pierda promesas: `select * from handoffs
+     where resuelto=false order by created_at asc`). Detección determinista (2 regex: "quedó sin
+     resolver" + "promete asesor"), NO depende de que el modelo llame una tool — cablea en ambos flujos
+     (normal y asistencia v50). Solo se registra si el mensaje REALMENTE se envió (`enviado=true`).
+  **⚠️ Bug real hallado y corregido durante la construcción:** `\w`/`\b` en JS son ASCII-only (no
+  reconocen tildes) → `"no encontr\w+"` o `"est[aá]\b"` NUNCA matcheaban tras una vocal acentuada
+  ("encontré", "está") porque la é/á no cuenta como `\w`. Corregido usando el radical sin sufijo
+  ("no encontr") o un espacio literal en vez de `\b`. 235 golden tests. Revisión adversarial en curso
+  (3 lentes: riesgo de alucinación cruzada en especificaciones, regex de guardrails, la feature nueva
+  de ticket). Deploy: `.\deploy.ps1 copilot-webhook` (sin migración nueva).
 - **🚀 EN VIVO (desplegado 09-jul por CLI, healthcheck `version:v51-reengage`, `debounce_ms:10000`): v49+v50+v51.**
   El deploy del 09-jul subió las 7 funciones (copiloto + puente + `reengage-expired`).
 - **v51 (`v51-reengage`) — RECUPERACIÓN DE FIN DE SEMANA (cron).** Los

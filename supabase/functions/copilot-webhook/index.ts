@@ -571,7 +571,7 @@ REGLA DE ORO — precio, stock y promociones
 - NUNCA menciones un producto, modelo, precio o disponibilidad que no provenga de un resultado de buscar_producto EN ESTE MISMO TURNO. Si no llamaste a la tool, NO nombres modelos ni des precios/stock: búscalo primero. Aplica también a preguntas de categoría ("¿venden impresoras Epson?"): primero busca, luego responde con lo que devuelva.
 - NO NIEGUES DE MEMORIA: nunca digas que NO ofrecemos un producto o categoría sin haber buscado con buscar_producto en este turno. QSP vende MÁS que impresión (también monitores, escáneres, UPS, baterías, accesorios y tecnología en general). Ante CUALQUIER consulta de producto, BUSCA primero; solo di "no lo encontré" o "eso no lo manejamos" DESPUÉS de haber buscado.
 - NUNCA inventes precios, existencias, descuentos ni promociones.
-- SOLO afirma datos del producto que devuelva buscar_producto: título/modelo, precio, ITBMS, stock, el enlace y la compatibilidad que figure EN EL TÍTULO. NO inventes especificaciones que la tool NO trae (rendimiento en páginas, velocidad, resolución, conectividad u otras características técnicas): si el cliente las pide y no están en el resultado, dilo con honestidad o deja que un asesor las detalle — nunca las adivines de memoria.
+- SOLO afirma datos del producto que devuelva buscar_producto: título/modelo, precio, ITBMS, stock, el enlace, la compatibilidad que figure EN EL TÍTULO y las características que mencione el campo "especificaciones" (cuando venga: bandeja/tamaño de papel, dúplex, conectividad, velocidad, resolución, etc. — es texto real de la ficha del producto). Si el cliente pregunta por una característica y NI el título NI "especificaciones" la mencionan, dilo con honestidad ("no tengo ese dato confirmado") o deja que un asesor la detalle — nunca la inventes ni la asumas de memoria (ni "por lógica": una impresora de oficina normalmente imprime carta, pero SOLO lo confirmas si "especificaciones" lo dice).
 - Incluye el link del producto cuando lo tengas, copiándolo EXACTO como viene en el campo "url" de buscar_producto — con TODO lo que esté después del "?" (parámetros utm/ref_code de seguimiento). NUNCA acortes el link ni le quites esos parámetros.
 - PRECIO + ITBMS: los precios son SIN ITBMS. Muestra SIEMPRE el precio, el ITBMS (7%) y el total usando EXACTAMENTE los valores que devuelve la tool (precio_usd, itbms_7pct, total_con_itbms). Formato: "*$116.00 + ITBMS (7%) = $124.12*". NUNCA calcules el impuesto de memoria.
 - STOCK / CANTIDAD: indica la disponibilidad usando el campo "stock" que devuelve la tool, TAL CUAL. Si dice "X unidades", dilo; si dice "stock bajo — un asesor verifica…", dilo así. NUNCA inventes ni adivines una cantidad: di solo lo que aparezca en ese campo "stock".
@@ -657,7 +657,7 @@ Un compañero del equipo tiene esta conversación, pero lleva un rato sin respon
 
 const TOOLS: Anthropic.Tool[] = [{
   name: "buscar_producto",
-  description: "Busca productos en el catálogo de Quick Service Panamá (Shopify). Llámala SIEMPRE que el cliente pregunte precio, disponibilidad/stock, compatibilidad, o mencione/insinúe un producto, marca o categoría (tinta, toner, impresora Epson/Canon/HP, etc.). Pasa términos CONCISOS: marca + MODELO (el número de modelo es la mejor señal); para 'tinta para [impresora]' busca por el modelo de la impresora. Puedes llamarla varias veces reformulando si no encuentras. Devuelve título, precio (precio_usd SIN ITBMS + itbms_7pct + total_con_itbms), stock (disponibilidad ya resuelta: muestra el número si hay >3, si no deriva a un asesor), marca, tipo y link (máx 5).",
+  description: "Busca productos en el catálogo de Quick Service Panamá (Shopify). Llámala SIEMPRE que el cliente pregunte precio, disponibilidad/stock, compatibilidad, características (bandeja de papel, dúplex, conectividad, etc.), o mencione/insinúe un producto, marca o categoría (tinta, toner, impresora Epson/Canon/HP, etc.). Pasa términos CONCISOS: marca + MODELO (el número de modelo es la mejor señal); para 'tinta para [impresora]' busca por el modelo de la impresora; para una CARACTERÍSTICA (ej. 'bandeja legal y carta') pasa la característica en los términos, no solo la marca. Puedes llamarla varias veces reformulando si no encuentras. Devuelve título, precio (precio_usd SIN ITBMS + itbms_7pct + total_con_itbms), stock (disponibilidad ya resuelta: muestra el número si hay >3, si no deriva a un asesor), marca, tipo, link y especificaciones (texto real de la ficha del producto, cuando la tienda lo tenga — úsalo para confirmar características, nunca inventes más allá de lo que diga) (máx 5).",
   strict: true,
   input_schema: { type: "object", properties: { consulta: { type: "string", description: "Términos de búsqueda, ej: 'tinta hp 954 negra'" } }, required: ["consulta"], additionalProperties: false },
 } as Anthropic.Tool, {
@@ -691,7 +691,30 @@ const TOOLS: Anthropic.Tool[] = [{
 // solo la pregunta CLARAMENTE general ("política de devolución", "¿hacen devoluciones?", "¿qué garantía
 // tienen?" — plural/sin artículo) pasa a info_tienda. Endurecido tras revisión adversarial pre-deploy:
 // la 1ª versión de v45 dejaba pasar "necesito una devolución", "aplicar mi garantía", "me salió dañado".
-const HANDOFF_RE = /\b(humano|persona|asesor|agente|reclamo|queja|hablar con alguien|supervisor|quiero devolver|devolver (el|la|lo|los|las|un|una|mi|este|esta|esto|eso)|devolverl[oa]s?|devuelvan|cambiarl[oa]s?|(una|la|mi|su|esa|esta) devoluci[oó]n|(aplicar|usar|reclamar|validar|activar|hacer (v[aá]lida|efectiva)) (la |mi |su )?garant[ií]a|(mi|su) garant[ií]a|en garant[ií]a|tiene garant[ií]a|sali[oó] (mal|malo|mala|da[ñn]ad[oa]|defectuos[oa])|(lleg[oó]|vino) (mal|malo|mala|da[ñn]ad[oa]|roto|rota|defectuos[oa])|defectuos[oa]s?|me vendieron (uno|una|algo) (malo|mala|da[ñn]ad[oa]|defectuos[oa]))\b/i;
+// v52 (auditoría real): reclamo de FACTURACIÓN ("me entregaron 2 y me facturaron 4", "nota de crédito")
+// no estaba cubierto → un caso real activó asistencia en vez de ir a humano. Se agrega como reclamo
+// concreto (misma familia que devolución/garantía): "nota de crédito" es inequívoco; "me factur(a/aron)
+// de más/mal/los N" y "me cobraron de más" exigen el verbo pegado al sustantivo para no rozar preguntas
+// benignas de facturación ("factura a nombre de…", ya cubierto aparte por INTERRUPT_RE).
+const HANDOFF_RE = /\b(humano|persona|asesor|agente|reclamo|queja|hablar con alguien|supervisor|quiero devolver|devolver (el|la|lo|los|las|un|una|mi|este|esta|esto|eso)|devolverl[oa]s?|devuelvan|cambiarl[oa]s?|(una|la|mi|su|esa|esta) devoluci[oó]n|(aplicar|usar|reclamar|validar|activar|hacer (v[aá]lida|efectiva)) (la |mi |su )?garant[ií]a|(mi|su) garant[ií]a|en garant[ií]a|tiene garant[ií]a|sali[oó] (mal|malo|mala|da[ñn]ad[oa]|defectuos[oa])|(lleg[oó]|vino) (mal|malo|mala|da[ñn]ad[oa]|roto|rota|defectuos[oa])|defectuos[oa]s?|me vendieron (uno|una|algo) (malo|mala|da[ñn]ad[oa]|defectuos[oa])|nota de cr[eé]dito|me factur(aron|a) (de m[aá]s|mal|otra cantidad|los? \d+)|me cobr(aron|a) de m[aá]s|factura(ci[oó]n)? (incorrecta|equivocada|mal (hecha|emitida)))\b/i;
+
+// v52 — TICKET DE PROMESA (auditoría real: el bot le prometió "un asesor confirma" a una clienta DOS
+// veces por una impresora con doble bandeja y nadie la contactó nunca; 5 días después tuvo que volver
+// sola a insistir). Antes, "un asesor confirma" era solo palabras — no quedaba ningún registro. Ahora,
+// cuando la respuesta del bot deja algo genuinamente SIN resolver (no encontró / sin stock / no pudo
+// confirmar) Y promete que un asesor dará seguimiento, se inserta un ticket en `handoffs` (la MISMA
+// tabla que ya usa el handoff por keyword) — sin cambiar conversations.status (no fuerza handoff, es
+// solo una cola consultable). Detección determinista (no depende de que el modelo llame una tool):
+// select * from handoffs where resuelto=false order by created_at asc;
+// OJO: \w y \b son ASCII-only en JS (no reconocen tildes) — "encontr\w+" o "est[aá]\b" NUNCA matchean
+// tras una vocal acentuada ("encontré", "está") porque la "é"/"á" no cuenta como \w. Por eso aquí NO se
+// pone \w+/\b pegado a una vocal que pueda llevar tilde: se usa el radical solo ("no encontr", sin
+// sufijo) o un espacio literal en vez de \b ("est[aá]\s").
+const RESPUESTA_NO_RESUELTA_RE = /(no encontr|no (tengo|pude|logro)\b|sin stock\b|no hay stock\b|no (est[aá]|estamos)\s.{0,15}disponible)/i;
+const PROMESA_ASESOR_RE = /\basesor\w*\b[\s\S]{0,150}\b(confirm\w*|verific\w*|revis\w*|contact\w*|escribir[aá]?n?|responder[aá]?n?|dar[aá]?n? seguimiento)\w*/i;
+function prometeSeguimientoSinResolver(texto: string): boolean {
+  return RESPUESTA_NO_RESUELTA_RE.test(texto) && PROMESA_ASESOR_RE.test(texto);
+}
 
 // Anti-interrupción (guardrail PRE-LLM): señales de un trámite/pago/dato fiscal EN CURSO
 // (típicamente atendido por un humano). Si el texto entrante matchea, el bot se ABSTIENE
@@ -711,6 +734,9 @@ const INTERRUPT_RE = new RegExp([
   // asistencia ampliada, el bot podía responder sobre un pago en curso. Requieren VERBO+sustantivo de pago
   // o "mi/su pago" → NO tocan las PREGUNTAS de método ("¿cómo pago?", "¿aceptan yappy?", "formas de pago").
   "(hice|mand[eé]|pas[eé]|envi[eé]|pagu[eé]|realic[eé]|deposit[eé]|transfer[ií]) (le |te |ya |el |la |mi |su )*(pago|transferencia|dep[oó]sito|comprobante)",
+  // v52 (auditoría real): formas en PLURAL ("realizamos/hicimos/enviamos la transferencia") escapaban —
+  // el singular ya estaba cubierto arriba, pero "nosotros" (empresa/oficina que compra) quedaba fuera.
+  "(hicimos|mandamos|enviamos|pagamos|realizamos|depositamos|transferimos) (le |les |ya |el |la |los |las |mi |su |nuestro |nuestra )*(pago|transferencia|dep[oó]sito|comprobante)",
   "acabo de (pagar|transferir|depositar)", "\\b(mi|su) pago\\b",
   "\\btransfiero\\b", "le transfiero", "a qu[eé] cuenta", "n[uú]mero de cuenta", "a d[oó]nde (le |te )?(pago|deposito|transfiero|consigno)", // a dónde pago/transfiero (el bot NUNCA da la cuenta)
   // entrega/retiro EN CURSO
@@ -783,8 +809,12 @@ const BASIC_INFO_RE = new RegExp([
 // compatibilidad (las impresoras compatibles se guardan ahí como "Canon PIXMA MG2110", "Kyocera TASKalfa
 // 3253ci"…). El default solo busca title/product_type/variants.title/vendor → por eso "3253ci" no hallaba
 // el tóner TK-8337 aunque está tagueado. Probado contra la tienda: SIN tag → vacío; CON tag → los 4 TK-8337.
+// v52: se agrega `body` (la descripción/ficha del producto) por el mismo motivo — características como
+// "bandeja tamaño carta y legal" o "doble bandeja" NO viven en título/tipo/tag, solo en la descripción.
+// Caso real: "bandeja legal" SIN body → 0 resultados; CON body → 5 impresoras reales (Canon MF289dw,
+// HP 4103fdw…) con el dato exacto en el texto. Probado contra la tienda: confirma la mejora.
 async function suggestShopify(q: string): Promise<any[]> {
-  const u = `${STORE}/search/suggest.json?q=${encodeURIComponent(q)}&resources%5Btype%5D=product&resources%5Blimit%5D=5&resources%5Boptions%5D%5Bunavailable_products%5D=show&resources%5Boptions%5D%5Bfields%5D=title,product_type,variants.title,vendor,tag`;
+  const u = `${STORE}/search/suggest.json?q=${encodeURIComponent(q)}&resources%5Btype%5D=product&resources%5Blimit%5D=5&resources%5Boptions%5D%5Bunavailable_products%5D=show&resources%5Boptions%5D%5Bfields%5D=title,product_type,variants.title,vendor,tag,body`;
   const r = await fetch(u, { signal: AbortSignal.timeout(8000) });
   if (!r.ok) throw new Error(`tienda respondió ${r.status}`);
   const j = await r.json();
@@ -796,7 +826,19 @@ async function suggestShopify(q: string): Promise<any[]> {
     marca: p.vendor || undefined,
     tipo: p.product_type || p.type || undefined,
     url: p.url?.startsWith("http") ? p.url : `${STORE}${p.url ?? ""}`,
+    descripcion_html: p.body || undefined,
   }));
+}
+
+// v52 — limpia el HTML de la descripción de Shopify (title/product_type/tag no alcanzan para preguntas
+// de característica: "¿tiene bandeja legal?", "¿es dúplex?"). Solo quita tags/entidades básicas; el
+// texto en sí (specs reales de la ficha) queda intacto para que el modelo pueda CITARLO, nunca inventar.
+function limpiarHtml(html: string): string {
+  return html
+    .replace(/<[^>]*>/g, " ")
+    .replace(/&nbsp;/gi, " ").replace(/&amp;/gi, "&").replace(/&quot;/gi, '"').replace(/&#39;/g, "'")
+    .replace(/\s+/g, " ")
+    .trim();
 }
 
 // Extrae códigos/números de modelo (la señal más fuerte para hallar el producto correcto pese a
@@ -972,6 +1014,11 @@ async function buscarProducto(consulta: string, waId: string = "", linksTracked?
         const enriquecidos = top.map((p, i) => {
           const precio = conItbms(p.precio_usd);
           const cant = inv[String(p.id ?? "").replace(/\D/g, "")];
+          // v52: especificaciones = texto real de la ficha (limpio de HTML), truncado a 1500 chars —
+          // largo suficiente para alcanzar specs que la marketing copy entierra a mitad de la
+          // descripción (caso real: "bandeja tamaño carta o legal" del Canon MF289dw aparece ~carácter
+          // 1200). El modelo SOLO puede citar lo que esté aquí (regla de oro); si no viene, no inventa.
+          const specs = p.descripcion_html ? limpiarHtml(p.descripcion_html).slice(0, 1500) : "";
           return {
             titulo: p.titulo,
             precio_usd: precio.precio_usd,
@@ -981,6 +1028,7 @@ async function buscarProducto(consulta: string, waId: string = "", linksTracked?
             marca: p.marca,
             tipo: p.tipo,
             url: urls[i],
+            especificaciones: specs || undefined,
           };
         });
         return JSON.stringify(enriquecidos);
@@ -1478,7 +1526,7 @@ Deno.serve(async (req) => {
       const diag = await inventarioSelfTest(pid);
       return Response.json({ selftest: "inventario", ...diag, ts: new Date().toISOString() });
     }
-    return Response.json({ status: "ok", function: "copilot-webhook", version: "v51-reengage", mode: MODE, mode_raw: MODE_RAW, model: MODEL, llm_configured: !!anthropic, wati_send_configured: !!(WATI_API_TOKEN && WATI_API_BASE), inventario_configurado: !!(SHOPIFY_ADMIN_TOKEN && SHOPIFY_ADMIN_API_BASE), resolve_configured: !!RESOLVE_SECRET, webhook_key_es_default: WEBHOOK_KEY_ES_DEFAULT, handoff_assist_min: HANDOFF_ASSIST_MIN, handoff_cold_hours: HANDOFF_COLD_HOURS, debounce_ms: DEBOUNCE_MS, live_targets: MODE === "live" ? (LIVE_ALL ? "all" : LIVE_ALLOWLIST.length) : 0, ts: new Date().toISOString() });
+    return Response.json({ status: "ok", function: "copilot-webhook", version: "v52-specs-ticket", mode: MODE, mode_raw: MODE_RAW, model: MODEL, llm_configured: !!anthropic, wati_send_configured: !!(WATI_API_TOKEN && WATI_API_BASE), inventario_configurado: !!(SHOPIFY_ADMIN_TOKEN && SHOPIFY_ADMIN_API_BASE), resolve_configured: !!RESOLVE_SECRET, webhook_key_es_default: WEBHOOK_KEY_ES_DEFAULT, handoff_assist_min: HANDOFF_ASSIST_MIN, handoff_cold_hours: HANDOFF_COLD_HOURS, debounce_ms: DEBOUNCE_MS, live_targets: MODE === "live" ? (LIVE_ALL ? "all" : LIVE_ALLOWLIST.length) : 0, ts: new Date().toISOString() });
   }
   if (req.method !== "POST") return Response.json({ error: "method_not_allowed" }, { status: 405 });
   if (url.searchParams.get("key") !== WEBHOOK_KEY) return Response.json({ error: "forbidden" }, { status: 403 });
@@ -1659,6 +1707,12 @@ Deno.serve(async (req) => {
             const insA = await sb.from("messages").insert({ conversation_id: conv.id, role: "assistant", content: salida, tool_calls: r.toolCalls.length ? r.toolCalls : null, mode: quiereEnviar ? "live" : "shadow", model: "assist-handoff", tokens_in: r.tokensIn || null, tokens_out: r.tokensOut || null, cache_read_input_tokens: r.cacheRead || null, cache_creation_input_tokens: r.cacheWrite || null, latency_ms: Date.now() - t0 }).select("id");
             let enviado = false;
             if (quiereEnviar) { enviado = await enviarWati(waId, salida); if (!enviado) await sb.from("messages").update({ mode: "shadow" }).eq("id", (insA.data?.[0] as any)?.id); }
+            // v52 — mismo ticket de promesa que el flujo normal: la asistencia también puede dejar algo
+            // sin resolver ("no encontré / sin stock… un asesor confirma") mientras el humano está ausente.
+            if (enviado && salida && prometeSeguimientoSinResolver(salida)) {
+              await sb.from("handoffs").insert({ conversation_id: conv.id, motivo: `seguimiento_bot(asistencia): ${texto.slice(0, 150)}` });
+              await log("promesa_seguimiento", true, { waId, motivo: texto.slice(0, 150) });
+            }
             await log("asistencia_handoff", true, { waId, enviado, mins_sin_humano: Math.round(minsSinHumano) });
           } catch (e) { await log("error", false, { waId, fase: "asistencia", error: String(e).slice(0, 300) }); }
         })();
@@ -1768,6 +1822,13 @@ Deno.serve(async (req) => {
           if (!enviado) { modoFinal = "shadow"; await sb.from("messages").update({ mode: "shadow" }).eq("id", insAsst.data?.[0]?.id); }
         }
         respondido = true; // v23: ya insertamos/enviamos la respuesta del bot
+        // v52 — TICKET DE PROMESA: si la respuesta dejó algo sin resolver Y prometió seguimiento de un
+        // asesor, se registra en `handoffs` (cola consultable) para que no se pierda. Solo si de verdad
+        // se envió (un mensaje en shadow nunca llegó al cliente → no hubo promesa real que cumplir).
+        if (enviado && salida && prometeSeguimientoSinResolver(salida)) {
+          await sb.from("handoffs").insert({ conversation_id: conv.id, motivo: `seguimiento_bot: ${texto.slice(0, 150)}` });
+          await log("promesa_seguimiento", true, { waId, motivo: texto.slice(0, 150) });
+        }
         if (urlsRafaga.length) await log("imagen_procesada", true, { waId, en_rafaga: urlsRafaga.length, descargadas: imagenes.length, enviado });
         if (fugaTool) await log("fuga_tool_texto", false, { waId, enviado, muestra: (r.text ?? "").slice(0, 200) });
         if (!anthropic) await log("llm_no_configurado", true, { waId });
