@@ -138,18 +138,26 @@ export async function resolveMapsCoords(url?: string, fetchFn = fetch): Promise<
         signal: AbortSignal.timeout(6000),
       });
       const loc = res.headers.get('location');
+      console.log(`resolveMaps hop ${i}: HTTP ${res.status}, location=${loc ? loc.slice(0, 120) : 'NO'}`);
       if (loc) {
         const coords = parseMapsCoords(loc);
-        if (coords) return coords;
+        if (coords) {
+          if (res.body) await res.body.cancel();
+          return coords;
+        }
         current = new URL(loc, current).href;
+        if (res.body) await res.body.cancel();
         continue;
       }
       // sin redirección: intentar parsear el cuerpo (algunos short links resuelven vía HTML)
       const body = await res.text();
-      return parseMapsCoords(body);
+      const fromBody = parseMapsCoords(body);
+      console.log(`resolveMaps body: ${body.length} bytes, coords=${fromBody ? 'SI' : 'NO'}`);
+      return fromBody;
     }
-  } catch {
-    // red/timeout: seguimos sin coordenadas, el link igual viaja en instrucciones
+    console.log('resolveMaps: se agotaron los saltos de redirección');
+  } catch (err) {
+    console.log(`resolveMaps error: ${String(err).slice(0, 200)}`);
   }
   return null;
 }
