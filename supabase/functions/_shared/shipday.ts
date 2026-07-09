@@ -129,7 +129,14 @@ export async function resolveMapsCoords(url?: string, fetchFn = fetch): Promise<
     // manual: leemos el Location del 3xx sin seguirlo (más rápido y evita cargar la página)
     let current = url;
     for (let i = 0; i < 5; i++) {
-      const res = await fetchFn(current, { method: 'GET', redirect: 'manual', signal: AbortSignal.timeout(6000) });
+      const res = await fetchFn(current, {
+        method: 'GET',
+        redirect: 'manual',
+        // UA de navegador: Google puede responder distinto a clientes "raros"
+        // desde IPs de datacenter.
+        headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0 Safari/537.36' },
+        signal: AbortSignal.timeout(6000),
+      });
       const loc = res.headers.get('location');
       if (loc) {
         const coords = parseMapsCoords(loc);

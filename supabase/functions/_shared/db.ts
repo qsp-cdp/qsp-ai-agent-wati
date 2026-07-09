@@ -56,6 +56,10 @@ export async function upsertContactByPhone(contact: Contact): Promise<void> {
     if ((contact.address || '').trim()) patch.address = contact.address;
     if ((contact.referencia ?? '').toString().trim()) patch.referencia = contact.referencia;
     if ((contact.maps_url ?? '').toString().trim()) patch.maps_url = contact.maps_url;
+    if (contact.latitude != null && contact.longitude != null) {
+      patch.latitude = contact.latitude;
+      patch.longitude = contact.longitude;
+    }
     const digits = lastDigits(contact.phone);
     const res = await fetch(restUrl(`/contacts?phone_digits=eq.${digits}`), {
       method: 'PATCH',
