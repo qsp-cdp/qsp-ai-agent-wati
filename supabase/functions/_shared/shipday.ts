@@ -138,7 +138,6 @@ export async function resolveMapsCoords(url?: string, fetchFn = fetch): Promise<
         signal: AbortSignal.timeout(6000),
       });
       const loc = res.headers.get('location');
-      console.log(`resolveMaps hop ${i}: HTTP ${res.status}, location=${loc ? loc.slice(0, 120) : 'NO'}`);
       if (loc) {
         const coords = parseMapsCoords(loc);
         if (coords) {
@@ -152,7 +151,9 @@ export async function resolveMapsCoords(url?: string, fetchFn = fetch): Promise<
       // sin redirección: intentar parsear el cuerpo (algunos short links resuelven vía HTML)
       const body = await res.text();
       const fromBody = parseMapsCoords(body);
-      console.log(`resolveMaps body: ${body.length} bytes, coords=${fromBody ? 'SI' : 'NO'}`);
+      // Solo se registra el fallo (sin datos de ubicación del cliente): útil
+      // para detectar bloqueos de Google al datacenter (403/429/consent).
+      if (!fromBody) console.log(`resolveMaps sin coordenadas: HTTP ${res.status}, body ${body.length} bytes`);
       return fromBody;
     }
     console.log('resolveMaps: se agotaron los saltos de redirección');
