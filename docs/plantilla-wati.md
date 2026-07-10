@@ -51,16 +51,14 @@ WATI → Chatbots/Flow Builder → nuevo flujo:
    - Body:
      ```json
      {
-       "waId": "{{waId}}",
+       "waId": "{{phone}}",
        "nombre": "{{name}}",
-       "direccion": "{{direccion}}",
-       "referencia": "{{referencia}}",
-       "maps_url": "{{maps}}",
-     "lat": "{{latitud}}",
-     "lng": "{{longitud}}"
+       "direccion": "@direccion",
+       "referencia": "@referencia",
+       "maps_url": "@maps"
      }
      ```
-   (`lat`/`lng` solo si el flujo captó la ubicación nativa de WhatsApp; si no, se omiten y se resuelve desde `maps_url`.)
+   > ⚠️ **Sintaxis crítica de WATI (probado en producción):** los **atributos del contacto** (número, nombre) usan doble llave `{{phone}}` / `{{name}}`; las **respuestas capturadas en el flujo** (las preguntas) usan arroba `@direccion` / `@referencia` / `@maps`. Mezclar mal la sintaxis hace que WATI mande la variable como texto literal y el backend la rechaza (400). Insértalas desde el **selector de variables** de WATI, no las escribas a mano. El backend valida y rechaza variables sin resolver, así que un error de sintaxis se ve al instante (rama de error del webhook), no como falso "¡Listo!".
 6. Mensaje de cierre: «¡Listo! Guardamos tu dirección de entrega ✅».
 
 La función guarda el contacto en la libreta y actualiza los atributos; si el link de Maps trae coordenadas, también las guarda (y luego viajan a Shipday para clavar el pin del repartidor).
@@ -80,11 +78,12 @@ Cuando la venta está confirmada, un flujo corto «Despachar pedido» (o un bot�
 
 ```json
 {
-  "waId": "{{waId}}",
-  "pedido": "{{resumen_pedido}}",
-  "total": "{{total}}"
+  "waId": "{{phone}}",
+  "pedido": "@resumen_pedido",
+  "total": "@total"
 }
 ```
+(Misma regla de sintaxis: `{{phone}}` es atributo de contacto; `@resumen_pedido`/`@total` son variables del flujo.)
 
 No hace falta mandar la dirección: la función la toma de la libreta (la que capturó `wati-address`). Si el cliente no tiene dirección registrada, responde 400 con el mensaje claro — señal para correr primero el flujo de captura.
 

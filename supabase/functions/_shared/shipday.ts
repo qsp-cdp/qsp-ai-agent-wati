@@ -169,6 +169,12 @@ export function watiCaptureToShipday(capture: WatiCapture, pickup: Pickup = defa
   if (missing.length) {
     throw new HttpError(400, `Faltan campos obligatorios: ${missing.join(', ')}`);
   }
+  if (looksUnresolved(capture.telefono) || looksUnresolved(capture.direccion)) {
+    throw new HttpError(400, 'Variable de WATI sin resolver en el pedido (teléfono o dirección)');
+  }
+  if (!isValidPhone(normalizePhone(capture.telefono!))) {
+    throw new HttpError(400, `Teléfono inválido: "${normalizePhone(capture.telefono!)}"`);
+  }
   const direccion = [capture.direccion, capture.referencia].filter(Boolean).join(' — ');
   const items = Array.isArray(capture.items)
     ? capture.items.map((it) =>
@@ -208,6 +214,18 @@ export function normalizePhone(phone: string | number): string {
   // Panamá: celulares de 8 dígitos → anteponer +507
   if (/^\d{7,8}$/.test(digits)) return `+507${digits}`;
   return `+${digits}`;
+}
+
+// Detecta un valor que WATI no resolvió: llegó como plantilla literal
+// (@variable o {{variable}}). Evita guardar basura y falsos éxitos.
+export function looksUnresolved(value: unknown): boolean {
+  const s = String(value ?? '');
+  return s.startsWith('@') || s.includes('{{') || s.includes('}}');
+}
+
+// Teléfono ya normalizado válido: + seguido de 8 a 15 dígitos.
+export function isValidPhone(phone: string): boolean {
+  return /^\+\d{8,15}$/.test(phone);
 }
 
 export class HttpError extends Error {

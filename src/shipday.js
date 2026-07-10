@@ -107,6 +107,16 @@ export function watiCaptureToShipday(capture, pickup = defaultPickup()) {
     err.status = 400;
     throw err;
   }
+  if (looksUnresolved(capture.telefono) || looksUnresolved(capture.direccion)) {
+    const err = new Error('Variable de WATI sin resolver en el pedido (teléfono o dirección)');
+    err.status = 400;
+    throw err;
+  }
+  if (!isValidPhone(normalizePhone(capture.telefono))) {
+    const err = new Error(`Teléfono inválido: "${normalizePhone(capture.telefono)}"`);
+    err.status = 400;
+    throw err;
+  }
   const direccion = [capture.direccion, capture.referencia].filter(Boolean).join(' — ');
   const items = Array.isArray(capture.items)
     ? capture.items.map((it) => ({
@@ -146,6 +156,17 @@ export function normalizePhone(phone) {
   // Panamá: celulares de 8 dígitos → anteponer +507
   if (/^\d{7,8}$/.test(digits)) return `+507${digits}`;
   return `+${digits}`;
+}
+
+// Detecta un valor que WATI no resolvió (@variable o {{variable}} literal).
+export function looksUnresolved(value) {
+  const s = String(value ?? '');
+  return s.startsWith('@') || s.includes('{{') || s.includes('}}');
+}
+
+// Teléfono ya normalizado válido: + seguido de 8 a 15 dígitos.
+export function isValidPhone(phone) {
+  return /^\+\d{8,15}$/.test(phone);
 }
 
 export function defaultPickup() {

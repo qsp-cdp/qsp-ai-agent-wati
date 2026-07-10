@@ -7,7 +7,7 @@
 // ATRIBUTOS del contacto en WATI, para que el agente vea en el perfil si el
 // cliente ya tiene datos de envío completos:
 //   direccion_envio · referencia_envio · maps_envio · envio_datos · envio_fecha
-import { HttpError, json, normalizePhone, resolveMapsCoords } from '../_shared/shipday.ts';
+import { HttpError, isValidPhone, json, looksUnresolved, normalizePhone, resolveMapsCoords } from '../_shared/shipday.ts';
 import { upsertContactByPhone } from '../_shared/db.ts';
 import { updateWatiAttributes } from '../_shared/watiapi.ts';
 
@@ -21,15 +21,20 @@ Deno.serve(async (req) => {
     const p = await req.json();
     const telefono = String(p.telefono ?? p.waId ?? p.wa_id ?? '').trim();
     const direccion = String(p.direccion ?? '').trim();
-    // DIAGNÓSTICO: muestra qué resolvió WATI en cada variable del body, para
-    // ver si el número llega vacío / literal / resuelto (quitar tras depurar).
-    console.log(`wati-address DIAG → waId=[${String(p.waId ?? '')}] name=[${String(p.nombre ?? '')}] telefono=[${String(p.telefono ?? '')}] direccion=[${direccion.slice(0, 30)}] keys=[${Object.keys(p).join(',')}]`);
+    // Rechaza variables que WATI no resolvió (llegaron como @x o {{x}}): así no
+    // guardamos basura ni respondemos 200 en falso (WATI tomaría la rama de éxito).
+    if (looksUnresolved(telefono) || looksUnresolved(direccion)) {
+      throw new HttpError(400, 'WATI envió una variable sin resolver (revisa la sintaxis del body del webhook)');
+    }
     if (!telefono) throw new HttpError(400, 'Falta el teléfono (telefono o waId)');
     if (!direccion) throw new HttpError(400, 'Falta la dirección');
-    const referencia = String(p.referencia ?? '').trim();
-    const maps = String(p.maps_url ?? p.maps ?? p.ubicacion ?? '').trim();
-    const nombre = String(p.nombre ?? '').trim();
+    const referencia = looksUnresolved(p.referencia) ? '' : String(p.referencia ?? '').trim();
+    const maps = looksUnresolved(p.maps_url ?? p.maps) ? '' : String(p.maps_url ?? p.maps ?? p.ubicacion ?? '').trim();
+    const nombre = looksUnresolved(p.nombre) ? '' : String(p.nombre ?? '').trim();
     const phone = normalizePhone(telefono);
+    if (!isValidPhone(phone)) {
+      throw new HttpError(400, `Teléfono inválido tras normalizar: "${phone}" (¿la variable del número no resolvió?)`);
+    }
 
     // Resuelve coordenadas: si el link es corto (maps.app.goo.gl) sigue la
     // redirección para sacar el pin exacto. Si trae lat/lng directas (ubicación
