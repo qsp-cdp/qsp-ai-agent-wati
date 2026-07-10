@@ -21,6 +21,9 @@ Deno.serve(async (req) => {
     const p = await req.json();
     const telefono = String(p.telefono ?? p.waId ?? p.wa_id ?? '').trim();
     const direccion = String(p.direccion ?? '').trim();
+    // DIAGNÓSTICO: muestra qué resolvió WATI en cada variable del body, para
+    // ver si el número llega vacío / literal / resuelto (quitar tras depurar).
+    console.log(`wati-address DIAG → waId=[${String(p.waId ?? '')}] name=[${String(p.nombre ?? '')}] telefono=[${String(p.telefono ?? '')}] direccion=[${direccion.slice(0, 30)}] keys=[${Object.keys(p).join(',')}]`);
     if (!telefono) throw new HttpError(400, 'Falta el teléfono (telefono o waId)');
     if (!direccion) throw new HttpError(400, 'Falta la dirección');
     const referencia = String(p.referencia ?? '').trim();
