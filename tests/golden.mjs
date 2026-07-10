@@ -68,6 +68,7 @@ const limpiarWhatsApp = extraerFuncion("limpiarWhatsApp");
 const frasearTarifa = extraerFuncion("frasearTarifa");
 const frasearPedido = extraerFuncion("frasearPedido");
 const limpiarHtml = extraerFuncion("limpiarHtml");
+const normalizarConsulta = extraerFuncion("normalizarConsulta");
 const RESPUESTA_NO_RESUELTA_RE = extraerConst("RESPUESTA_NO_RESUELTA_RE");
 const PROMESA_ASESOR_RE = extraerConst("PROMESA_ASESOR_RE");
 const prometeSeguimientoSinResolver = extraerFuncion("prometeSeguimientoSinResolver");
@@ -437,7 +438,7 @@ caso("v52: el handoff por keyword también trae `origen: \"keyword\"`", /origen:
 caso("v52: el fallback v23 también genera ticket (`origen: \"bot_fallback\"`)", /origen: "bot_fallback"/.test(src));
 caso("v52: los 3 inserts a `handoffs` chequean error (no fallan en silencio)", (src.match(/handoff_ticket_insert_error/g) || []).length >= 3);
 caso("v52: el motivo del ticket usa `contenido` (con fallback \"[imagen]\"), no `texto` crudo", !/motivo: `seguimiento_bot[^`]*\$\{texto\.slice/.test(src) && (src.match(/motivo: `seguimiento_bot[^`]*\$\{contenido\.slice/g) || []).length >= 2);
-caso("v52: healthcheck = v52-specs-ticket", /version: "v52-specs-ticket"/.test(src));
+caso("v52: ticket de promesa wireado (independiente de la versión del healthcheck)", /origen: "bot_promise"/.test(src) && /prometeSeguimientoSinResolver/.test(src));
 
 // revisión adversarial: especificaciones ahora avisa si el texto real era más largo que el corte (1500
 // chars) — evita un "no lo tiene" tajante cuando el dato pudo quedar después del corte.
@@ -456,6 +457,25 @@ for (const t of ["el sábado trataré de ir x allá", "puedo ir el domingo?", "p
   caso(`v52: "${t}" fuerza tool (día + intención de visitar)`, NEEDS_TOOL_RE.test(t));
 }
 caso('SYSTEM_PROMPT: regla de DÍA DE LA SEMANA (no asumir que atienden un día sin confirmar)', /DÍA DE LA SEMANA/.test(SYSTEM_PROMPT) && /si el d[ií]a que menciona es s[aá]bado, domingo o feriado/i.test(SYSTEM_PROMPT));
+
+// --- v53: normalización de dimensiones en la búsqueda (casos reales de la auditoría) --------------
+console.log("v53 búsqueda por dimensión");
+// Las queries EXACTAS que el bot corrió hoy y dieron 0 resultados (aunque el rollo existe y está en stock):
+caso('v53: "papel bond 30 pulgadas plotter" → quita "pulgadas"',
+  normalizarConsulta("rollo papel bond 30 pulgadas plotter") === "rollo papel bond 30 plotter");
+caso('v53: "36 pulgadas" → "36"', normalizarConsulta("rollo papel bond 36 pulgadas plotter") === "rollo papel bond 36 plotter");
+caso('v53: "30x150" → "30 150"', normalizarConsulta("Rollo de Papel Bond Alliance 30x150 Plotter") === "Rollo de Papel Bond Alliance 30 150 Plotter");
+caso('v53: "30 x 150" → "30 150"', normalizarConsulta("papel bond 30 x 150") === "papel bond 30 150");
+caso('v53: el símbolo 30" → 30', normalizarConsulta('papel bond 30" x 150') === "papel bond 30 150");
+// no debe alterar una consulta que ya está limpia (para que el dedup la ignore y no duplique llamadas).
+caso('v53: "papel bond 30" queda igual (no rompe lo que ya funciona)', normalizarConsulta("papel bond 30") === "papel bond 30");
+caso('v53: "tinta hp 954" queda igual', normalizarConsulta("tinta hp 954") === "tinta hp 954");
+// no debe tocar un código de modelo con x interna que NO es dimensión (letra pegada) — "x" entre DÍGITOS solo.
+caso('v53: "TN-830XL" no se parte (la x no está entre dígitos)', normalizarConsulta("toner TN-830XL") === "toner TN-830XL");
+// wiring: la normalizada se agrega como intento adicional en buscarProducto.
+caso("v53: buscarProducto agrega la consulta normalizada como reintento", /norm && norm !== consulta \? \[norm\] : \[\]/.test(src));
+caso("v53: SYSTEM_PROMPT tiene la regla de MEDIDAS/DIMENSIONES", /MEDIDAS \/ DIMENSIONES/.test(SYSTEM_PROMPT) && /NUNCA "papel bond 30 pulgadas"/.test(SYSTEM_PROMPT));
+caso("v53: healthcheck = v53-busqueda-dimensiones", /version: "v53-busqueda-dimensiones"/.test(src));
 
 // --- resumen --------------------------------------------------------------------------------------
 console.log(`\n${ok} OK, ${mal} FALLA${mal === 1 ? "" : "S"}`);

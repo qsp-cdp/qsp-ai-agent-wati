@@ -19,8 +19,26 @@ equipo humano: contesta preguntas generales, indica disponibilidad/stock y da pr
 con certeza, y calla/deriva cuando es mejor que responda un humano. Tienda:
 **quickservicepanama.com** (suministros de impresión y tecnología en Panamá).
 
-## Estado actual (2026-07-09)
-- **EN EL REPO, LISTO PARA DESPLEGAR: v52 (`v52-specs-ticket`).** De una auditoría real (conv
+## Estado actual (2026-07-10)
+- **EN EL REPO, LISTO PARA DESPLEGAR: v53 (`v53-busqueda-dimensiones`).** De la auditoría del 10-jul (foco:
+  "le mostraron una imagen/consulta y el bot dijo que no había, pero SÍ teníamos"). Resultado: **la visión
+  está sólida** (el bot identifica bien los modelos de las fotos), y **NO se perdió ninguna venta** (los
+  humanos rescataron las 3 fallas). La raíz de las fallas NO es visión ni datos ni el `body` de v52 —
+  es **FORMULACIÓN de la query**: Shopify (`suggest.json`) matchea tipo AND, y un solo término que no exista
+  en el producto tira todo a 0. El catálogo escribe la medida como el símbolo **`30"`** (nunca "pulgadas")
+  y como **`30" x 150'`** (tokens separados, nunca "30x150"). Casos reales: el bot buscó "papel bond 30
+  pulgadas plotter" y "…30x150…" → 0 resultados, **aunque el rollo *Papel Bond Alliance 30" x 150'* SÍ
+  existe y está en stock** (2 clientes distintos, misma falla). **Verificado contra la tienda real:**
+  `q=papel bond 30` encuentra el rollo; `q=…30 pulgadas…` da 0. Fix (código, como la lección del proyecto):
+  nueva función pura **`normalizarConsulta`** que quita "pulgadas"/comillas y parte "NxM" → "N M"; se agrega
+  como intento ADICIONAL en `buscarProducto` (el original va primero → costo mínimo, solo corre si el
+  original falló). No parte códigos de modelo ("TN-830XL" intacto: la x debe estar entre dígitos). + regla de
+  prompt de MEDIDAS/DIMENSIONES (buscar "papel bond 30", nunca "30 pulgadas"/"30x150"). 265 golden tests
+  (locks con las queries EXACTAS que fallaron hoy). Solo prompt + búsqueda; sin esquema. Deploy: `.\deploy.ps1
+  copilot-webhook` (sin migración). **Pendiente aparte (data, no código):** la 3ª falla (cabezal "G4110" →
+  el kit está titulado "…G4100", compatible pero no matchea) se arregla agregando "G4110/G3110/G2110" a los
+  TAGS del kit en Shopify (1 min, como v34) — no requiere deploy.
+- **EN VIVO (desplegado 10-jul, healthcheck `version:v52-specs-ticket`): v52 (`v52-specs-ticket`).** De una auditoría real (conv
   50765912382, Anaiska Córdoba): pidió una impresora con "bandeja legal y carta" → el bot hizo **10
   búsquedas fallidas** (0 resultados) porque `suggest.json` no lee la DESCRIPCIÓN del producto, solo
   título/tipo/tag/marca — y el dato SÍ estaba en la ficha. Prometió "un asesor confirma" DOS VECES y

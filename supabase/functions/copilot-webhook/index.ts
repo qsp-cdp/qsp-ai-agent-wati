@@ -581,7 +581,8 @@ BÚSQUEDA DE PRODUCTOS (cómo usar buscar_producto)
 - Convierte lo que pide el cliente en términos CONCISOS. Quita relleno ("¿venden?", "tienen", "necesito", "para") y conserva la MARCA y sobre todo el MODELO — el número/código de modelo es la señal más fuerte. Ej.: "¿venden tinta para mi Canon Pixma G2170?" → busca "tinta G2170".
 - NO INVENTES LA MARCA: si el cliente da solo un modelo sin decir la marca (ej. "140XL", "141XL", "PT-H110", "TK-8337"), busca por el MODELO SOLO; no le pongas una marca que no mencionó. Una marca equivocada hace que NO encuentres un producto que SÍ existe (caso real: la 140XL/141XL es Canon —PG-140XL/CL-141XL—, no HP). Agrega la marca únicamente si el cliente la dio o el contexto la deja clara.
 - Un mismo producto se nombra de varias formas: "Canon" ↔ línea "Pixma"; "Epson" ↔ "EcoTank"/"WorkForce"; "HP" ↔ "DeskJet/LaserJet/OfficeJet". Para "tinta para [impresora]", busca por el modelo de la impresora (la tinta suele indicar los modelos compatibles) y, si hace falta, por el modelo de la tinta.
-- Si la primera búsqueda no encuentra, REFORMULA y vuelve a llamar buscar_producto (prueba solo el número de modelo, la línea, o el modelo de la tinta) ANTES de derivar.
+- MEDIDAS / DIMENSIONES (rollos de papel, tamaños): busca con el NÚMERO solo, no con la palabra "pulgadas" ni combinando la medida. Ej.: para un rollo de 30" x 150" busca "papel bond 30" (o "papel bond 36", "albanene 30"), NUNCA "papel bond 30 pulgadas" ni "30x150" — el catálogo usa el símbolo (30") y esas palabras extra hacen que no encuentre un producto que SÍ existe.
+- Si la primera búsqueda no encuentra, REFORMULA y vuelve a llamar buscar_producto (prueba solo el número de modelo, la línea, la medida sin "pulgadas", o el modelo de la tinta) ANTES de derivar.
 - Preguntas genéricas de categoría ("¿venden impresoras Epson?", "¿manejan toner?"): busca la categoría/marca y responde sí/no con 1-2 ejemplos concretos y su precio; invita a indicar el modelo. No listes más de 2-3.
 - COMPATIBILIDAD: NO afirmes que un producto sirve para cierto equipo a menos que el resultado de buscar_producto lo indique — NI SIQUIERA como probabilidad ("suele ser la misma tinta", "debería servir"): eso también es adivinar. Si no estás seguro, dilo y deja que un asesor confirme.
 - MODELO EXACTO: usa el TÍTULO tal cual lo devuelve buscar_producto. Si el modelo que pidió el cliente NO aparece en el título del resultado, NO lo renombres ni asumas que es el mismo equipo: dilo claro (ej. "no encontré el [modelo] exacto; lo más parecido que tenemos es [título real]…") y ofrécelo como alternativa o deriva. NUNCA pongas el modelo pedido junto al precio o link de otro producto.
@@ -1010,10 +1011,27 @@ async function urlsConRef(rawUrls: string[], waId: string): Promise<string[]> {
   });
 }
 
+// v53 — normaliza la consulta para que las DIMENSIONES matcheen el catálogo. Shopify (suggest.json) hace
+// matching tipo AND: UN solo término que no aparezca en el producto tira todo a CERO. El catálogo escribe
+// la medida como el símbolo `30"` (nunca la palabra "pulgadas") y como `30" x 150'` (tokens separados,
+// nunca "30x150"). Casos reales (07-jul): el bot buscó "papel bond 30 pulgadas plotter" y "…30x150…" → 0
+// resultados, aunque el rollo *Papel Bond Alliance 30" x 150'* SÍ existe y está en stock (2 ventas que un
+// asesor tuvo que rescatar). Esta normalización quita "pulgadas"/comillas y parte "NxM" → "N M" (el "30" y
+// el "150" sueltos SÍ matchean el título). Se prueba como intento ADICIONAL; el original va primero.
+function normalizarConsulta(q: string): string {
+  return q
+    .replace(/(\d+)\s*(?:pulgadas?|["″”])/gi, "$1") // "30 pulgadas" / 30" -> 30
+    .replace(/(\d+)\s*[x×]\s*(\d+)/gi, "$1 $2")      // 30x150 / 30 x 150 -> 30 150
+    .replace(/["'″′”’]/g, " ")                       // comillas sueltas restantes
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
 async function buscarProducto(consulta: string, waId: string = "", linksTracked?: Record<string, string>): Promise<string> {
-  // Consulta libre tal cual; si no encuentra, reintenta por código de modelo y sus variantes
-  // con/sin guion. Deduplica para no repetir llamadas. (v18)
-  const intentos = [consulta, ...modelosEn(consulta).flatMap(variantesModelo)];
+  // Consulta libre tal cual; si no encuentra, reintenta por: (v53) la versión normalizada de dimensiones,
+  // y (v18) el código de modelo con/sin guion. Deduplica para no repetir llamadas.
+  const norm = normalizarConsulta(consulta);
+  const intentos = [consulta, ...(norm && norm !== consulta ? [norm] : []), ...modelosEn(consulta).flatMap(variantesModelo)];
   const vistos = new Set<string>();
   let lastErr: string | null = null;
   for (const q of intentos) {
@@ -1550,7 +1568,7 @@ Deno.serve(async (req) => {
       const diag = await inventarioSelfTest(pid);
       return Response.json({ selftest: "inventario", ...diag, ts: new Date().toISOString() });
     }
-    return Response.json({ status: "ok", function: "copilot-webhook", version: "v52-specs-ticket", mode: MODE, mode_raw: MODE_RAW, model: MODEL, llm_configured: !!anthropic, wati_send_configured: !!(WATI_API_TOKEN && WATI_API_BASE), inventario_configurado: !!(SHOPIFY_ADMIN_TOKEN && SHOPIFY_ADMIN_API_BASE), resolve_configured: !!RESOLVE_SECRET, webhook_key_es_default: WEBHOOK_KEY_ES_DEFAULT, handoff_assist_min: HANDOFF_ASSIST_MIN, handoff_cold_hours: HANDOFF_COLD_HOURS, debounce_ms: DEBOUNCE_MS, live_targets: MODE === "live" ? (LIVE_ALL ? "all" : LIVE_ALLOWLIST.length) : 0, ts: new Date().toISOString() });
+    return Response.json({ status: "ok", function: "copilot-webhook", version: "v53-busqueda-dimensiones", mode: MODE, mode_raw: MODE_RAW, model: MODEL, llm_configured: !!anthropic, wati_send_configured: !!(WATI_API_TOKEN && WATI_API_BASE), inventario_configurado: !!(SHOPIFY_ADMIN_TOKEN && SHOPIFY_ADMIN_API_BASE), resolve_configured: !!RESOLVE_SECRET, webhook_key_es_default: WEBHOOK_KEY_ES_DEFAULT, handoff_assist_min: HANDOFF_ASSIST_MIN, handoff_cold_hours: HANDOFF_COLD_HOURS, debounce_ms: DEBOUNCE_MS, live_targets: MODE === "live" ? (LIVE_ALL ? "all" : LIVE_ALLOWLIST.length) : 0, ts: new Date().toISOString() });
   }
   if (req.method !== "POST") return Response.json({ error: "method_not_allowed" }, { status: 405 });
   if (url.searchParams.get("key") !== WEBHOOK_KEY) return Response.json({ error: "forbidden" }, { status: 403 });
