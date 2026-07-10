@@ -20,7 +20,7 @@ con certeza, y calla/deriva cuando es mejor que responda un humano. Tienda:
 **quickservicepanama.com** (suministros de impresión y tecnología en Panamá).
 
 ## Estado actual (2026-07-10)
-- **EN EL REPO, LISTO PARA DESPLEGAR: v53 (`v53-busqueda-dimensiones`).** De la auditoría del 10-jul (foco:
+- **🚀 EN VIVO (desplegado 10-jul; supersede v52): v53 (`v53-busqueda-dimensiones`).** De la auditoría del 10-jul (foco:
   "le mostraron una imagen/consulta y el bot dijo que no había, pero SÍ teníamos"). Resultado: **la visión
   está sólida** (el bot identifica bien los modelos de las fotos), y **NO se perdió ninguna venta** (los
   humanos rescataron las 3 fallas). La raíz de las fallas NO es visión ni datos ni el `body` de v52 —
