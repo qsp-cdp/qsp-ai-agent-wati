@@ -50,8 +50,14 @@ con certeza, y calla/deriva cuando es mejor que responda un humano. Tienda:
      back-in-stock de Klaviyo ya pagado; el aviso WhatsApp-nativo por webhook queda para v55).
   7. **PRECIO DISTRIBUIDOR → ASESOR** (decisión de Gerencia): "precio de distribuidor/mayorista",
      "al por mayor" → `HANDOFF_RE` (política comercial, la maneja un humano).
-  305 golden tests. **Pendientes de DATA (no código):** SQL `store_facts` clave `convenio_marco` (NO
-  registrados en PanamáCompra); tags de modelos en cintas matriciales y en el kit de cabezales (G4110).
+  **Revisión adversarial pre-deploy HECHA (veredicto SAFE TO DEPLOY) — cerró sus 4 should-fixes:** "el
+  pago antes" se acotó a "antes de que" (bloqueaba "¿puedo hacer el pago antes de recoger?"); formas
+  PASIVAS/impersonales de pago completado cubiertas ("el pago fue realizado", "ya se realizó la
+  transferencia", "transferencia realizada", "acabamos de pagar"); "precio DEL distribuidor" (faltaba el
+  artículo "del"); el dedup de tickets loggea el motivo suprimido (pérdida cero). 315 golden tests.
+  **Pendientes de DATA (no código):** SQL `store_facts` clave `convenio_marco` (NO registrados en
+  PanamáCompra); tags de modelos en cintas matriciales y en el kit de cabezales (G4110); verificar que el
+  botón Klaviyo BIS aparece en una página de producto agotado real (la regla nueva lo asume).
   Deploy: `.\deploy.ps1 copilot-webhook` (sin migración).
 - **🚀 EN VIVO (desplegado 10-jul; supersede v52): v53 (`v53-busqueda-dimensiones`).** De la auditoría del 10-jul (foco:
   "le mostraron una imagen/consulta y el bot dijo que no había, pero SÍ teníamos"). Resultado: **la visión

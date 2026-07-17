@@ -707,7 +707,7 @@ const TOOLS: Anthropic.Tool[] = [{
 // un agradecimiento sin reclamo ("ya me facturaron los 3 que pedí, gracias, todo perfecto"). Se
 // reemplaza por un patrón de CONTRASTE explícito (palabra de contraste + verbo de entrega + "factur",
 // en cualquier orden) que exige la señal real del reclamo (recibí menos de lo que me facturaron).
-const HANDOFF_RE = /\b(humano|persona|asesor|agente|reclamo|queja|hablar con alguien|supervisor|quiero devolver|devolver (el|la|lo|los|las|un|una|mi|este|esta|esto|eso)|devolverl[oa]s?|devuelvan|cambiarl[oa]s?|(una|la|mi|su|esa|esta) devoluci[oó]n|(aplicar|usar|reclamar|validar|activar|hacer (v[aá]lida|efectiva)) (la |mi |su )?garant[ií]a|(mi|su) garant[ií]a|en garant[ií]a|tiene garant[ií]a|sali[oó] (mal|malo|mala|da[ñn]ad[oa]|defectuos[oa])|(lleg[oó]|vino) (mal|malo|mala|da[ñn]ad[oa]|roto|rota|defectuos[oa])|defectuos[oa]s?|me vendieron (uno|una|algo) (malo|mala|da[ñn]ad[oa]|defectuos[oa])|nota de cr[eé]dito|me factur(aron|a|[oó]) (de m[aá]s|mal|otra cantidad)|me cobr(aron|a|[oó]) de m[aá]s|factura(ci[oó]n)? (incorrecta|equivocada|mal (hecha|emitida))|(solo|nom[aá]s|pero) .{0,40}(entregaron|entreg[oó]|dieron|lleg(aron|[oó])) .{0,60}factur\w*|factur\w* .{0,60}(solo|nom[aá]s|pero) .{0,40}(entregaron|entreg[oó]|dieron|lleg(aron|[oó]))|(precios?|descuentos?) (de |para |al )?(distribuidor|mayorista|revendedor)\w*|al por mayor)\b/i;
+const HANDOFF_RE = /\b(humano|persona|asesor|agente|reclamo|queja|hablar con alguien|supervisor|quiero devolver|devolver (el|la|lo|los|las|un|una|mi|este|esta|esto|eso)|devolverl[oa]s?|devuelvan|cambiarl[oa]s?|(una|la|mi|su|esa|esta) devoluci[oó]n|(aplicar|usar|reclamar|validar|activar|hacer (v[aá]lida|efectiva)) (la |mi |su )?garant[ií]a|(mi|su) garant[ií]a|en garant[ií]a|tiene garant[ií]a|sali[oó] (mal|malo|mala|da[ñn]ad[oa]|defectuos[oa])|(lleg[oó]|vino) (mal|malo|mala|da[ñn]ad[oa]|roto|rota|defectuos[oa])|defectuos[oa]s?|me vendieron (uno|una|algo) (malo|mala|da[ñn]ad[oa]|defectuos[oa])|nota de cr[eé]dito|me factur(aron|a|[oó]) (de m[aá]s|mal|otra cantidad)|me cobr(aron|a|[oó]) de m[aá]s|factura(ci[oó]n)? (incorrecta|equivocada|mal (hecha|emitida))|(solo|nom[aá]s|pero) .{0,40}(entregaron|entreg[oó]|dieron|lleg(aron|[oó])) .{0,60}factur\w*|factur\w* .{0,60}(solo|nom[aá]s|pero) .{0,40}(entregaron|entreg[oó]|dieron|lleg(aron|[oó]))|(precios?|descuentos?) (de |del |de la |para |al )?(distribuidor|mayorista|revendedor)\w*|al por mayor)\b/i;
 // v54 (decisión de Gerencia, auditoría 17-jul): precio de DISTRIBUIDOR/mayorista/reventa lo atiende un
 // humano (política comercial, no precio de lista) → HANDOFF_RE lo deriva con despedida cortés. Casos
 // reales: "¿en la página ya es Precio de Distribuidor?", clientes de Zona Libre pidiendo mayoreo.
@@ -761,7 +761,8 @@ async function insertarTicketPromesa(convId: string, waId: string, motivo: strin
     const desde = new Date(Date.now() - 24 * 3600 * 1000).toISOString();
     const { data: prev } = await sb.from("handoffs").select("id").eq("conversation_id", convId)
       .eq("resuelto", false).in("origen", ["bot_promise", "bot_fallback"]).gte("created_at", desde).limit(1);
-    if (prev && prev.length) { await log("promesa_dedup", true, { waId }); return; }
+    // (revisión adversarial v54: el motivo suprimido se loggea — el dedup no pierde la pregunta, solo el duplicado en la cola.)
+    if (prev && prev.length) { await log("promesa_dedup", true, { waId, motivo: motivo.slice(0, 150) }); return; }
     const { error } = await sb.from("handoffs").insert({ conversation_id: convId, motivo, origen });
     if (error) await log("handoff_ticket_insert_error", false, { waId, error: error.message?.slice(0, 200) });
     else await log("promesa_seguimiento", true, { waId, motivo: motivo.slice(0, 150) });
@@ -784,7 +785,13 @@ const INTERRUPT_RE = new RegExp([
   // real) + urgencia de transacción en curso ("¿demoran para la transacción? me urge") + "hacer el pago
   // antes de que venza" (planificando el pago de una cotización activa). Ninguno toca preguntas de método.
   "le adjunto", "adjunto (el |la |mi )?(pago|comprobante|transferencia|recibo)", "comprobante", "ya (le |te )?(hice|mand[eé]|envi[eé]|pagu[eé])", "dep[oó]sit",
-  "pago (ya )?(est[aá] |qued[oó] )?(realizado|hecho|efectuado|listo|enviado)", "demora\\w* .{0,20}transacci[oó]n", "(hacer|realizar|efectuar) el pago antes",
+  // (revisión adversarial v54: "el pago antes" a secas bloqueaba preguntas de método — "¿puedo hacer el
+  // pago antes de recoger?" — se acota a "antes de que" [el caso real: "antes de que venza el plazo"];
+  // + formas PASIVAS/impersonales que escapaban: "el pago fue realizado", "ya se realizó la
+  // transferencia", "transferencia realizada", "acabamos de pagar".)
+  "pago (ya )?(fue |est[aá] |qued[oó] )?(realizado|hecho|efectuado|listo|enviado)", "transferencia (ya )?(fue |qued[oó] )?(realizada|hecha|enviada|lista)",
+  "se (le |les )?(hizo|realiz[oó]|envi[oó]|mand[oó]|deposit[oó]) (ya )?(el |la )?(pago|transferencia|dep[oó]sito|comprobante)",
+  "demora\\w* .{0,20}transacci[oó]n", "(hacer|realizar|efectuar) el pago antes de que",
   "pagar\\s+(ya|ahora|de una|hoy|mañana)", // intención de pagar YA (no "pagar con tarjeta/yappy" — eso no lleva ya/ahora/hoy)
   // v50 (revisión adversarial): pago COMPLETADO sin "ya" — "hice/realicé el pago", "acabo de pagar",
   // "te mandé el pago", "mi pago". Cruzaban NEEDS_TOOL_RE (\bpago/pagar) pero NO INTERRUPT → con la
@@ -794,7 +801,7 @@ const INTERRUPT_RE = new RegExp([
   // v52 (auditoría real): formas en PLURAL ("realizamos/hicimos/enviamos la transferencia") escapaban —
   // el singular ya estaba cubierto arriba, pero "nosotros" (empresa/oficina que compra) quedaba fuera.
   "(hicimos|mandamos|enviamos|pagamos|realizamos|depositamos|transferimos) (le |les |ya |el |la |los |las |mi |su |nuestro |nuestra )*(pago|transferencia|dep[oó]sito|comprobante)",
-  "acabo de (pagar|transferir|depositar)", "\\b(mi|su) pago\\b",
+  "acab(o|amos) de (pagar|transferir|depositar)", "\\b(mi|su) pago\\b",
   "\\btransfiero\\b", "le transfiero", "a qu[eé] cuenta", "n[uú]mero de cuenta", "a d[oó]nde (le |te )?(pago|deposito|transfiero|consigno)", // a dónde pago/transfiero (el bot NUNCA da la cuenta)
   // entrega/retiro EN CURSO
   "mensajer[oa]", "el chico", "va en camino", "que retir", "va a retirar", "pas(o|a|ar[eé]) (el |la )?(lunes|martes|mi[eé]rcoles|jueves|viernes|s[aá]bado|domingo|mañana|hoy)",

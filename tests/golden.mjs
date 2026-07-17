@@ -487,14 +487,20 @@ for (const t of ["Adjunto pago realizado", "adjunto el pago", "el pago ya está 
   "Hola demoran para la transaccion es que me urge", "quiero hacer el pago antes de que venza el plazo"]) {
   caso(`v54: "${t}" → abstención`, INTERRUPT_RE.test(t));
 }
-// las preguntas de MÉTODO siguen respondibles:
-for (const t of ["¿cómo pago?", "¿cómo hago el pago?", "¿aceptan yappy?", "¿qué formas de pago tienen?", "quiero pagar con tarjeta"]) {
+// revisión adversarial v54 — formas PASIVAS/impersonales de pago completado también abstienen:
+for (const t of ["el pago fue realizado esta mañana", "ya se realizó la transferencia", "ya se hizo el pago",
+  "transferencia realizada", "acabamos de pagar", "quiero hacer el pago antes de que venza el plazo"]) {
+  caso(`v54: "${t}" → abstención (pasiva/impersonal)`, INTERRUPT_RE.test(t));
+}
+// las preguntas de MÉTODO siguen respondibles (incl. los FP que la revisión adversarial encontró y cerró):
+for (const t of ["¿cómo pago?", "¿cómo hago el pago?", "¿aceptan yappy?", "¿qué formas de pago tienen?", "quiero pagar con tarjeta",
+  "¿puedo hacer el pago antes de recoger el producto?", "¿se puede hacer el pago antes por la web?"]) {
   caso(`v54: "${t}" NO → abstención`, !INTERRUPT_RE.test(t));
 }
 
 console.log("v54 precio distribuidor → asesor");
 for (const t of ["consulta si en la pagina ya es Precio de Distribuidor?", "¿manejan precio de distribuidor?",
-  "precios para mayoristas?", "¿venden al por mayor?"]) {
+  "precios para mayoristas?", "¿venden al por mayor?", "¿me dan el precio del distribuidor?"]) {
   caso(`v54: "${t}" → HANDOFF_RE`, HANDOFF_RE.test(t));
 }
 caso('v54: "precio del toner" NO → handoff', !HANDOFF_RE.test("precio del toner"));
@@ -522,6 +528,7 @@ caso('v54: "Deseo saber cuando llegan?" NO es trivial', !MOTIVO_TRIVIAL_RE.test(
 // dedup + wiring en el source real: helper definido y usado en los 3 caminos (normal, asistencia, fallback).
 caso("v54: insertarTicketPromesa wireado en los 3 caminos", (src.match(/insertarTicketPromesa\(/g) || []).length >= 4);
 caso("v54: dedup de tickets presente (promesa_dedup)", /promesa_dedup/.test(src) && /\.eq\("resuelto", false\)\.in\("origen", \["bot_promise", "bot_fallback"\]\)/.test(src));
+caso("v54: el dedup loggea el motivo suprimido (pérdida cero)", /promesa_dedup", true, \{ waId, motivo/.test(src));
 
 console.log("v54 telemetría de inventario + prompt");
 caso("v54: inventarioShopify loggea fallos (inventario_fallo)", (src.match(/inventario_fallo/g) || []).length >= 3);
