@@ -58,16 +58,44 @@ export async function sendWatiTemplateMessage(
   if (!cfg) throw new Error('Faltan WATI_API_BASE / WATI_API_TOKEN');
   if (!templateName) throw new Error('Falta template_name');
   const number = String(phone).replace(/\D/g, '');
-  const res = await fetch(`${cfg.base}/api/v1/sendTemplateMessage/${encodeURIComponent(number)}`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${cfg.token}` },
-    body: JSON.stringify({
-      template_name: templateName,
-      broadcast_name: broadcastName || templateName,
-      parameters,
-    }),
-    signal: AbortSignal.timeout(10000),
-  });
-  if (!res.ok) throw new Error(`WATI sendTemplate respondió ${res.status}: ${await res.text()}`);
-  return res.json();
+  const headers = { 'Content-Type': 'application/json', Authorization: `Bearer ${cfg.token}` };
+  const bcast = broadcastName || templateName;
+
+  // WATI responde HTTP 200 con {result:false, info:"..."} en fallos de negocio (plantilla no aprobada,
+  // número inválido…). Hay que tratarlo como error → NO se marca reengaged y se reintenta la próxima corrida.
+  const okOrThrow = async (res: Response, quien: string) => {
+    const data = await res.json().catch(() => ({}));
+    if (data && data.result === false) {
+      throw new Error(`WATI ${quien} result=false: ${data.info ?? JSON.stringify(data).slice(0, 200)}`);
+    }
+    return data;
+  };
+
+  // Endpoint 1 — plantilla ÚNICA: OJO, el número va como QUERY param `whatsappNumber`, NO en el path
+  // (a diferencia de sendSessionMessage, que sí lo lleva en el path). Ponerlo en el path da 403 de gateway.
+  const single = await fetch(
+    `${cfg.base}/api/v1/sendTemplateMessage?whatsappNumber=${encodeURIComponent(number)}`,
+    { method: 'POST', headers,
+      body: JSON.stringify({ template_name: templateName, broadcast_name: bcast, parameters }),
+      signal: AbortSignal.timeout(10000) },
+  );
+  if (single.ok) return await okOrThrow(single, 'sendTemplateMessage');
+
+  // 403/404 → algunas cuentas exponen SOLO el endpoint BULK. Un 403/404 significa que WATI rechazó la ruta
+  // ANTES de procesar (no envió nada), así que reintentar por bulk no puede duplicar el mensaje.
+  if (single.status === 403 || single.status === 404) {
+    const bulk = await fetch(`${cfg.base}/api/v1/sendTemplateMessages`, {
+      method: 'POST', headers,
+      body: JSON.stringify({
+        template_name: templateName,
+        broadcast_name: bcast,
+        receivers: [{ whatsappNumber: number, customParams: parameters }],
+      }),
+      signal: AbortSignal.timeout(10000),
+    });
+    if (bulk.ok) return await okOrThrow(bulk, 'sendTemplateMessages');
+    throw new Error(`WATI sendTemplate ${single.status} + sendTemplates ${bulk.status}: ${(await bulk.text()).slice(0, 200)}`);
+  }
+
+  throw new Error(`WATI sendTemplate respondió ${single.status}: ${(await single.text()).slice(0, 200)}`);
 }

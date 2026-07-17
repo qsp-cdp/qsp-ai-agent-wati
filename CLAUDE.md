@@ -183,10 +183,17 @@ con certeza, y calla/deriva cuando es mejor que responda un humano. Tienda:
   anti wall-limit. **ESTADO OPERATIVO (09-jul):** migraciones APLICADAS y verificadas (1,1,1,1); función
   DESPLEGADA; plantilla **`reenganche_conversacion` APROBADA por Meta** (⚠️ reclasificada UTILITY→MARKETING,
   aceptable — ver `docs/reengage-cron.md`); **cron programado** (`reengage-lunes-9am-pa`, lunes 14:00 UTC);
-  RPC probado contra PROD: devolvió 1 candidato real. **PENDIENTE para activar:** rotar `REENGAGE_KEY` (la
-  1ª quedó expuesta en chat → generar nueva + re-correr `cron.schedule` + secret), setear
-  `WATI_REENGAGE_TEMPLATE=reenganche_conversacion`, dry-run `?key=…&force=1` (ver `reengage_dryrun` en
-  job_log) y recién ahí `REENGAGE_MODE=live` (hoy default shadow = no envía).
+  RPC probado contra PROD: devolvió 1 candidato real. **ACTIVACIÓN (17-jul):** `REENGAGE_KEY` rotada (la 1ª
+  quedó expuesta en chat) + `cron.schedule` re-corrido con la nueva (jobid 4, `0 14 * * 1`); secretos
+  `WATI_REENGAGE_TEMPLATE=reenganche_conversacion` y `REENGAGE_MODE=live` seteados; dry-run shadow OK
+  (`reengage_dryrun`, 1 candidato real). **BUG HALLADO EN EL 1er ENVÍO LIVE (17-jul):** `sendWatiTemplateMessage`
+  copiaba el shape de `sendSessionMessage` (número en el PATH) pero el endpoint de PLANTILLA de WATI lleva el
+  número como QUERY param (`?whatsappNumber=`) → gateway 403 con body vacío (`reengage_fallo`, `enviados:0`).
+  **FIX:** `_shared/watiapi.ts` usa `sendTemplateMessage?whatsappNumber=…` y, si eso da 403/404, cae al endpoint
+  BULK `sendTemplateMessages` (`receivers[].customParams`) — el 403/404 rechaza ANTES de procesar, así que el
+  fallback no duplica; además ahora detecta el `{result:false}` de WATI (200 con fallo de negocio) para no marcar
+  reengaged un envío que no salió. **PENDIENTE:** `git pull` + `.\deploy.ps1 reengage-expired` + re-disparar
+  `?key=…&force=1` → confirmar `reengage_run` con `enviados:1` y que la plantilla llegue al chat.
   Puesta en marcha + SQL del cron + plantilla: `docs/reengage-cron.md`.
 - **EN VIVO (incluido en el deploy del 09-jul): v50 (`v50-asistencia-preventa`).** Decisión de Gerencia sobre el
   ciclo de vida del handoff: tras 15 min sin el asesor, el bot ya NO se limita a info básica de tienda —
