@@ -20,7 +20,15 @@ con certeza, y calla/deriva cuando es mejor que responda un humano. Tienda:
 **quickservicepanama.com** (suministros de impresión y tecnología en Panamá).
 
 ## Estado actual (2026-07-17)
-- **EN EL REPO, LISTO PARA DESPLEGAR: v55 (`v55-ranking-titulo`).** Regresión REAL detectada en vivo el
+- **EN EL REPO, LISTO PARA DESPLEGAR: v56 (`v56-tienda-directa`).** Caso real del 17-jul: el bot presentó
+  la tienda como "punto de retiro" y dijo "al comprar en línea, solo elige Recoger en tienda al pagar" —
+  como si hubiera que comprar por la web primero. Regla nueva de prompt TIENDA FÍSICA — COMPRA DIRECTA:
+  el cliente puede LLEGAR Y COMPRAR directo (ubicación/horario de info_tienda); NUNCA presentar la tienda
+  como solo punto de retiro; "Recoger en tienda" del checkout web = ALTERNATIVA opcional, no requisito.
+  Solo prompt (reescribe el caché v35, re-warm). 328 golden tests. **Revisar también `store_facts`** (el
+  fraseo "punto de retiro / al comprar en línea" puede venir del dato — query abajo). Deploy:
+  `.\deploy.ps1 copilot-webhook`.
+- **🚀 EN VIVO (desplegado 17-jul; supersede v54): v55 (`v55-ranking-titulo`).** Regresión REAL detectada en vivo el
   mismo 17-jul (horas después de desplegar v54): "toner TN830XL" — **el caso insignia validado de v18** —
   volvió a fallar. Causa: v52 agregó `body` a la búsqueda → el 1er intento ("toner TN830XL") ya no daba 0
   sino que matcheaba la ficha de la IMPRESORA HL-L2460DW (que menciona el tóner como consumible) → la

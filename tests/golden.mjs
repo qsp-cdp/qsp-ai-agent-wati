@@ -558,6 +558,16 @@ caso("v55: fallback enriquecido tras la escalera (comportamiento pre-v55 preserv
   /if \(!fallback\) fallback = top;/.test(src) && /return await enriquecer\(fallback\)/.test(src));
 caso("v55: el hit directo usa el mismo enriquecedor", /return await enriquecer\(top\)/.test(src));
 
+// --- v56: tienda física = compra directa (no solo punto de retiro) --------------------------------
+console.log("v56 tienda física compra directa");
+// Caso real (17-jul): el bot presentó la tienda como "punto de retiro" y dijo "al comprar en línea,
+// elige Recoger en tienda" — como si hubiera que comprar por la web primero. La tienda es física y
+// se puede llegar a comprar directo; el retiro del checkout es OPCIONAL.
+caso("v56: SYSTEM_PROMPT tiene la regla TIENDA FÍSICA — COMPRA DIRECTA", /TIENDA FÍSICA — COMPRA DIRECTA/.test(SYSTEM_PROMPT));
+caso("v56: prohíbe presentar la tienda como solo punto de retiro", /NUNCA presentes la tienda como "solo un punto de retiro"/.test(SYSTEM_PROMPT));
+caso('v56: "Recoger en tienda" es opcional, no requisito', /menci[oó]nala como opcional, no como requisito/.test(SYSTEM_PROMPT));
+caso("v56: puede llegar y comprar sin compra web previa", /LLEGAR Y COMPRAR directamente/.test(SYSTEM_PROMPT) && /sin pedido previo ni compra por la web/.test(SYSTEM_PROMPT));
+
 // --- resumen --------------------------------------------------------------------------------------
 console.log(`\n${ok} OK, ${mal} FALLA${mal === 1 ? "" : "S"}`);
 if (mal > 0) process.exit(1);
