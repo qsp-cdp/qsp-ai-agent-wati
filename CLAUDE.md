@@ -25,9 +25,11 @@ con certeza, y calla/deriva cuando es mejor que responda un humano. Tienda:
   como si hubiera que comprar por la web primero. Regla nueva de prompt TIENDA FÍSICA — COMPRA DIRECTA:
   el cliente puede LLEGAR Y COMPRAR directo (ubicación/horario de info_tienda); NUNCA presentar la tienda
   como solo punto de retiro; "Recoger en tienda" del checkout web = ALTERNATIVA opcional, no requisito.
-  Solo prompt (reescribe el caché v35, re-warm). 328 golden tests. **Revisar también `store_facts`** (el
-  fraseo "punto de retiro / al comprar en línea" puede venir del dato — query abajo). Deploy:
-  `.\deploy.ps1 copilot-webhook`.
+  Solo prompt (reescribe el caché v35, re-warm). 328 golden tests. **CONFIRMADO: el fraseo venía del
+  DATO** — `store_facts.recoger_en_tienda` decía "Elige Recoger en tienda al pagar y retira en…"; se
+  entregaron 2 UPDATEs de data (recoger_en_tienda reescrito como tienda física de compra directa +
+  metodos_pago ampliado con los métodos EN TIENDA confirmados por Gerencia: Visa, Mastercard, Clave,
+  Yappy y transferencia — SIN efectivo). Deploy: `.\deploy.ps1 copilot-webhook` + los 2 SQL.
 - **🚀 EN VIVO (desplegado 17-jul; supersede v54): v55 (`v55-ranking-titulo`).** Regresión REAL detectada en vivo el
   mismo 17-jul (horas después de desplegar v54): "toner TN830XL" — **el caso insignia validado de v18** —
   volvió a fallar. Causa: v52 agregó `body` a la búsqueda → el 1er intento ("toner TN830XL") ya no daba 0
