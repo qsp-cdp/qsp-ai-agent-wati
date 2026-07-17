@@ -20,6 +20,18 @@ con certeza, y calla/deriva cuando es mejor que responda un humano. Tienda:
 **quickservicepanama.com** (suministros de impresión y tecnología en Panamá).
 
 ## Estado actual (2026-07-17)
+- **EN EL REPO, LISTO PARA DESPLEGAR: v55 (`v55-ranking-titulo`).** Regresión REAL detectada en vivo el
+  mismo 17-jul (horas después de desplegar v54): "toner TN830XL" — **el caso insignia validado de v18** —
+  volvió a fallar. Causa: v52 agregó `body` a la búsqueda → el 1er intento ("toner TN830XL") ya no daba 0
+  sino que matcheaba la ficha de la IMPRESORA HL-L2460DW (que menciona el tóner como consumible) → la
+  escalera v18 se detenía en ese hit tangencial y NUNCA llegaba al intento "TN-830XL" (con guion) que
+  encuentra el tóner real (verificado: el producto SÍ está publicado). Fix quirúrgico: nueva función pura
+  **`algunTituloConCodigo`** (normaliza guiones/espacios en ambos lados) — si la consulta trae códigos de
+  modelo, un intento solo "gana" si algún TÍTULO contiene el código; si no, queda de FALLBACK y la escalera
+  sigue. Si ningún intento matchea por título, se devuelve el fallback (= comportamiento pre-v55, protege
+  los compatibles hallados por tag cuyo título no lleva el código). El enriquecimiento (ITBMS/stock/
+  tracking/specs) se refactorizó a una función interna `enriquecer` compartida. 324 golden tests (locks con
+  los títulos reales de la impresora y el tóner). Sin esquema. Deploy: `.\deploy.ps1 copilot-webhook`.
 - **🚀 EN VIVO (desplegado 17-jul, healthcheck `version:v54-telemetria-intake`; supersede v53): v54 (`v54-telemetria-intake`).** De la auditoría semanal del 17-jul
   (semana completa de v53 con ~1.850 respuestas) + decisiones de Gerencia. 7 fixes, sin esquema:
   1. **TELEMETRÍA DE INVENTARIO** — el token de Shopify murió DOS veces (01-jul y ~10-jul) y ambas nos

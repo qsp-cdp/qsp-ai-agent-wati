@@ -72,6 +72,7 @@ const normalizarConsulta = extraerFuncion("normalizarConsulta");
 const MOTIVO_TRIVIAL_RE = extraerConst("MOTIVO_TRIVIAL_RE");
 const motivoTicket = extraerFuncion("motivoTicket");
 const juntarModelosEspaciados = extraerFuncion("juntarModelosEspaciados");
+const algunTituloConCodigo = extraerFuncion("algunTituloConCodigo");
 const RESPUESTA_NO_RESUELTA_RE = extraerConst("RESPUESTA_NO_RESUELTA_RE");
 const PROMESA_ASESOR_RE = extraerConst("PROMESA_ASESOR_RE");
 const prometeSeguimientoSinResolver = extraerFuncion("prometeSeguimientoSinResolver");
@@ -535,6 +536,27 @@ caso("v54: inventarioShopify loggea fallos (inventario_fallo)", (src.match(/inve
 caso("v54: distingue token muerto (token_401_403)", /token_401_403/.test(src));
 caso("v54: SYSTEM_PROMPT tiene CONSUMIBLE SIN MODELO (intake primero)", /CONSUMIBLE SIN MODELO/.test(SYSTEM_PROMPT) && /PREGUNTA el modelo/.test(SYSTEM_PROMPT));
 caso("v54: SYSTEM_PROMPT ofrece el botón de aviso cuando no hay stock", /AVISO AUTOMÁTICO/.test(SYSTEM_PROMPT) && /Av[ií]same cuando est[eé] disponible/.test(SYSTEM_PROMPT));
+
+// --- v55: ranking por título (regresión TN-830XL del 17-jul) --------------------------------------
+console.log("v55 ranking por título");
+// El caso REAL: "toner TN830XL" → v52 (body) hacía que el 1er intento matcheara la IMPRESORA HL-L2460DW
+// (su ficha menciona el tóner) y la escalera se detenía ahí, sin llegar al intento "TN-830XL" que
+// encuentra el tóner. Con v55, un hit sin el código en NINGÚN título no corta la escalera.
+const CODS_TN = modelosEn("toner TN830XL");
+caso('v55: modelosEn("toner TN830XL") extrae el código', CODS_TN.includes("TN830XL"));
+caso("v55: título de la IMPRESORA no matchea el código (hit tangencial)",
+  !algunTituloConCodigo(["Impresora Multifuncional Blanco y Negro Brother HL-L2460DW | 36 ppm"], CODS_TN));
+caso("v55: título del TÓNER sí matchea (con guion vs sin guion)",
+  algunTituloConCodigo(["Toner Brother TN-830XL | DCP-L2640DW | 3000 páginas"], CODS_TN));
+caso("v55: normaliza en ambas direcciones (código con guion vs título pegado)",
+  algunTituloConCodigo(["Tinta Canon PFI107M para imagePROGRAF IPF785"], ["PFI-107M"]));
+caso("v55: lista de títulos vacía → false (no corta nada)", !algunTituloConCodigo([], CODS_TN));
+caso("v55: título null tolerado", !algunTituloConCodigo([null], CODS_TN));
+// wiring en el source real: el gate de título + el fallback que preserva el comportamiento pre-v55.
+caso("v55: gate de título en la escalera", /if \(codigos\.length && !algunTituloConCodigo\(top\.map/.test(src));
+caso("v55: fallback enriquecido tras la escalera (comportamiento pre-v55 preservado)",
+  /if \(!fallback\) fallback = top;/.test(src) && /return await enriquecer\(fallback\)/.test(src));
+caso("v55: el hit directo usa el mismo enriquecedor", /return await enriquecer\(top\)/.test(src));
 
 // --- resumen --------------------------------------------------------------------------------------
 console.log(`\n${ok} OK, ${mal} FALLA${mal === 1 ? "" : "S"}`);

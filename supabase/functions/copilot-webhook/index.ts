@@ -1106,14 +1106,30 @@ function juntarModelosEspaciados(q: string): string {
     NO_MODELO.has(letras.toLowerCase()) ? m : `${letras}${digitos}`);
 }
 
+// v55 — ¿algún TÍTULO contiene alguno de los códigos buscados? (normaliza guiones/espacios en ambos
+// lados: "TN830XL" matchea el título "Tóner Brother TN-830XL"). Regresión real que esto cierra: v52
+// agregó `body` a la búsqueda → "toner TN830XL" ya no daba 0 (matcheaba la ficha de la IMPRESORA
+// HL-L2460DW, que menciona el tóner como consumible) → la escalera v18 se detenía en ese primer hit
+// tangencial y NUNCA llegaba al intento "TN-830XL" (con guion) que encuentra el tóner real — el caso
+// insignia validado de v18 volvió a fallar el 17-jul. Con esto, un intento solo "gana" de una si algún
+// título trae el código; si no, queda como FALLBACK y la escalera sigue probando variantes.
+function algunTituloConCodigo(titulos: any[], codigos: any[]): boolean {
+  const norm = (s: any) => String(s ?? "").replace(/[-\s]/g, "").toLowerCase();
+  return titulos.some((t) => codigos.some((c) => norm(c) && norm(t).includes(norm(c))));
+}
+
 async function buscarProducto(consulta: string, waId: string = "", linksTracked?: Record<string, string>): Promise<string> {
   // Consulta libre tal cual; si no encuentra, reintenta por: (v53) la versión normalizada de dimensiones,
   // (v18) el código de modelo con/sin guion, y (v54) los modelos espaciados JUNTADOS. Deduplica.
+  // v55: si la consulta trae códigos de modelo, un resultado sin el código en NINGÚN título no corta la
+  // escalera (queda de fallback) — ver algunTituloConCodigo.
   const norm = normalizarConsulta(consulta);
   const junta = juntarModelosEspaciados(consulta);
-  const intentos = [consulta, ...(norm && norm !== consulta ? [norm] : []), ...modelosEn(consulta).flatMap(variantesModelo), ...(junta !== consulta ? [junta] : [])];
+  const codigos = modelosEn(consulta);
+  const intentos = [consulta, ...(norm && norm !== consulta ? [norm] : []), ...codigos.flatMap(variantesModelo), ...(junta !== consulta ? [junta] : [])];
   const vistos = new Set<string>();
   let lastErr: string | null = null;
+  let fallback: any[] | null = null; // primer resultado no-vacío SIN match de título (la consulta más precisa)
   for (const q of intentos) {
     const k = q.trim().toLowerCase();
     if (!k || vistos.has(k)) continue;
@@ -1121,41 +1137,57 @@ async function buscarProducto(consulta: string, waId: string = "", linksTracked?
     try {
       const prods = await suggestShopify(q);
       if (prods.length) {
-        const top = prods.slice(0, 5);
-        // v21: enriquece con ITBMS (cálculo en código) y stock real (Shopify Admin, best-effort).
-        const inv = await inventarioShopify(top.map((p) => p.id).filter(Boolean));
-        // v28: tracking — URL apex + UTMs + ref_code (guarda el mapeo para el stitch WhatsApp→web).
-        const urls = await urlsConRef(top.map((p) => p.url), waId);
-        // v29: registra handle → URL con tracking, para re-aplicarla si el modelo "limpia" el link.
-        if (linksTracked) top.forEach((p, i) => { const h = handleDeUrl(p.url); if (h) linksTracked[h.toLowerCase()] = urls[i]; });
-        const enriquecidos = top.map((p, i) => {
-          const precio = conItbms(p.precio_usd);
-          const cant = inv[String(p.id ?? "").replace(/\D/g, "")];
-          // v52: especificaciones = texto real de la ficha (limpio de HTML), truncado a 1500 chars —
-          // largo suficiente para alcanzar specs que la marketing copy entierra a mitad de la
-          // descripción (caso real: "bandeja tamaño carta o legal" del Canon MF289dw aparece ~carácter
-          // 1200). El modelo SOLO puede citar lo que esté aquí (regla de oro); si no viene, no inventa.
-          // v52 (revisión adversarial): el corte se marca — sin esto, el modelo no distingue "la ficha
-          // no lo menciona" de "la ficha es más larga que lo que vi" y podría decir un "no lo tiene"
-          // tajante cuando en realidad el dato pudo quedar después del corte.
-          const specsLimpias = p.descripcion_html ? limpiarHtml(p.descripcion_html) : "";
-          const specs = specsLimpias.slice(0, 1500);
-          return {
-            titulo: p.titulo,
-            precio_usd: precio.precio_usd,
-            itbms_7pct: precio.itbms_7pct,
-            total_con_itbms: precio.total_con_itbms,
-            stock: stockTexto(p.disponible, cant),
-            marca: p.marca,
-            tipo: p.tipo,
-            url: urls[i],
-            especificaciones: specs || undefined,
-            especificaciones_truncada: specsLimpias.length > 1500 || undefined,
-          };
-        });
-        return JSON.stringify(enriquecidos);
+        let top = prods.slice(0, 5);
+        if (codigos.length && !algunTituloConCodigo(top.map((p) => p.titulo), codigos)) {
+          // Hit tangencial (p.ej. una impresora cuya FICHA menciona el código): no cortar la escalera.
+          if (!fallback) fallback = top;
+          continue;
+        }
+        return await enriquecer(top);
       }
     } catch (e) { lastErr = String(e).slice(0, 120); }
+  }
+  // v55: ningún intento tuvo el código en un título → devolver el primer hit tangencial tal como antes
+  // de v55 (puede ser un producto compatible legítimo cuyo título no lleva el código, p.ej. hallado por tag).
+  if (fallback) {
+    try { return await enriquecer(fallback); } catch (e) { lastErr = String(e).slice(0, 120); }
+  }
+
+  // Enriquecimiento (v21 ITBMS + stock real; v28/v29 tracking; v52 especificaciones) — compartido por el
+  // hit directo y el fallback v55.
+  async function enriquecer(top: any[]): Promise<string> {
+    // v21: enriquece con ITBMS (cálculo en código) y stock real (Shopify Admin, best-effort).
+    const inv = await inventarioShopify(top.map((p) => p.id).filter(Boolean));
+    // v28: tracking — URL apex + UTMs + ref_code (guarda el mapeo para el stitch WhatsApp→web).
+    const urls = await urlsConRef(top.map((p) => p.url), waId);
+    // v29: registra handle → URL con tracking, para re-aplicarla si el modelo "limpia" el link.
+    if (linksTracked) top.forEach((p, i) => { const h = handleDeUrl(p.url); if (h) linksTracked[h.toLowerCase()] = urls[i]; });
+    const enriquecidos = top.map((p, i) => {
+      const precio = conItbms(p.precio_usd);
+      const cant = inv[String(p.id ?? "").replace(/\D/g, "")];
+      // v52: especificaciones = texto real de la ficha (limpio de HTML), truncado a 1500 chars —
+      // largo suficiente para alcanzar specs que la marketing copy entierra a mitad de la
+      // descripción (caso real: "bandeja tamaño carta o legal" del Canon MF289dw aparece ~carácter
+      // 1200). El modelo SOLO puede citar lo que esté aquí (regla de oro); si no viene, no inventa.
+      // v52 (revisión adversarial): el corte se marca — sin esto, el modelo no distingue "la ficha
+      // no lo menciona" de "la ficha es más larga que lo que vi" y podría decir un "no lo tiene"
+      // tajante cuando en realidad el dato pudo quedar después del corte.
+      const specsLimpias = p.descripcion_html ? limpiarHtml(p.descripcion_html) : "";
+      const specs = specsLimpias.slice(0, 1500);
+      return {
+        titulo: p.titulo,
+        precio_usd: precio.precio_usd,
+        itbms_7pct: precio.itbms_7pct,
+        total_con_itbms: precio.total_con_itbms,
+        stock: stockTexto(p.disponible, cant),
+        marca: p.marca,
+        tipo: p.tipo,
+        url: urls[i],
+        especificaciones: specs || undefined,
+        especificaciones_truncada: specsLimpias.length > 1500 || undefined,
+      };
+    });
+    return JSON.stringify(enriquecidos);
   }
   if (lastErr) return JSON.stringify({ error: lastErr });
   return JSON.stringify({ resultado: "sin coincidencias en el catálogo" });
@@ -1648,7 +1680,7 @@ Deno.serve(async (req) => {
       const diag = await inventarioSelfTest(pid);
       return Response.json({ selftest: "inventario", ...diag, ts: new Date().toISOString() });
     }
-    return Response.json({ status: "ok", function: "copilot-webhook", version: "v54-telemetria-intake", mode: MODE, mode_raw: MODE_RAW, model: MODEL, llm_configured: !!anthropic, wati_send_configured: !!(WATI_API_TOKEN && WATI_API_BASE), inventario_configurado: !!(SHOPIFY_ADMIN_TOKEN && SHOPIFY_ADMIN_API_BASE), resolve_configured: !!RESOLVE_SECRET, webhook_key_es_default: WEBHOOK_KEY_ES_DEFAULT, handoff_assist_min: HANDOFF_ASSIST_MIN, handoff_cold_hours: HANDOFF_COLD_HOURS, debounce_ms: DEBOUNCE_MS, live_targets: MODE === "live" ? (LIVE_ALL ? "all" : LIVE_ALLOWLIST.length) : 0, ts: new Date().toISOString() });
+    return Response.json({ status: "ok", function: "copilot-webhook", version: "v55-ranking-titulo", mode: MODE, mode_raw: MODE_RAW, model: MODEL, llm_configured: !!anthropic, wati_send_configured: !!(WATI_API_TOKEN && WATI_API_BASE), inventario_configurado: !!(SHOPIFY_ADMIN_TOKEN && SHOPIFY_ADMIN_API_BASE), resolve_configured: !!RESOLVE_SECRET, webhook_key_es_default: WEBHOOK_KEY_ES_DEFAULT, handoff_assist_min: HANDOFF_ASSIST_MIN, handoff_cold_hours: HANDOFF_COLD_HOURS, debounce_ms: DEBOUNCE_MS, live_targets: MODE === "live" ? (LIVE_ALL ? "all" : LIVE_ALLOWLIST.length) : 0, ts: new Date().toISOString() });
   }
   if (req.method !== "POST") return Response.json({ error: "method_not_allowed" }, { status: 405 });
   if (url.searchParams.get("key") !== WEBHOOK_KEY) return Response.json({ error: "forbidden" }, { status: 403 });
