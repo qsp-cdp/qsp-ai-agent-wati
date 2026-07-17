@@ -20,7 +20,7 @@ con certeza, y calla/deriva cuando es mejor que responda un humano. Tienda:
 **quickservicepanama.com** (suministros de impresión y tecnología en Panamá).
 
 ## Estado actual (2026-07-17)
-- **EN EL REPO, LISTO PARA DESPLEGAR: v56 (`v56-tienda-directa`).** Caso real del 17-jul: el bot presentó
+- **🚀 EN VIVO (desplegado 17-jul; VERIFICADO con 2 pruebas reales: TN-830XL→tóner con 7 uds, y "¿puedo pasar a comprar?"→"venga directo, sin pedido previo"; los 2 SQL de data aplicados): v56 (`v56-tienda-directa`).** Caso real del 17-jul: el bot presentó
   la tienda como "punto de retiro" y dijo "al comprar en línea, solo elige Recoger en tienda al pagar" —
   como si hubiera que comprar por la web primero. Regla nueva de prompt TIENDA FÍSICA — COMPRA DIRECTA:
   el cliente puede LLEGAR Y COMPRAR directo (ubicación/horario de info_tienda); NUNCA presentar la tienda
