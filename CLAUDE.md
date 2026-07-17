@@ -974,6 +974,18 @@ Eventos WATI suscritos (necesarios): **Message Received**, **Session Message Sen
     `resolver_tarifa` (fuente única) si Shipday empieza a rutear servientrega/retiro; (d) purga de pedidos
     entregados/cancelados viejos (como `ref_codes`); (e) la libreta `contacts` del puente puede cruzarse con el
     CDP por `wa_id` como el resto.
+15. **Aviso de reingreso (back-in-stock) NATIVO de WhatsApp:** hoy (v54) hay solo la versión LIVIANA —
+    regla de prompt que, ante `stock:"sin stock…"`, comparte el link y manda al cliente a activar el botón
+    *"Avísame cuando esté disponible"* de la página (reusa el back-in-stock de **Klaviyo** que ya se paga; el
+    cliente sale de WhatsApp a la web). **Pendiente (acordado 17-jul, "la próxima"):** que el BOT capture el
+    "avísame cuando llegue" dentro del chat y le mande un **WhatsApp** apenas reingrese. Piezas: (a) tabla de
+    suscripciones (`wa_id` + producto/handle/variante, con dedup e idempotencia estilo `reengaged_at`); (b)
+    Edge Function con **webhook de Shopify** que detecte la transición a *in-stock* (`inventory_level`/variante
+    → de 0 a >0); (c) el envío de aviso. **El 80% ya existe:** el reingreso ocurre días después → el cliente
+    está fuera de la ventana de 24h → hay que usar **plantilla HSM** = exactamente `sendWatiTemplateMessage`
+    (el del cron de re-enganche, con el fix del endpoint `?whatsappNumber=` del 17-jul) + el patrón de webhook
+    del puente Shipday. **Falta decidir:** plantilla nueva aprobada por Meta (ej. "¡Buenas noticias! El
+    [producto] ya está disponible") y el disparador exacto en Shopify (evitar spam si el stock oscila 0↔1).
 
 ## Cómo leer el estado real (debugging)
 - Código en vivo: `get_edge_function` o healthcheck GET. Esquema: `list_tables`.
