@@ -19,7 +19,40 @@ equipo humano: contesta preguntas generales, indica disponibilidad/stock y da pr
 con certeza, y calla/deriva cuando es mejor que responda un humano. Tienda:
 **quickservicepanama.com** (suministros de impresión y tecnología en Panamá).
 
-## Estado actual (2026-07-10)
+## Estado actual (2026-07-17)
+- **EN EL REPO, LISTO PARA DESPLEGAR: v54 (`v54-telemetria-intake`).** De la auditoría semanal del 17-jul
+  (semana completa de v53 con ~1.850 respuestas) + decisiones de Gerencia. 7 fixes, sin esquema:
+  1. **TELEMETRÍA DE INVENTARIO** — el token de Shopify murió DOS veces (01-jul y ~10-jul) y ambas nos
+     enteramos días tarde (la 2ª: **6 días** sirviendo "un asesor verifica" sin que nadie lo notara, y el
+     fallo se tragaba en silencio). `inventarioShopify` ahora loggea cada fallo a `job_log`
+     (`inventario_fallo`, distinguiendo `token_401_403` / `http_N` / `graphql_error` / `timeout_o_red`) →
+     detección en horas. (El token se rotó el 17-jul; selftest `ok_inventario_visible`, PG-145XL 59 uds.)
+  2. **`INTERRUPT_RE` pagos** (casos reales de la cola de tickets): "adjunto pago realizado" se escapaba
+     (el patrón exigía artículo), + "pago (ya está) realizado/hecho", + urgencia de transacción
+     ("¿demoran para la transacción? me urge"), + "hacer el pago antes de que venza". Las preguntas de
+     MÉTODO ("¿cómo pago?", "¿cómo hago el pago?") siguen respondibles.
+  3. **TICKETS SIN RUIDO** — la cola de v52 capturó 144 promesas en la semana pero ~12% con motivo inútil
+     ("Si", "Precio", "[imagen]") y ~25% duplicados (3 tickets idénticos en 4 min). Nuevo helper
+     `insertarTicketPromesa` (centraliza los 3 caminos: normal/asistencia/fallback): **dedup** (si la
+     conversación ya tiene ticket de bot sin resolver <24h, no duplica; `job_log promesa_dedup`) +
+     **motivo enriquecido** (`motivoTicket`: un motivo trivial hereda la última pregunta sustancial del
+     historial → "Tienen rollo de vellum 36 x 150? » Si").
+  4. **INTAKE-FIRST para consumibles** (pedido de Gerencia): "¿tienen tinta Canon?" sin modelo ya NO
+     escupe una lista — el bot confirma la marca y PREGUNTA el modelo de la tinta o de la impresora
+     (o pide foto); solo da 1-2 ejemplos si el cliente no lo sabe. Regla nueva CONSUMIBLE SIN MODELO;
+     las categorías de EQUIPOS ("¿venden impresoras Epson?") siguen con ejemplos como antes.
+  5. **MODELOS ESPACIADOS** — espejo de v53: "tinta para Canon IPF **785**" daba 0 aunque la PFI-107 SÍ
+     se vende (título "IPF785" pegado). `juntarModelosEspaciados` ("IPF 785"→"IPF785", "PFI 107"→"PFI107",
+     "LQ 590II"→"LQ590II") como ÚLTIMO intento de `buscarProducto`, con stoplist que protege el fix v53
+     ("papel bond 30" queda intacto).
+  6. **SIN STOCK → BOTÓN DE AVISO (Klaviyo)** — regla de prompt: producto agotado → además de derivar,
+     compartir el link e indicar el botón "Avísame cuando esté disponible" de la página (reusa el
+     back-in-stock de Klaviyo ya pagado; el aviso WhatsApp-nativo por webhook queda para v55).
+  7. **PRECIO DISTRIBUIDOR → ASESOR** (decisión de Gerencia): "precio de distribuidor/mayorista",
+     "al por mayor" → `HANDOFF_RE` (política comercial, la maneja un humano).
+  305 golden tests. **Pendientes de DATA (no código):** SQL `store_facts` clave `convenio_marco` (NO
+  registrados en PanamáCompra); tags de modelos en cintas matriciales y en el kit de cabezales (G4110).
+  Deploy: `.\deploy.ps1 copilot-webhook` (sin migración).
 - **🚀 EN VIVO (desplegado 10-jul; supersede v52): v53 (`v53-busqueda-dimensiones`).** De la auditoría del 10-jul (foco:
   "le mostraron una imagen/consulta y el bot dijo que no había, pero SÍ teníamos"). Resultado: **la visión
   está sólida** (el bot identifica bien los modelos de las fotos), y **NO se perdió ninguna venta** (los

@@ -69,6 +69,9 @@ const frasearTarifa = extraerFuncion("frasearTarifa");
 const frasearPedido = extraerFuncion("frasearPedido");
 const limpiarHtml = extraerFuncion("limpiarHtml");
 const normalizarConsulta = extraerFuncion("normalizarConsulta");
+const MOTIVO_TRIVIAL_RE = extraerConst("MOTIVO_TRIVIAL_RE");
+const motivoTicket = extraerFuncion("motivoTicket");
+const juntarModelosEspaciados = extraerFuncion("juntarModelosEspaciados");
 const RESPUESTA_NO_RESUELTA_RE = extraerConst("RESPUESTA_NO_RESUELTA_RE");
 const PROMESA_ASESOR_RE = extraerConst("PROMESA_ASESOR_RE");
 const prometeSeguimientoSinResolver = extraerFuncion("prometeSeguimientoSinResolver");
@@ -433,12 +436,12 @@ caso("prometeSeguimientoSinResolver: 'no tenemos... asesor confirma' → true", 
 // llegó al cliente, no hay promesa real que registrar. Chequeo sobre el source real (ambos flujos).
 caso("v52: ticket de promesa gateado por `enviado` en el flujo normal", /if \(enviado && salida && prometeSeguimientoSinResolver\(salida\)\)/.test(src));
 caso("v52: ticket de promesa también en el flujo de asistencia (v50)", (src.match(/prometeSeguimientoSinResolver\(salida\)/g) || []).length >= 2);
-caso("v52: el ticket usa la tabla `handoffs` existente con `origen` (sin migración de esquema nueva más allá de la columna)", /await sb\.from\("handoffs"\)\.insert\(\{ conversation_id: conv\.id, motivo: `seguimiento_bot/.test(src) && (src.match(/origen: "bot_promise"/g) || []).length >= 2);
+caso("v52/v54: el ticket usa la tabla `handoffs` con `origen` (vía insertarTicketPromesa)", /await sb\.from\("handoffs"\)\.insert\(\{ conversation_id: convId, motivo, origen \}\)/.test(src) && (src.match(/"bot_promise"/g) || []).length >= 2);
 caso("v52: el handoff por keyword también trae `origen: \"keyword\"`", /origen: "keyword"/.test(src));
-caso("v52: el fallback v23 también genera ticket (`origen: \"bot_fallback\"`)", /origen: "bot_fallback"/.test(src));
-caso("v52: los 3 inserts a `handoffs` chequean error (no fallan en silencio)", (src.match(/handoff_ticket_insert_error/g) || []).length >= 3);
-caso("v52: el motivo del ticket usa `contenido` (con fallback \"[imagen]\"), no `texto` crudo", !/motivo: `seguimiento_bot[^`]*\$\{texto\.slice/.test(src) && (src.match(/motivo: `seguimiento_bot[^`]*\$\{contenido\.slice/g) || []).length >= 2);
-caso("v52: ticket de promesa wireado (independiente de la versión del healthcheck)", /origen: "bot_promise"/.test(src) && /prometeSeguimientoSinResolver/.test(src));
+caso("v52/v54: el fallback v23 también genera ticket (bot_fallback)", /seguimiento_bot\(fallback\)/.test(src) && /"bot_fallback"\)/.test(src));
+caso("v52/v54: el insert a `handoffs` chequea error (centralizado en el helper)", /handoff_ticket_insert_error/.test(src));
+caso("v52/v54: el motivo del ticket usa `contenido` (vía motivoTicket), no `texto` crudo", !/motivoTicket\(texto/.test(src) && (src.match(/motivoTicket\(contenido/g) || []).length >= 3);
+caso("v52/v54: ticket de promesa wireado (independiente de la versión del healthcheck)", /"bot_promise"\)/.test(src) && /prometeSeguimientoSinResolver/.test(src));
 
 // revisión adversarial: especificaciones ahora avisa si el texto real era más largo que el corte (1500
 // chars) — evita un "no lo tiene" tajante cuando el dato pudo quedar después del corte.
@@ -475,7 +478,56 @@ caso('v53: "TN-830XL" no se parte (la x no está entre dígitos)', normalizarCon
 // wiring: la normalizada se agrega como intento adicional en buscarProducto.
 caso("v53: buscarProducto agrega la consulta normalizada como reintento", /norm && norm !== consulta \? \[norm\] : \[\]/.test(src));
 caso("v53: SYSTEM_PROMPT tiene la regla de MEDIDAS/DIMENSIONES", /MEDIDAS \/ DIMENSIONES/.test(SYSTEM_PROMPT) && /NUNCA "papel bond 30 pulgadas"/.test(SYSTEM_PROMPT));
-caso("v53: healthcheck = v53-busqueda-dimensiones", /version: "v53-busqueda-dimensiones"/.test(src));
+caso("v53: normalizarConsulta wireada como reintento", /norm && norm !== consulta \? \[norm\] : \[\]/.test(src));
+
+// --- v54: telemetría + intake-first + tickets sin ruido + modelos espaciados ----------------------
+console.log("v54 pagos que se escapaban (auditoría 17-jul)");
+// Casos REALES de la cola de tickets que cruzaron INTERRUPT_RE:
+for (const t of ["Adjunto pago realizado", "adjunto el pago", "el pago ya está hecho",
+  "Hola demoran para la transaccion es que me urge", "quiero hacer el pago antes de que venza el plazo"]) {
+  caso(`v54: "${t}" → abstención`, INTERRUPT_RE.test(t));
+}
+// las preguntas de MÉTODO siguen respondibles:
+for (const t of ["¿cómo pago?", "¿cómo hago el pago?", "¿aceptan yappy?", "¿qué formas de pago tienen?", "quiero pagar con tarjeta"]) {
+  caso(`v54: "${t}" NO → abstención`, !INTERRUPT_RE.test(t));
+}
+
+console.log("v54 precio distribuidor → asesor");
+for (const t of ["consulta si en la pagina ya es Precio de Distribuidor?", "¿manejan precio de distribuidor?",
+  "precios para mayoristas?", "¿venden al por mayor?"]) {
+  caso(`v54: "${t}" → HANDOFF_RE`, HANDOFF_RE.test(t));
+}
+caso('v54: "precio del toner" NO → handoff', !HANDOFF_RE.test("precio del toner"));
+caso('v54: "¿son distribuidores autorizados de HP?" NO → handoff', !HANDOFF_RE.test("¿son distribuidores autorizados de HP?"));
+
+console.log("v54 modelos espaciados (caso PFI-107/IPF785)");
+caso('v54: "tinta para Canon IPF 785" → junta IPF785', juntarModelosEspaciados("tinta para Canon IPF 785") === "tinta para Canon IPF785");
+caso('v54: "PFI 107" → "PFI107"', juntarModelosEspaciados("tinta PFI 107 magenta") === "tinta PFI107 magenta");
+caso('v54: "cinta Epson LQ 590II" → junta LQ590II', juntarModelosEspaciados("cinta Epson LQ 590II") === "cinta Epson LQ590II");
+// protege el fix v53: palabras comunes + número NO se juntan.
+caso('v54: "papel bond 30" queda intacto', juntarModelosEspaciados("papel bond 30") === "papel bond 30");
+caso('v54: "rollo 36 x 150" queda intacto', juntarModelosEspaciados("rollo 36 x 150") === "rollo 36 x 150");
+caso('v54: "tinta 664" queda intacta', juntarModelosEspaciados("tinta 664 canon") === "tinta 664 canon");
+caso("v54: buscarProducto agrega la variante juntada como último intento", /\.\.\.\(junta !== consulta \? \[junta\] : \[\]\)/.test(src));
+
+console.log("v54 tickets sin ruido");
+// motivo enriquecido: el "Si" de una ráfaga hereda la pregunta real que lo precedió (caso Deli Deli).
+const H_DELI = [{ role: "user", content: "Tienen rollo de vellum 36 x 150?" }, { role: "assistant", content: "Está agotado…" }, { role: "user", content: "Si" }];
+caso('v54: motivoTicket("Si", historial) hereda la pregunta', motivoTicket("Si", H_DELI) === "Tienen rollo de vellum 36 x 150? » Si");
+caso('v54: motivoTicket("[imagen]", historial) hereda la pregunta', motivoTicket("[imagen]", H_DELI).startsWith("Tienen rollo de vellum"));
+caso('v54: motivo sustancial queda tal cual', motivoTicket("Tienen cintas dascom", H_DELI) === "Tienen cintas dascom");
+caso('v54: sin historial no truena', motivoTicket("", []) === "(sin texto)" && motivoTicket("Si", []) === "Si");
+for (const t of ["Si", "gracias", "Precio", "?", "[imagen]", "ok"]) caso(`v54: "${t}" es motivo trivial`, MOTIVO_TRIVIAL_RE.test(t));
+caso('v54: "Deseo saber cuando llegan?" NO es trivial', !MOTIVO_TRIVIAL_RE.test("Deseo saber cuando llegan?"));
+// dedup + wiring en el source real: helper definido y usado en los 3 caminos (normal, asistencia, fallback).
+caso("v54: insertarTicketPromesa wireado en los 3 caminos", (src.match(/insertarTicketPromesa\(/g) || []).length >= 4);
+caso("v54: dedup de tickets presente (promesa_dedup)", /promesa_dedup/.test(src) && /\.eq\("resuelto", false\)\.in\("origen", \["bot_promise", "bot_fallback"\]\)/.test(src));
+
+console.log("v54 telemetría de inventario + prompt");
+caso("v54: inventarioShopify loggea fallos (inventario_fallo)", (src.match(/inventario_fallo/g) || []).length >= 3);
+caso("v54: distingue token muerto (token_401_403)", /token_401_403/.test(src));
+caso("v54: SYSTEM_PROMPT tiene CONSUMIBLE SIN MODELO (intake primero)", /CONSUMIBLE SIN MODELO/.test(SYSTEM_PROMPT) && /PREGUNTA el modelo/.test(SYSTEM_PROMPT));
+caso("v54: SYSTEM_PROMPT ofrece el botón de aviso cuando no hay stock", /AVISO AUTOMÁTICO/.test(SYSTEM_PROMPT) && /Av[ií]same cuando est[eé] disponible/.test(SYSTEM_PROMPT));
 
 // --- resumen --------------------------------------------------------------------------------------
 console.log(`\n${ok} OK, ${mal} FALLA${mal === 1 ? "" : "S"}`);

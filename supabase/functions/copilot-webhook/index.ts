@@ -575,6 +575,7 @@ REGLA DE ORO — precio, stock y promociones
 - Incluye el link del producto cuando lo tengas, copiándolo EXACTO como viene en el campo "url" de buscar_producto — con TODO lo que esté después del "?" (parámetros utm/ref_code de seguimiento). NUNCA acortes el link ni le quites esos parámetros.
 - PRECIO + ITBMS: los precios son SIN ITBMS. Muestra SIEMPRE el precio, el ITBMS (7%) y el total usando EXACTAMENTE los valores que devuelve la tool (precio_usd, itbms_7pct, total_con_itbms). Formato: "*$116.00 + ITBMS (7%) = $124.12*". NUNCA calcules el impuesto de memoria.
 - STOCK / CANTIDAD: indica la disponibilidad usando el campo "stock" que devuelve la tool, TAL CUAL. Si dice "X unidades", dilo; si dice "stock bajo — un asesor verifica…", dilo así. NUNCA inventes ni adivines una cantidad: di solo lo que aparezca en ese campo "stock".
+- SIN STOCK — AVISO AUTOMÁTICO: si el campo "stock" dice "sin stock", además de indicar que un asesor puede confirmar el reingreso, comparte el link del producto y dile al cliente que EN ESA PÁGINA puede activar el botón de aviso de disponibilidad ("Avísame cuando esté disponible") para recibir una notificación automática apenas el producto reingrese. No prometas fechas de reingreso (eso lo confirma un asesor).
 - Si la tool no encuentra el producto, o piden algo fuera de catálogo: discúlpate breve e indica que un asesor confirmará disponibilidad y opciones.
 
 BÚSQUEDA DE PRODUCTOS (cómo usar buscar_producto)
@@ -583,7 +584,8 @@ BÚSQUEDA DE PRODUCTOS (cómo usar buscar_producto)
 - Un mismo producto se nombra de varias formas: "Canon" ↔ línea "Pixma"; "Epson" ↔ "EcoTank"/"WorkForce"; "HP" ↔ "DeskJet/LaserJet/OfficeJet". Para "tinta para [impresora]", busca por el modelo de la impresora (la tinta suele indicar los modelos compatibles) y, si hace falta, por el modelo de la tinta.
 - MEDIDAS / DIMENSIONES (rollos de papel, tamaños): busca con el NÚMERO solo, no con la palabra "pulgadas" ni combinando la medida. Ej.: para un rollo de 30" x 150" busca "papel bond 30" (o "papel bond 36", "albanene 30"), NUNCA "papel bond 30 pulgadas" ni "30x150" — el catálogo usa el símbolo (30") y esas palabras extra hacen que no encuentre un producto que SÍ existe.
 - Si la primera búsqueda no encuentra, REFORMULA y vuelve a llamar buscar_producto (prueba solo el número de modelo, la línea, la medida sin "pulgadas", o el modelo de la tinta) ANTES de derivar.
-- Preguntas genéricas de categoría ("¿venden impresoras Epson?", "¿manejan toner?"): busca la categoría/marca y responde sí/no con 1-2 ejemplos concretos y su precio; invita a indicar el modelo. No listes más de 2-3.
+- Preguntas genéricas de categoría de EQUIPOS ("¿venden impresoras Epson?", "¿tienen monitores?"): busca la categoría/marca y responde sí/no con 1-2 ejemplos concretos y su precio; invita a indicar el modelo. No listes más de 2-3.
+- CONSUMIBLE SIN MODELO — pregunta primero: si piden tinta/tóner/cartucho/cinta de una marca o "para mi impresora" SIN indicar el modelo ("¿tienen tinta Canon?"), NO respondas con una lista de productos: el consumible correcto depende del modelo exacto y una lista al azar confunde. Después de buscar (para confirmar que manejamos la marca), responde que sí trabajamos esa marca y PREGUNTA el modelo de la tinta o de la impresora (una sola pregunta corta; también sirve una foto del cartucho o del equipo). Solo si el cliente dice que no lo sabe, oriéntalo con 1-2 ejemplos de lo que devolvió la búsqueda.
 - COMPATIBILIDAD: NO afirmes que un producto sirve para cierto equipo a menos que el resultado de buscar_producto lo indique — NI SIQUIERA como probabilidad ("suele ser la misma tinta", "debería servir"): eso también es adivinar. Si no estás seguro, dilo y deja que un asesor confirme.
 - MODELO EXACTO: usa el TÍTULO tal cual lo devuelve buscar_producto. Si el modelo que pidió el cliente NO aparece en el título del resultado, NO lo renombres ni asumas que es el mismo equipo: dilo claro (ej. "no encontré el [modelo] exacto; lo más parecido que tenemos es [título real]…") y ofrécelo como alternativa o deriva. NUNCA pongas el modelo pedido junto al precio o link de otro producto.
 
@@ -705,7 +707,10 @@ const TOOLS: Anthropic.Tool[] = [{
 // un agradecimiento sin reclamo ("ya me facturaron los 3 que pedí, gracias, todo perfecto"). Se
 // reemplaza por un patrón de CONTRASTE explícito (palabra de contraste + verbo de entrega + "factur",
 // en cualquier orden) que exige la señal real del reclamo (recibí menos de lo que me facturaron).
-const HANDOFF_RE = /\b(humano|persona|asesor|agente|reclamo|queja|hablar con alguien|supervisor|quiero devolver|devolver (el|la|lo|los|las|un|una|mi|este|esta|esto|eso)|devolverl[oa]s?|devuelvan|cambiarl[oa]s?|(una|la|mi|su|esa|esta) devoluci[oó]n|(aplicar|usar|reclamar|validar|activar|hacer (v[aá]lida|efectiva)) (la |mi |su )?garant[ií]a|(mi|su) garant[ií]a|en garant[ií]a|tiene garant[ií]a|sali[oó] (mal|malo|mala|da[ñn]ad[oa]|defectuos[oa])|(lleg[oó]|vino) (mal|malo|mala|da[ñn]ad[oa]|roto|rota|defectuos[oa])|defectuos[oa]s?|me vendieron (uno|una|algo) (malo|mala|da[ñn]ad[oa]|defectuos[oa])|nota de cr[eé]dito|me factur(aron|a|[oó]) (de m[aá]s|mal|otra cantidad)|me cobr(aron|a|[oó]) de m[aá]s|factura(ci[oó]n)? (incorrecta|equivocada|mal (hecha|emitida))|(solo|nom[aá]s|pero) .{0,40}(entregaron|entreg[oó]|dieron|lleg(aron|[oó])) .{0,60}factur\w*|factur\w* .{0,60}(solo|nom[aá]s|pero) .{0,40}(entregaron|entreg[oó]|dieron|lleg(aron|[oó])))\b/i;
+const HANDOFF_RE = /\b(humano|persona|asesor|agente|reclamo|queja|hablar con alguien|supervisor|quiero devolver|devolver (el|la|lo|los|las|un|una|mi|este|esta|esto|eso)|devolverl[oa]s?|devuelvan|cambiarl[oa]s?|(una|la|mi|su|esa|esta) devoluci[oó]n|(aplicar|usar|reclamar|validar|activar|hacer (v[aá]lida|efectiva)) (la |mi |su )?garant[ií]a|(mi|su) garant[ií]a|en garant[ií]a|tiene garant[ií]a|sali[oó] (mal|malo|mala|da[ñn]ad[oa]|defectuos[oa])|(lleg[oó]|vino) (mal|malo|mala|da[ñn]ad[oa]|roto|rota|defectuos[oa])|defectuos[oa]s?|me vendieron (uno|una|algo) (malo|mala|da[ñn]ad[oa]|defectuos[oa])|nota de cr[eé]dito|me factur(aron|a|[oó]) (de m[aá]s|mal|otra cantidad)|me cobr(aron|a|[oó]) de m[aá]s|factura(ci[oó]n)? (incorrecta|equivocada|mal (hecha|emitida))|(solo|nom[aá]s|pero) .{0,40}(entregaron|entreg[oó]|dieron|lleg(aron|[oó])) .{0,60}factur\w*|factur\w* .{0,60}(solo|nom[aá]s|pero) .{0,40}(entregaron|entreg[oó]|dieron|lleg(aron|[oó]))|(precios?|descuentos?) (de |para |al )?(distribuidor|mayorista|revendedor)\w*|al por mayor)\b/i;
+// v54 (decisión de Gerencia, auditoría 17-jul): precio de DISTRIBUIDOR/mayorista/reventa lo atiende un
+// humano (política comercial, no precio de lista) → HANDOFF_RE lo deriva con despedida cortés. Casos
+// reales: "¿en la página ya es Precio de Distribuidor?", clientes de Zona Libre pidiendo mayoreo.
 
 // v52 — TICKET DE PROMESA (auditoría real: el bot le prometió "un asesor confirma" a una clienta DOS
 // veces por una impresora con doble bandeja y nadie la contactó nunca; 5 días después tuvo que volver
@@ -729,6 +734,40 @@ function prometeSeguimientoSinResolver(texto: string): boolean {
   return RESPUESTA_NO_RESUELTA_RE.test(texto) && PROMESA_ASESOR_RE.test(texto);
 }
 
+// v54 — motivo del ticket enriquecido (auditoría 17-jul): ~12% de los tickets salían con motivos
+// inútiles ("Si", "?", "Precio", "[imagen]") porque el último mensaje de la ráfaga era un ack y la
+// PREGUNTA real venía antes. Si el mensaje actual es trivial, se antepone el último mensaje de usuario
+// sustancial del historial ("Tienen rollo de vellum 36 x 150? » Si").
+const MOTIVO_TRIVIAL_RE = /^(s[ií]|ok(ey)?|dale|listo|gracias.*|correcto|perfecto|claro( que s[ií])?|\?+|precio|bueno|ya|aj[aá]|\[imagen\]|\W*|.{0,3})$/i;
+// (history tipada como any[] a propósito: un tipo objeto en la firma rompe el extractor de golden.mjs,
+// que toma la primera "{" como inicio del cuerpo. Shape real: {role, content}[].)
+function motivoTicket(contenido: string, history: any[]): string {
+  const actual = (contenido || "").trim();
+  if (!MOTIVO_TRIVIAL_RE.test(actual)) return actual.slice(0, 150);
+  for (let i = history.length - 2; i >= 0; i--) { // -2: el último del historial suele SER el mensaje actual
+    const m = history[i];
+    const t = (m?.content || "").trim();
+    if (m?.role === "user" && t && !MOTIVO_TRIVIAL_RE.test(t)) return `${t.slice(0, 100)} » ${actual}`.slice(0, 150);
+  }
+  return (actual || "(sin texto)").slice(0, 150);
+}
+
+// v54 — dedup (auditoría 17-jul): un cliente que repetía la misma pregunta sin resolver generaba un
+// ticket POR TURNO (caso real: 3 tickets idénticos en 4 minutos; ~25% de la cola eran duplicados).
+// Si la conversación ya tiene un ticket de bot SIN RESOLVER de las últimas 24 h, no se duplica —
+// la cola mide PENDIENTES, no intentos. Best-effort: nunca rompe el flujo de respuesta.
+async function insertarTicketPromesa(convId: string, waId: string, motivo: string, origen: string): Promise<void> {
+  try {
+    const desde = new Date(Date.now() - 24 * 3600 * 1000).toISOString();
+    const { data: prev } = await sb.from("handoffs").select("id").eq("conversation_id", convId)
+      .eq("resuelto", false).in("origen", ["bot_promise", "bot_fallback"]).gte("created_at", desde).limit(1);
+    if (prev && prev.length) { await log("promesa_dedup", true, { waId }); return; }
+    const { error } = await sb.from("handoffs").insert({ conversation_id: convId, motivo, origen });
+    if (error) await log("handoff_ticket_insert_error", false, { waId, error: error.message?.slice(0, 200) });
+    else await log("promesa_seguimiento", true, { waId, motivo: motivo.slice(0, 150) });
+  } catch (e) { await log("error", false, { waId, fase: "ticket_promesa", error: String(e).slice(0, 200) }); }
+}
+
 // Anti-interrupción (guardrail PRE-LLM): señales de un trámite/pago/dato fiscal EN CURSO
 // (típicamente atendido por un humano). Si el texto entrante matchea, el bot se ABSTIENE
 // (no llama al LLM, solo loggea). Sesgo deliberado: mejor callar que cortar una venta humana.
@@ -740,7 +779,12 @@ const INTERRUPT_RE = new RegExp([
   "\\b\\d{1,4}-\\d{2,4}-\\d{4,7}\\b", // RUC/cédula PA (ej. 557-538-101617); no matchea fechas (último grupo >=4 dígitos)
   "\\b[a-z]{1,2}-\\d{1,4}-\\d{3,7}\\b", // v45: cédula PA con letra (E-8-104720, PE-12-3456, N-19-1234); no matchea SKUs (GI-190 = 1 solo grupo; FDC-… = 3 letras)
   // pago/comprobante EN CURSO (no "¿aceptan X?" / "¿cómo pago?", que son métodos → info_tienda)
-  "le adjunto", "adjunto (el|la|mi) ?(pago|comprobante|transferencia|recibo)", "comprobante", "ya (le |te )?(hice|mand[eé]|envi[eé]|pagu[eé])", "dep[oó]sit",
+  // v54 (auditoría 17-jul): "adjunto pago realizado" se escapaba — el patrón exigía artículo ("adjunto EL
+  // pago"); ahora el artículo es opcional. + "pago realizado/hecho/efectuado" (sustantivo+participio, caso
+  // real) + urgencia de transacción en curso ("¿demoran para la transacción? me urge") + "hacer el pago
+  // antes de que venza" (planificando el pago de una cotización activa). Ninguno toca preguntas de método.
+  "le adjunto", "adjunto (el |la |mi )?(pago|comprobante|transferencia|recibo)", "comprobante", "ya (le |te )?(hice|mand[eé]|envi[eé]|pagu[eé])", "dep[oó]sit",
+  "pago (ya )?(est[aá] |qued[oó] )?(realizado|hecho|efectuado|listo|enviado)", "demora\\w* .{0,20}transacci[oó]n", "(hacer|realizar|efectuar) el pago antes",
   "pagar\\s+(ya|ahora|de una|hoy|mañana)", // intención de pagar YA (no "pagar con tarjeta/yappy" — eso no lleva ya/ahora/hoy)
   // v50 (revisión adversarial): pago COMPLETADO sin "ya" — "hice/realicé el pago", "acabo de pagar",
   // "te mandé el pago", "mi pago". Cruzaban NEEDS_TOOL_RE (\bpago/pagar) pero NO INTERRUPT → con la
@@ -899,6 +943,11 @@ function conItbms(precio: any): { precio_usd: string; itbms_7pct: string; total_
 // v21 — inventario real desde Shopify Admin (totalInventory por producto, UNA llamada para todos
 // los ids). Requiere SHOPIFY_ADMIN_TOKEN + SHOPIFY_ADMIN_API_BASE. Best-effort: si no está
 // configurado o falla, devuelve {} y el bot dirá "un asesor confirma la cantidad" (nunca inventa).
+// v54 — TELEMETRÍA DE FALLO: el token murió DOS veces (01-jul y ~10-jul) y ambas nos enteramos días
+// después por auditoría manual (la 2ª: 6 DÍAS sin mostrar cantidades) porque el fallo se tragaba en
+// silencio. Ahora cada fallo se loggea a job_log distinguiendo el tipo (token_401_403 / http_N /
+// graphql_error / timeout_o_red) → detección en horas con:
+//   select * from job_log where action='inventario_fallo' order by created_at desc;
 async function inventarioShopify(ids: (string | number)[]): Promise<Record<string, number>> {
   if (!SHOPIFY_ADMIN_TOKEN || !SHOPIFY_ADMIN_API_BASE || !ids.length) return {};
   try {
@@ -911,14 +960,24 @@ async function inventarioShopify(ids: (string | number)[]): Promise<Record<strin
       body: JSON.stringify({ query, variables: { ids: gids } }),
       signal: AbortSignal.timeout(6000),
     });
-    if (!r.ok) return {};
+    if (!r.ok) {
+      await log("inventario_fallo", false, { tipo: (r.status === 401 || r.status === 403) ? "token_401_403" : `http_${r.status}` });
+      return {};
+    }
     const j = await r.json();
+    if (j?.errors?.length) {
+      await log("inventario_fallo", false, { tipo: "graphql_error", detalle: String(j.errors?.[0]?.message ?? "").slice(0, 150) });
+      return {};
+    }
     const out: Record<string, number> = {};
     for (const n of (j?.data?.nodes ?? [])) {
       if (n?.id && typeof n.totalInventory === "number") out[String(n.id).replace(/\D/g, "")] = n.totalInventory;
     }
     return out;
-  } catch { return {}; }
+  } catch (e) {
+    await log("inventario_fallo", false, { tipo: "timeout_o_red", detalle: String(e).slice(0, 120) });
+    return {};
+  }
 }
 
 // v44 — autotest de inventario (diagnóstico). Corre la MISMA consulta Admin que inventarioShopify pero
@@ -1027,11 +1086,25 @@ function normalizarConsulta(q: string): string {
     .trim();
 }
 
+// v54 — el ESPEJO de v53: modelos que el cliente escribe SEPARADOS y el catálogo tiene PEGADOS.
+// Caso real (auditoría 17-jul): "tinta para Canon IPF 785" → 0 resultados, aunque la tinta PFI-107
+// SÍ se vende y su título dice "IPF785" (pegado). El matching de Shopify no une "IPF"+"785".
+// Junta pares [letras][espacio o guion][dígitos] → "IPF785", EXCEPTO cuando las letras son una palabra
+// común de catálogo/español ("papel bond 30" NO debe volverse "bond30" — protege el fix v53).
+// Se prueba como ÚLTIMO intento (solo corre si todo lo anterior falló → costo cero en el caso normal).
+function juntarModelosEspaciados(q: string): string {
+  // Set local (no módulo) para que tests/golden.mjs pueda extraer la función auto-contenida.
+  const NO_MODELO = new Set(["de", "la", "el", "los", "las", "con", "para", "por", "una", "uno", "mi", "su", "que", "tinta", "toner", "papel", "bond", "rollo", "hoja", "hojas", "caja", "cajas", "cinta", "resma", "pack", "combo", "kit"]);
+  return q.replace(/\b([a-z]{2,5})[ -](\d{2,5}[a-z]{0,3})\b/gi, (m, letras, digitos) =>
+    NO_MODELO.has(letras.toLowerCase()) ? m : `${letras}${digitos}`);
+}
+
 async function buscarProducto(consulta: string, waId: string = "", linksTracked?: Record<string, string>): Promise<string> {
   // Consulta libre tal cual; si no encuentra, reintenta por: (v53) la versión normalizada de dimensiones,
-  // y (v18) el código de modelo con/sin guion. Deduplica para no repetir llamadas.
+  // (v18) el código de modelo con/sin guion, y (v54) los modelos espaciados JUNTADOS. Deduplica.
   const norm = normalizarConsulta(consulta);
-  const intentos = [consulta, ...(norm && norm !== consulta ? [norm] : []), ...modelosEn(consulta).flatMap(variantesModelo)];
+  const junta = juntarModelosEspaciados(consulta);
+  const intentos = [consulta, ...(norm && norm !== consulta ? [norm] : []), ...modelosEn(consulta).flatMap(variantesModelo), ...(junta !== consulta ? [junta] : [])];
   const vistos = new Set<string>();
   let lastErr: string | null = null;
   for (const q of intentos) {
@@ -1568,7 +1641,7 @@ Deno.serve(async (req) => {
       const diag = await inventarioSelfTest(pid);
       return Response.json({ selftest: "inventario", ...diag, ts: new Date().toISOString() });
     }
-    return Response.json({ status: "ok", function: "copilot-webhook", version: "v53-busqueda-dimensiones", mode: MODE, mode_raw: MODE_RAW, model: MODEL, llm_configured: !!anthropic, wati_send_configured: !!(WATI_API_TOKEN && WATI_API_BASE), inventario_configurado: !!(SHOPIFY_ADMIN_TOKEN && SHOPIFY_ADMIN_API_BASE), resolve_configured: !!RESOLVE_SECRET, webhook_key_es_default: WEBHOOK_KEY_ES_DEFAULT, handoff_assist_min: HANDOFF_ASSIST_MIN, handoff_cold_hours: HANDOFF_COLD_HOURS, debounce_ms: DEBOUNCE_MS, live_targets: MODE === "live" ? (LIVE_ALL ? "all" : LIVE_ALLOWLIST.length) : 0, ts: new Date().toISOString() });
+    return Response.json({ status: "ok", function: "copilot-webhook", version: "v54-telemetria-intake", mode: MODE, mode_raw: MODE_RAW, model: MODEL, llm_configured: !!anthropic, wati_send_configured: !!(WATI_API_TOKEN && WATI_API_BASE), inventario_configurado: !!(SHOPIFY_ADMIN_TOKEN && SHOPIFY_ADMIN_API_BASE), resolve_configured: !!RESOLVE_SECRET, webhook_key_es_default: WEBHOOK_KEY_ES_DEFAULT, handoff_assist_min: HANDOFF_ASSIST_MIN, handoff_cold_hours: HANDOFF_COLD_HOURS, debounce_ms: DEBOUNCE_MS, live_targets: MODE === "live" ? (LIVE_ALL ? "all" : LIVE_ALLOWLIST.length) : 0, ts: new Date().toISOString() });
   }
   if (req.method !== "POST") return Response.json({ error: "method_not_allowed" }, { status: 405 });
   if (url.searchParams.get("key") !== WEBHOOK_KEY) return Response.json({ error: "forbidden" }, { status: 403 });
@@ -1752,12 +1825,9 @@ Deno.serve(async (req) => {
             // v52 — mismo ticket de promesa que el flujo normal: la asistencia también puede dejar algo
             // sin resolver ("no encontré / sin stock… un asesor confirma") mientras el humano está ausente.
             if (enviado && salida && prometeSeguimientoSinResolver(salida)) {
-              // v52 (revisión adversarial): usa `contenido` (con el fallback "[imagen]"), no `texto` crudo
-              // — una foto SIN caption tiene texto="" y el ticket quedaba con el motivo vacío, justo el
-              // caso (identificar un producto) que esta feature nació para no perder.
-              const { error: errTicket } = await sb.from("handoffs").insert({ conversation_id: conv.id, motivo: `seguimiento_bot(asistencia): ${contenido.slice(0, 150)}`, origen: "bot_promise" });
-              if (errTicket) await log("handoff_ticket_insert_error", false, { waId, error: errTicket.message?.slice(0, 200) });
-              else await log("promesa_seguimiento", true, { waId, motivo: contenido.slice(0, 150) });
+              // v52: `contenido` (fallback "[imagen]"), no `texto` crudo. v54: dedup + motivo enriquecido
+              // con el historial (el "Si" de una ráfaga hereda la pregunta real que lo precedió).
+              await insertarTicketPromesa(conv.id, waId, `seguimiento_bot(asistencia): ${motivoTicket(contenido, history as any)}`, "bot_promise");
             }
             await log("asistencia_handoff", true, { waId, enviado, mins_sin_humano: Math.round(minsSinHumano) });
           } catch (e) { await log("error", false, { waId, fase: "asistencia", error: String(e).slice(0, 300) }); }
@@ -1872,11 +1942,8 @@ Deno.serve(async (req) => {
         // asesor, se registra en `handoffs` (cola consultable) para que no se pierda. Solo si de verdad
         // se envió (un mensaje en shadow nunca llegó al cliente → no hubo promesa real que cumplir).
         if (enviado && salida && prometeSeguimientoSinResolver(salida)) {
-          // v52 (revisión adversarial): `contenido` (con fallback "[imagen]"), no `texto` crudo — ver
-          // comentario gemelo en el flujo de asistencia.
-          const { error: errTicket } = await sb.from("handoffs").insert({ conversation_id: conv.id, motivo: `seguimiento_bot: ${contenido.slice(0, 150)}`, origen: "bot_promise" });
-          if (errTicket) await log("handoff_ticket_insert_error", false, { waId, error: errTicket.message?.slice(0, 200) });
-          else await log("promesa_seguimiento", true, { waId, motivo: contenido.slice(0, 150) });
+          // v52: `contenido` (fallback "[imagen]"), no `texto` crudo. v54: dedup + motivo enriquecido.
+          await insertarTicketPromesa(conv.id, waId, `seguimiento_bot: ${motivoTicket(contenido, history as any)}`, "bot_promise");
         }
         if (urlsRafaga.length) await log("imagen_procesada", true, { waId, en_rafaga: urlsRafaga.length, descargadas: imagenes.length, enviado });
         if (fugaTool) await log("fuga_tool_texto", false, { waId, enviado, muestra: (r.text ?? "").slice(0, 200) });
@@ -1899,8 +1966,9 @@ Deno.serve(async (req) => {
               // real de ~33 min de Anthropic) es POR DEFINICIÓN algo sin resolver: no hace falta pasarlo
               // por el regex, siempre genera ticket (si de verdad se envió).
               if (okfb) {
-                const { error: errTicketFb } = await sb.from("handoffs").insert({ conversation_id: conv.id, motivo: `seguimiento_bot(fallback): ${contenido.slice(0, 150)}`, origen: "bot_fallback" });
-                if (errTicketFb) await log("handoff_ticket_insert_error", false, { waId, error: errTicketFb.message?.slice(0, 200) });
+                // v54: history no está en scope en este catch (el error pudo ocurrir antes del fetch) →
+                // motivoTicket con historial vacío (usa el contenido tal cual). Dedup igual aplica.
+                await insertarTicketPromesa(conv.id, waId, `seguimiento_bot(fallback): ${motivoTicket(contenido, [])}`, "bot_fallback");
               }
               await log("respuesta_respaldo", true, { waId, enviado: okfb });
             }
