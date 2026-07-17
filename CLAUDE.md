@@ -20,7 +20,7 @@ con certeza, y calla/deriva cuando es mejor que responda un humano. Tienda:
 **quickservicepanama.com** (suministros de impresión y tecnología en Panamá).
 
 ## Estado actual (2026-07-17)
-- **EN EL REPO, LISTO PARA DESPLEGAR: v54 (`v54-telemetria-intake`).** De la auditoría semanal del 17-jul
+- **🚀 EN VIVO (desplegado 17-jul, healthcheck `version:v54-telemetria-intake`; supersede v53): v54 (`v54-telemetria-intake`).** De la auditoría semanal del 17-jul
   (semana completa de v53 con ~1.850 respuestas) + decisiones de Gerencia. 7 fixes, sin esquema:
   1. **TELEMETRÍA DE INVENTARIO** — el token de Shopify murió DOS veces (01-jul y ~10-jul) y ambas nos
      enteramos días tarde (la 2ª: **6 días** sirviendo "un asesor verifica" sin que nadie lo notara, y el
