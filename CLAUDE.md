@@ -20,7 +20,7 @@ con certeza, y calla/deriva cuando es mejor que responda un humano. Tienda:
 **quickservicepanama.com** (suministros de impresión y tecnología en Panamá).
 
 ## Estado actual (2026-07-20)
-- **EN EL REPO, LISTO PARA DESPLEGAR: v57 (`v57-cotizacion-cantidades`).** Caso real (conv 50760979705): el
+- **🚀 EN VIVO (desplegado 20-jul, healthcheck `version:v57-cotizacion-cantidades`, sobre Sonnet 5): v57 (`v57-cotizacion-cantidades`).** Caso real (conv 50760979705): el
   cliente pidió 2 PG-145XL + 2 CL-146XL; el bot dio bien las líneas por unidad pero **erró el TOTAL por doble
   ITBMS** — sumó los totales que YA tenían ITBMS ($42.38 + $49.22 = $91.60), los tomó como subtotal y volvió a
   aplicar el 7% → dijo **$98.60** cuando el correcto es **$91.59** (~$7 de más). Raíz: `buscar_producto` calcula
