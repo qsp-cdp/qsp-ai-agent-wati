@@ -1325,30 +1325,33 @@ function sucursalesInterior(lugar: string = ""): string {
 // ofrecer "entrega a domicilio" donde SOLO hay retiro en un agente verde. frasearTarifa es puro (testeable).
 function frasearTarifa(v: any): Record<string, unknown> {
   const fmt = (x: any) => { if (x === null || x === undefined) return ""; const n = Number(x); return isFinite(n) ? n.toFixed(2) : ""; };
+  // v58 — los costos de envío causan ITBMS (7%): se muestra base + ITBMS + total, calculado en CÓDIGO
+  // (nunca de memoria), igual que los precios de producto. Devuelve "B/.6.00 + ITBMS (7%) = B/.6.42".
+  const conImp = (x: any) => { const n = Number(x); return isFinite(n) ? `B/.${n.toFixed(2)} + ITBMS (7%) = B/.${(n * 1.07).toFixed(2)}` : ""; };
   const estado = v?.estado;
   if (estado === "sin_match") {
     return { estado: "sin_match", consulta: v.consulta ?? null,
       nota: "Ese lugar no está en la cobertura metro (Ciudad de Panamá / San Miguelito). Si el cliente es del INTERIOR, usa sucursales_interior + info_tienda (tarifa/plazo del interior). Si no lo ubicas, deriva a un asesor para que cotice." };
   }
   if (estado === "ambiguo") {
-    const desc = (o: any) => o.metodo === "retiro_agente_verde" ? `retiro por B/.${fmt(o.tarifa_usd)}`
-      : o.metodo === "asesor" ? "lo coordina un asesor" : `B/.${fmt(o.tarifa_usd)} a domicilio`;
+    const desc = (o: any) => o.metodo === "retiro_agente_verde" ? `retiro por ${conImp(o.tarifa_usd)}`
+      : o.metodo === "asesor" ? "lo coordina un asesor" : `${conImp(o.tarifa_usd)} a domicilio`;
     const ops = (v.opciones ?? []).map((o: any) => `${o.corregimiento} (${desc(o)})`);
     return { estado: "ambiguo", opciones: v.opciones ?? [],
       respuesta_sugerida: `Hay más de una zona con ese nombre y el envío cambia según cuál: ${ops.join("; ")}. ¿En qué corregimiento se encuentra, para confirmarle el costo exacto?` };
   }
   if (estado === "ok") {
     const met = v.metodo;
-    const t = fmt(v.tarifa_usd);
+    const t = conImp(v.tarifa_usd);
     let msg = "";
     if (met === "retiro_agente_verde") {
-      msg = `En su zona no hacemos entrega a domicilio, pero puede retirar su pedido en un punto Servientrega (${v.puntos_retiro || "un punto Servientrega cercano; un asesor le indica cuál"}). El costo es B/.${t} y estaría listo para retirar al día hábil siguiente.`;
+      msg = `En su zona no hacemos entrega a domicilio, pero puede retirar su pedido en un punto Servientrega (${v.puntos_retiro || "un punto Servientrega cercano; un asesor le indica cuál"}). El costo es ${t}, y estaría listo para retirar al día hábil siguiente.`;
     } else if (met === "servientrega") {
-      msg = `A su zona entregamos a domicilio por B/.${t}, al día hábil siguiente (vía Servientrega).`;
+      msg = `A su zona entregamos a domicilio por ${t}, al día hábil siguiente (vía Servientrega).`;
     } else if (met === "asesor") {
       msg = `Para su zona, un asesor coordina la entrega y el costo según la dirección exacta; con gusto le paso con un asesor.`;
     } else { // propia
-      msg = `El envío a su zona es B/.${t} (${v.plazo}).`;
+      msg = `El envío a su zona es ${t} (${v.plazo}).`;
     }
     if (v.confianza === "Media" && met !== "asesor") msg += " Un asesor confirma el costo exacto al cerrar, según la dirección.";
     return { estado: "ok", metodo: met, tarifa_usd: v.tarifa_usd ?? null, puntos_retiro: v.puntos_retiro ?? null,

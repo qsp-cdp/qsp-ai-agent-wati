@@ -619,6 +619,16 @@ caso("v58: SYSTEM_PROMPT manda relayar los dos precios de tarifa_interior sin om
 // no rompe el guardrail v46: sigue prohibido decir "tenemos el punto/sucursal en [ciudad]".
 caso("v58: sigue prohibiendo 'tenemos el punto/sucursal' (guardrail v46 intacto)", /NUNCA digas "tenemos el punto/.test(SYSTEM_PROMPT));
 
+// v58: TODO el envío lleva ITBMS 7% (decisión de Gerencia) — frasearTarifa (ciudad) ahora muestra
+// base + ITBMS + total, calculado en código (nunca de memoria), igual que los precios de producto.
+// Reusa los veredictos mock ya calculados arriba (rToc retiro $6, rPac domicilio $9, rEd propia $6, rCa asesor).
+caso("v58: retiro ciudad muestra ITBMS ($6.00 → $6.42)", /6\.00 \+ ITBMS \(7%\) = B\/\.6\.42/.test(rToc.respuesta_sugerida));
+caso("v58: domicilio ciudad muestra ITBMS ($9.00 → $9.63)", /9\.00 \+ ITBMS \(7%\) = B\/\.9\.63/.test(rPac.respuesta_sugerida));
+caso("v58: envío propio muestra ITBMS ($6.00 → $6.42)", /6\.00 \+ ITBMS \(7%\) = B\/\.6\.42/.test(rEd.respuesta_sugerida));
+caso("v58: método asesor sigue sin precio (no ITBMS espurio)", !/ITBMS/.test(rCa.respuesta_sugerida));
+// ambiguo también cotiza con ITBMS en cada opción.
+caso("v58: ambiguo muestra ITBMS por opción", /ITBMS \(7%\) = B\/\.6\.42/.test(rSj.respuesta_sugerida));
+
 // --- resumen --------------------------------------------------------------------------------------
 console.log(`\n${ok} OK, ${mal} FALLA${mal === 1 ? "" : "S"}`);
 if (mal > 0) process.exit(1);

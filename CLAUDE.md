@@ -20,17 +20,20 @@ con certeza, y calla/deriva cuando es mejor que responda un humano. Tienda:
 **quickservicepanama.com** (suministros de impresión y tecnología en Panamá).
 
 ## Estado actual (2026-07-20)
-- **EN EL REPO, LISTO PARA DESPLEGAR: v58 (`v58-envio-interior-domicilio`).** Caso real (Chitré): el bot
-  ofreció solo *"retiro en sucursal desde B/.6.00"* y **omitió la entrega a domicilio puerta a puerta ($9.00)**.
-  Raíz: NO es la data — `store_facts.tarifa_interior` YA dice "B/.6.00 a sucursal / B/.9.00 puerta a puerta (vía
-  Servientrega)"; el bot leyó ese dato pero relayó solo la mitad porque la regla de prompt del interior (v46)
-  lo enmarcaba **solo como retiro** ("…retirarlo en el punto Servientrega"). Fix de PROMPT (price-agnostic): la
-  regla SUCURSALES DEL INTERIOR ahora manda ofrecer **las DOS formas** — (1) retiro en el punto Servientrega, o
-  (2) entrega a domicilio puerta a puerta — con los precios/plazos de `info_tienda` (`tarifa_interior`/
-  `plazo_interior`), sin omitir el domicilio ni inventar. Guardrail v46 intacto (sigue prohibido "tenemos el
-  punto/sucursal en [ciudad]"). Solo prompt; sin esquema; reescribe el caché de v35 (re-warm). 351 golden
-  tests. Deploy: `.\deploy.ps1 copilot-webhook`. **Pendiente de DATA (según confirme Gerencia el ITBMS del
-  envío):** si el envío lleva ITBMS, actualizar `store_facts.tarifa_interior` (y ser consistente con la ciudad).
+- **EN EL REPO, LISTO PARA DESPLEGAR: v58 (`v58-envio-interior-domicilio`).** Dos cosas del envío, de un caso
+  real (Chitré): (1) **el interior ofrecía SOLO retiro en sucursal ($6), omitía la entrega a domicilio puerta
+  a puerta ($9)**. Raíz: NO era la data — `store_facts.tarifa_interior` YA traía ambas; el bot relayó solo la
+  mitad porque la regla de prompt del interior (v46) lo enmarcaba **solo como retiro**. Fix de PROMPT
+  (price-agnostic): la regla SUCURSALES DEL INTERIOR ahora manda ofrecer **las DOS formas** (retiro / domicilio
+  puerta a puerta) con precios/plazos de `info_tienda`, sin omitir el domicilio ni inventar. Guardrail v46
+  intacto. (2) **TODO el costo de envío causa ITBMS 7%** (decisión de Gerencia): antes la data y el tool
+  cotizaban el envío pelado (`B/.6.00`/`B/.9.00`). Ahora se muestra base + ITBMS + total, **calculado en
+  código** (nunca de memoria), igual que los productos: `frasearTarifa` (tool `tarifa_entrega`, ciudad) usa un
+  helper `conImp` (`B/.6.00 + ITBMS (7%) = B/.6.42`), y la migración `20260720120000_store_facts_envio_itbms.sql`
+  actualiza `tarifa_interior` + `tarifa_ciudad_panama` ($6→$6.42, $7→$7.49, $9→$9.63). 356 golden tests.
+  Reescribe el caché de v35 (re-warm). Deploy: `.\deploy.ps1 copilot-webhook` **+ aplicar la migración**
+  `20260720120000_store_facts_envio_itbms.sql` (y espejar los 2 valores en el metaobjeto Shopify
+  `store_facts/datos-tienda` para que un re-sync no los revierta).
 - **🚀 EN VIVO (desplegado 20-jul, healthcheck `version:v57-cotizacion-cantidades`, sobre Sonnet 5): v57 (`v57-cotizacion-cantidades`).** Caso real (conv 50760979705): el
   cliente pidió 2 PG-145XL + 2 CL-146XL; el bot dio bien las líneas por unidad pero **erró el TOTAL por doble
   ITBMS** — sumó los totales que YA tenían ITBMS ($42.38 + $49.22 = $91.60), los tomó como subtotal y volvió a
