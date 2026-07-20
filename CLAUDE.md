@@ -19,7 +19,22 @@ equipo humano: contesta preguntas generales, indica disponibilidad/stock y da pr
 con certeza, y calla/deriva cuando es mejor que responda un humano. Tienda:
 **quickservicepanama.com** (suministros de impresión y tecnología en Panamá).
 
-## Estado actual (2026-07-17)
+## Estado actual (2026-07-20)
+- **EN EL REPO, LISTO PARA DESPLEGAR: v57 (`v57-cotizacion-cantidades`).** Caso real (conv 50760979705): el
+  cliente pidió 2 PG-145XL + 2 CL-146XL; el bot dio bien las líneas por unidad pero **erró el TOTAL por doble
+  ITBMS** — sumó los totales que YA tenían ITBMS ($42.38 + $49.22 = $91.60), los tomó como subtotal y volvió a
+  aplicar el 7% → dijo **$98.60** cuando el correcto es **$91.59** (~$7 de más). Raíz: `buscar_producto` calcula
+  el ITBMS **por unidad**, pero para cantidades / varios productos la tool no da el total → el modelo multiplica,
+  suma y grava **de memoria** (justo lo que el diseño de ITBMS-en-código quería evitar) y se equivocó. Fix
+  (código, como la lección del proyecto): nueva tool **`calcular_cotizacion(items)`** — recibe `{descripcion,
+  precio_usd (SIN ITBMS, el de buscar_producto), cantidad}` por línea y **computa TODO determinista en centavos**
+  (línea = precio×cant, subtotal = Σ, **ITBMS UNA sola vez sobre el subtotal**, total) y devuelve
+  `respuesta_sugerida` ya armada que el bot relaya. Regla de prompt **CANTIDADES / VARIOS PRODUCTOS** (nunca
+  multiplicar/sumar/gravar de memoria; el 7% va una sola vez). Disponible también en MODO ASISTENCIA (es
+  aritmética read-only sobre precios que la asistencia ya expone; excluirla empujaría a hacer la cuenta a mano =
+  el mismo bug). Errores (sin items / precio inválido) → objeto de error, deriva a buscar_producto, nunca cotiza
+  basura. 347 golden tests (lock del caso real: $85.60/$5.99/$91.59, y que $98.60 no reaparezca). Sin esquema.
+  Reescribe el caché de v35 (re-warm, tools+prompt). Deploy: `.\deploy.ps1 copilot-webhook` (sin migración).
 - **🚀 EN VIVO (desplegado 17-jul; VERIFICADO con 2 pruebas reales: TN-830XL→tóner con 7 uds, y "¿puedo pasar a comprar?"→"venga directo, sin pedido previo"; los 2 SQL de data aplicados): v56 (`v56-tienda-directa`).** Caso real del 17-jul: el bot presentó
   la tienda como "punto de retiro" y dijo "al comprar en línea, solo elige Recoger en tienda al pagar" —
   como si hubiera que comprar por la web primero. Regla nueva de prompt TIENDA FÍSICA — COMPRA DIRECTA:

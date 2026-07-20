@@ -76,6 +76,7 @@ const algunTituloConCodigo = extraerFuncion("algunTituloConCodigo");
 const RESPUESTA_NO_RESUELTA_RE = extraerConst("RESPUESTA_NO_RESUELTA_RE");
 const PROMESA_ASESOR_RE = extraerConst("PROMESA_ASESOR_RE");
 const prometeSeguimientoSinResolver = extraerFuncion("prometeSeguimientoSinResolver");
+const calcularCotizacion = extraerFuncion("calcularCotizacion");
 const SYSTEM_PROMPT = extraerSystemPrompt();
 
 // --- harness -------------------------------------------------------------------------------------
@@ -567,6 +568,45 @@ caso("v56: SYSTEM_PROMPT tiene la regla TIENDA FÍSICA — COMPRA DIRECTA", /TIE
 caso("v56: prohíbe presentar la tienda como solo punto de retiro", /NUNCA presentes la tienda como "solo un punto de retiro"/.test(SYSTEM_PROMPT));
 caso('v56: "Recoger en tienda" es opcional, no requisito', /menci[oó]nala como opcional, no como requisito/.test(SYSTEM_PROMPT));
 caso("v56: puede llegar y comprar sin compra web previa", /LLEGAR Y COMPRAR directamente/.test(SYSTEM_PROMPT) && /sin pedido previo ni compra por la web/.test(SYSTEM_PROMPT));
+
+// --- v57: calcular_cotizacion (aritmética de cantidades / varios productos en CÓDIGO) -------------
+console.log("v57 calcular_cotizacion");
+// El caso REAL que falló (conv 50760979705): 2× PG-145XL $19.80 + 2× CL-146XL $23.00. El bot sumó los
+// totales que YA tenían ITBMS ($42.38 + $49.22 = $91.60), los tomó como subtotal y volvió a aplicar el 7%
+// → dijo $98.60. Correcto: subtotal $85.60, ITBMS $5.99, total $91.59.
+const COT_REAL = JSON.parse(calcularCotizacion([
+  { descripcion: "Tinta Canon PG-145XL Negro", precio_usd: "19.80", cantidad: 2 },
+  { descripcion: "Tinta Canon CL-146XL Color", precio_usd: "23.00", cantidad: 2 },
+]));
+caso("v57: caso real → subtotal 85.60 (NO 91.60)", COT_REAL.subtotal_usd === "85.60");
+caso("v57: caso real → ITBMS 5.99 (una sola vez sobre el subtotal)", COT_REAL.itbms_7pct === "5.99");
+caso("v57: caso real → total 91.59 (NO el doble-ITBMS 98.60)", COT_REAL.total_con_itbms === "91.59");
+caso("v57: el total mal ($98.60) NO reaparece por ningún lado", !/98\.60/.test(JSON.stringify(COT_REAL)));
+caso("v57: líneas por producto (39.60 y 46.00)",
+  COT_REAL.lineas[0].subtotal_linea_usd === "39.60" && COT_REAL.lineas[1].subtotal_linea_usd === "46.00");
+caso("v57: respuesta_sugerida trae el total en negrita *$91.59*", /\*\$91\.59\*/.test(COT_REAL.respuesta_sugerida));
+// coherencia con conItbms para 1 unidad (misma base de redondeo determinista).
+const COT_UNO = JSON.parse(calcularCotizacion([{ descripcion: "X", precio_usd: 19.80, cantidad: 1 }]));
+caso("v57: 1 unidad coincide con conItbms (21.19)", COT_UNO.total_con_itbms === conItbms("19.80").total_con_itbms && COT_UNO.total_con_itbms === "21.19");
+// acepta el precio como número o como string con símbolo ($) — el precio_usd de buscar_producto es string.
+const COT_STR = JSON.parse(calcularCotizacion([{ precio_usd: "$23.00", cantidad: 2 }]));
+caso("v57: parsea '$23.00' → subtotal 46.00, total 49.22", COT_STR.subtotal_usd === "46.00" && COT_STR.total_con_itbms === "49.22");
+// cantidad ausente/rara → 1; cantidad enorme → tope 999 (anti-abuso); nunca truena.
+const COT_DEFQ = JSON.parse(calcularCotizacion([{ precio_usd: "10.00" }]));
+caso("v57: cantidad ausente → 1", COT_DEFQ.lineas[0].cantidad === 1 && COT_DEFQ.subtotal_usd === "10.00");
+const COT_CAP = JSON.parse(calcularCotizacion([{ precio_usd: "1.00", cantidad: 100000 }]));
+caso("v57: cantidad enorme → tope 999", COT_CAP.lineas[0].cantidad === 999);
+// errores → objeto de error (el modelo deriva a buscar_producto), nunca cotiza basura ni truena.
+caso("v57: sin items → error sin_items", JSON.parse(calcularCotizacion([])).error === "sin_items");
+caso("v57: items no-array → error sin_items", JSON.parse(calcularCotizacion(null)).error === "sin_items");
+caso("v57: precio inválido → error precio_invalido", JSON.parse(calcularCotizacion([{ precio_usd: "abc", cantidad: 2 }])).error === "precio_invalido");
+caso("v57: precio 0 → error (no cotiza gratis)", JSON.parse(calcularCotizacion([{ precio_usd: 0, cantidad: 2 }])).error === "precio_invalido");
+// wiring en el source real: tool definida, cableada en el dispatch, y en el whitelist de asistencia.
+caso("v57: index.ts define la tool calcular_cotizacion", /name: "calcular_cotizacion"/.test(src));
+caso("v57: index.ts cablea calcularCotizacion en el dispatch", /calcularCotizacion\(\(block\.input as any\)\.items\)/.test(src));
+caso("v57: asistencia incluye calcular_cotizacion", /calcular_cotizacion/.test(assistFilter));
+caso("v57: SYSTEM_PROMPT tiene la regla CANTIDADES / VARIOS PRODUCTOS con calcular_cotizacion", /CANTIDADES \/ VARIOS PRODUCTOS/.test(SYSTEM_PROMPT) && /calcular_cotizacion/.test(SYSTEM_PROMPT));
+caso("v57: SYSTEM_PROMPT advierte del doble ITBMS (una sola vez sobre el subtotal)", /dos veces/.test(SYSTEM_PROMPT) && /una sola vez/i.test(SYSTEM_PROMPT));
 
 // --- resumen --------------------------------------------------------------------------------------
 console.log(`\n${ok} OK, ${mal} FALLA${mal === 1 ? "" : "S"}`);

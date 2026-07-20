@@ -574,6 +574,7 @@ REGLA DE ORO — precio, stock y promociones
 - SOLO afirma datos del producto que devuelva buscar_producto: título/modelo, precio, ITBMS, stock, el enlace, la compatibilidad que figure EN EL TÍTULO y las características FÍSICAS/TÉCNICAS que mencione el campo "especificaciones" (bandeja/tamaño de papel, dúplex, conectividad, velocidad, resolución, dimensiones, memoria — es texto real de la ficha del producto). "especificaciones" pertenece EXCLUSIVAMENTE al producto de ESE MISMO resultado — con varios modelos de la MISMA familia en la lista (ej. MF269dw/MF267dw/MF264dw), verifica que el título que estás citando coincide exactamente antes de afirmar una característica; nunca cruces la ficha de un resultado con el título/link de otro. NUNCA cites de "especificaciones" precio, descuento, promoción, teléfono ni links (esos SIEMPRE salen de precio_usd/itbms_7pct/total_con_itbms/url o de info_tienda, nunca del texto libre de la descripción). Si el cliente pregunta por una característica y NI el título NI "especificaciones" la mencionan, dilo con honestidad ("no tengo ese dato confirmado") o deja que un asesor la detalle — nunca la inventes ni la asumas de memoria (ni "por lógica": una impresora de oficina normalmente imprime carta, pero SOLO lo confirmas si "especificaciones" lo dice). Si "especificaciones_truncada" viene en true, el resumen puede tener más datos que no alcanzaste a ver: en vez de decir tajante que no lo tiene, di que no ves ese dato en el resumen y ofrece que un asesor confirme con la ficha completa.
 - Incluye el link del producto cuando lo tengas, copiándolo EXACTO como viene en el campo "url" de buscar_producto — con TODO lo que esté después del "?" (parámetros utm/ref_code de seguimiento). NUNCA acortes el link ni le quites esos parámetros.
 - PRECIO + ITBMS: los precios son SIN ITBMS. Muestra SIEMPRE el precio, el ITBMS (7%) y el total usando EXACTAMENTE los valores que devuelve la tool (precio_usd, itbms_7pct, total_con_itbms). Formato: "*$116.00 + ITBMS (7%) = $124.12*". NUNCA calcules el impuesto de memoria.
+- CANTIDADES / VARIOS PRODUCTOS: si el cliente pide 2+ unidades de algo, o el total combinado de varios productos, NUNCA multipliques, sumes ni apliques el ITBMS de memoria (aplicar el 7% dos veces cobra de más — es un error grave de plata). Llama a calcular_cotizacion pasándole cada producto con su precio_usd (el UNITARIO SIN ITBMS que te dio buscar_producto) y su cantidad; toma el subtotal, el ITBMS y el total EXACTAMENTE de lo que devuelva (relaya respuesta_sugerida). El ITBMS va UNA sola vez, sobre el subtotal — jamás sobre precios que ya lo incluyen.
 - STOCK / CANTIDAD: indica la disponibilidad usando el campo "stock" que devuelve la tool, TAL CUAL. Si dice "X unidades", dilo; si dice "stock bajo — un asesor verifica…", dilo así. NUNCA inventes ni adivines una cantidad: di solo lo que aparezca en ese campo "stock".
 - SIN STOCK — AVISO AUTOMÁTICO: si el campo "stock" dice "sin stock", además de indicar que un asesor puede confirmar el reingreso, comparte el link del producto y dile al cliente que EN ESA PÁGINA puede activar el botón de aviso de disponibilidad ("Avísame cuando esté disponible") para recibir una notificación automática apenas el producto reingrese. No prometas fechas de reingreso (eso lo confirma un asesor).
 - Si la tool no encuentra el producto, o piden algo fuera de catálogo: discúlpate breve e indica que un asesor confirmará disponibilidad y opciones.
@@ -685,6 +686,10 @@ const TOOLS: Anthropic.Tool[] = [{
   name: "estado_pedido",
   description: "Consulta el ESTADO / seguimiento del pedido del cliente que está escribiendo (por su WhatsApp, tomado del CONTEXTO — NO pidas ni pases el número). Úsala SOLO cuando el cliente pregunte por el estado, seguimiento o entrega de SU pedido/orden/compra YA hecha (\"¿dónde está mi pedido?\", \"¿ya salió mi orden?\", \"¿cuándo me llega?\", \"número de guía\"). Devuelve 'respuesta_sugerida' ya armada: RELÁYALA sin inventar estados, fechas ni guías. Si el estado es 'sin_pedidos'/'sin_dato'/'error', NO afirmes que el cliente no tiene pedidos (tu vista es PARCIAL): relaya la sugerencia (un asesor lo confirma). NO es para cotizar el costo de un envío (usa tarifa_entrega) ni para pagos/facturas/coordinar una entrega en curso (eso lo maneja un asesor).",
   input_schema: { type: "object", properties: {} },
+} as Anthropic.Tool, {
+  name: "calcular_cotizacion",
+  description: "Calcula el TOTAL de una compra de varias unidades y/o varios productos, con ITBMS, en código (aritmética exacta). Úsala SIEMPRE que el cliente pida 2+ unidades de un producto, o el total combinado de varios productos — NUNCA multipliques, sumes ni apliques el ITBMS de memoria (aplicar el 7% dos veces cobra de más: es un error grave). Pásale 'items', una entrada por producto con su precio_usd (el precio UNITARIO SIN ITBMS que te devolvió buscar_producto — cópialo TAL CUAL, no lo inventes ni le sumes el impuesto) y la cantidad. Devuelve el subtotal, el ITBMS (7% una sola vez sobre el subtotal), el total y una 'respuesta_sugerida' ya armada: relaya esos números EXACTAMENTE. Si devuelve error (falta un precio), busca el producto con buscar_producto y vuelve a llamarla con su precio_usd.",
+  input_schema: { type: "object", properties: { items: { type: "array", description: "Una entrada por producto a cotizar.", items: { type: "object", properties: { descripcion: { type: "string", description: "Nombre del producto para la etiqueta de la línea, ej. 'Tinta Canon PG-145XL Negro'." }, precio_usd: { type: "number", description: "Precio UNITARIO SIN ITBMS, copiado EXACTAMENTE del campo precio_usd de buscar_producto." }, cantidad: { type: "number", description: "Cantidad de unidades de este producto (entero ≥ 1)." } }, required: ["precio_usd", "cantidad"] } } }, required: ["items"] },
 } as Anthropic.Tool];
 
 // v45: "garantía/devolución" GENERAL ("¿qué garantía tienen?") ya NO va a handoff permanente — era
@@ -946,6 +951,44 @@ function conItbms(precio: any): { precio_usd: string; itbms_7pct: string; total_
   const n = parseFloat(String(precio ?? "").replace(/[^0-9.]/g, ""));
   if (!isFinite(n) || n <= 0) return { precio_usd: String(precio ?? ""), itbms_7pct: "", total_con_itbms: "" };
   return { precio_usd: n.toFixed(2), itbms_7pct: (n * 0.07).toFixed(2), total_con_itbms: (n * 1.07).toFixed(2) };
+}
+
+// v57 — cotización de VARIAS unidades / varios productos en CÓDIGO. buscarProducto ya calcula el ITBMS por
+// UNIDAD, pero cuando el cliente pide cantidades o un total combinado, el LLM tenía que multiplicar y sumar
+// de memoria — y se equivocaba (caso real conv 50760979705: sumó los totales que YA tenían ITBMS y volvió a
+// aplicar el 7% → cobró ~$7 de más). Esta función recibe {descripcion, precio_usd (SIN ITBMS, el de
+// buscarProducto), cantidad} por línea y computa TODO determinista: línea = precio×cantidad, subtotal = Σ
+// líneas, ITBMS UNA sola vez sobre el subtotal, total = subtotal+ITBMS. Trabaja en centavos (evita el drift
+// de floats). El modelo relaya respuesta_sugerida sin recalcular (regla de prompt CANTIDADES / VARIOS PRODUCTOS).
+function calcularCotizacion(items: any): string {
+  try {
+    const arr = Array.isArray(items) ? items : [];
+    if (!arr.length) return JSON.stringify({ error: "sin_items", nota: "No hay productos para cotizar. Busca el producto con buscar_producto primero." });
+    const lineas = [];
+    let subtotalCent = 0;
+    for (const it of arr) {
+      const precio = parseFloat(String((it && it.precio_usd) ?? "").replace(/[^0-9.]/g, ""));
+      let cant = Math.floor(Number(it && it.cantidad));
+      if (!isFinite(cant) || cant < 1) cant = 1;
+      if (cant > 999) cant = 999;
+      const desc = String((it && it.descripcion) ?? "").slice(0, 120).trim();
+      if (!isFinite(precio) || precio <= 0) {
+        return JSON.stringify({ error: "precio_invalido", nota: "Falta un precio unitario valido (el precio_usd de buscar_producto) para un producto. No cotices de memoria: busca el producto y usa ese precio." });
+      }
+      const precioCent = Math.round(precio * 100);
+      const lineaCent = precioCent * cant;
+      subtotalCent += lineaCent;
+      lineas.push({ descripcion: desc || "Producto", cantidad: cant, precio_unitario_usd: (precioCent / 100).toFixed(2), subtotal_linea_usd: (lineaCent / 100).toFixed(2) });
+    }
+    const itbmsCent = Math.round(subtotalCent * 0.07);
+    const totalCent = subtotalCent + itbmsCent;
+    const fmt = (c: any) => (c / 100).toFixed(2);
+    const lineasTxt = lineas.map((l: any) => `${l.descripcion} ×${l.cantidad}: $${l.subtotal_linea_usd}`).join("\n");
+    const respuesta = `${lineasTxt}\nSubtotal: $${fmt(subtotalCent)} + ITBMS (7%) $${fmt(itbmsCent)} = *$${fmt(totalCent)}*`;
+    return JSON.stringify({ ok: true, lineas, subtotal_usd: fmt(subtotalCent), itbms_7pct: fmt(itbmsCent), total_con_itbms: fmt(totalCent), respuesta_sugerida: respuesta });
+  } catch (e) {
+    return JSON.stringify({ error: String(e).slice(0, 200) });
+  }
 }
 
 // v21 — inventario real desde Shopify Admin (totalInventory por producto, UNA llamada para todos
@@ -1436,7 +1479,7 @@ async function responderLLM(history: { role: string; content: string; model?: st
   // cliente con un humano a cargo) y tarifa_entrega (cotizar método+precio de envío COMPROMETE una entrega
   // —v47—; si en asistencia preguntan el costo, cae a info_tienda genérico, no comprometido). ASSIST_SUFFIX
   // gobierna qué NO cerrar/coordinar; INTERRUPT_RE ya bloqueó pago/fiscal/coordinar entrega antes de llegar.
-  const toolsActivas = modoAsistencia ? TOOLS.filter((t) => ["buscar_producto", "info_tienda", "sucursales_interior", "estado_pedido"].includes(t.name)) : TOOLS;
+  const toolsActivas = modoAsistencia ? TOOLS.filter((t) => ["buscar_producto", "info_tienda", "sucursales_interior", "estado_pedido", "calcular_cotizacion"].includes(t.name)) : TOOLS;
   // Los mensajes de un asesor humano se marcan para que el agente sepa que los dijo una persona.
   // v32: cada mensaje ANTERIOR (no el último/actual) se prefija con [hoy/ayer/fecha] para que el bot
   // ubique el historial en el tiempo. El último (el que se responde ahora) va limpio (es "ahora", y así
@@ -1510,6 +1553,8 @@ async function responderLLM(history: { role: string; content: string; model?: st
           ? await tarifaEntrega((block.input as any).lugar ?? "")
           : block.name === "estado_pedido"
           ? await estadoPedido(waId)
+          : block.name === "calcular_cotizacion"
+          ? calcularCotizacion((block.input as any).items)
           : JSON.stringify({ error: "tool desconocida" });
         results.push({ type: "tool_result", tool_use_id: block.id, content: out });
       }
@@ -1681,7 +1726,7 @@ Deno.serve(async (req) => {
       const diag = await inventarioSelfTest(pid);
       return Response.json({ selftest: "inventario", ...diag, ts: new Date().toISOString() });
     }
-    return Response.json({ status: "ok", function: "copilot-webhook", version: "v56-tienda-directa", mode: MODE, mode_raw: MODE_RAW, model: MODEL, llm_configured: !!anthropic, wati_send_configured: !!(WATI_API_TOKEN && WATI_API_BASE), inventario_configurado: !!(SHOPIFY_ADMIN_TOKEN && SHOPIFY_ADMIN_API_BASE), resolve_configured: !!RESOLVE_SECRET, webhook_key_es_default: WEBHOOK_KEY_ES_DEFAULT, handoff_assist_min: HANDOFF_ASSIST_MIN, handoff_cold_hours: HANDOFF_COLD_HOURS, debounce_ms: DEBOUNCE_MS, live_targets: MODE === "live" ? (LIVE_ALL ? "all" : LIVE_ALLOWLIST.length) : 0, ts: new Date().toISOString() });
+    return Response.json({ status: "ok", function: "copilot-webhook", version: "v57-cotizacion-cantidades", mode: MODE, mode_raw: MODE_RAW, model: MODEL, llm_configured: !!anthropic, wati_send_configured: !!(WATI_API_TOKEN && WATI_API_BASE), inventario_configurado: !!(SHOPIFY_ADMIN_TOKEN && SHOPIFY_ADMIN_API_BASE), resolve_configured: !!RESOLVE_SECRET, webhook_key_es_default: WEBHOOK_KEY_ES_DEFAULT, handoff_assist_min: HANDOFF_ASSIST_MIN, handoff_cold_hours: HANDOFF_COLD_HOURS, debounce_ms: DEBOUNCE_MS, live_targets: MODE === "live" ? (LIVE_ALL ? "all" : LIVE_ALLOWLIST.length) : 0, ts: new Date().toISOString() });
   }
   if (req.method !== "POST") return Response.json({ error: "method_not_allowed" }, { status: 405 });
   if (url.searchParams.get("key") !== WEBHOOK_KEY) return Response.json({ error: "forbidden" }, { status: 403 });
