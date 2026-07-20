@@ -20,7 +20,7 @@ con certeza, y calla/deriva cuando es mejor que responda un humano. Tienda:
 **quickservicepanama.com** (suministros de impresión y tecnología en Panamá).
 
 ## Estado actual (2026-07-20)
-- **EN EL REPO, LISTO PARA DESPLEGAR: v58 (`v58-envio-interior-domicilio`).** Dos cosas del envío, de un caso
+- **🚀 EN VIVO (desplegado 20-jul, healthcheck `version:v58-envio-interior-domicilio`; SQL de `store_facts` aplicado; espejo en metaobjeto Shopify PENDIENTE): v58 (`v58-envio-interior-domicilio`).** Dos cosas del envío, de un caso
   real (Chitré): (1) **el interior ofrecía SOLO retiro en sucursal ($6), omitía la entrega a domicilio puerta
   a puerta ($9)**. Raíz: NO era la data — `store_facts.tarifa_interior` YA traía ambas; el bot relayó solo la
   mitad porque la regla de prompt del interior (v46) lo enmarcaba **solo como retiro**. Fix de PROMPT
