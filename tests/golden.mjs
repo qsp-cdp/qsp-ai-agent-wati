@@ -608,6 +608,17 @@ caso("v57: asistencia incluye calcular_cotizacion", /calcular_cotizacion/.test(a
 caso("v57: SYSTEM_PROMPT tiene la regla CANTIDADES / VARIOS PRODUCTOS con calcular_cotizacion", /CANTIDADES \/ VARIOS PRODUCTOS/.test(SYSTEM_PROMPT) && /calcular_cotizacion/.test(SYSTEM_PROMPT));
 caso("v57: SYSTEM_PROMPT advierte del doble ITBMS (una sola vez sobre el subtotal)", /dos veces/.test(SYSTEM_PROMPT) && /una sola vez/i.test(SYSTEM_PROMPT));
 
+// --- v58: envío al interior ofrece AMBAS opciones (retiro + puerta a puerta) ----------------------
+console.log("v58 envío interior domicilio");
+// Caso real (Chitré): el bot ofreció solo "retiro en sucursal $6.00" y omitió el "$9.00 puerta a puerta"
+// que YA está en store_facts.tarifa_interior. La data tiene las dos; la regla del prompt (v46) enmarcaba
+// el interior solo como retiro → el modelo dejaba fuera el domicilio.
+caso("v58: SYSTEM_PROMPT ofrece las DOS formas de entrega del interior", /DOS formas de entrega y debes ofrecer las DOS/.test(SYSTEM_PROMPT));
+caso("v58: SYSTEM_PROMPT nombra la entrega a domicilio puerta a puerta", /ENTREGA A DOMICILIO puerta a puerta por Servientrega/.test(SYSTEM_PROMPT));
+caso("v58: SYSTEM_PROMPT manda relayar los dos precios de tarifa_interior sin omitir el domicilio", /tarifa_interior/.test(SYSTEM_PROMPT) && /NUNCA omitas el de puerta a puerta/.test(SYSTEM_PROMPT));
+// no rompe el guardrail v46: sigue prohibido decir "tenemos el punto/sucursal en [ciudad]".
+caso("v58: sigue prohibiendo 'tenemos el punto/sucursal' (guardrail v46 intacto)", /NUNCA digas "tenemos el punto/.test(SYSTEM_PROMPT));
+
 // --- resumen --------------------------------------------------------------------------------------
 console.log(`\n${ok} OK, ${mal} FALLA${mal === 1 ? "" : "S"}`);
 if (mal > 0) process.exit(1);
