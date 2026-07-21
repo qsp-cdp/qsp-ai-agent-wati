@@ -736,11 +736,20 @@ puente de conciencia de pedidos del bot).
   retiro→agente verde, asesor→humano), `plazo`, `puntos_retiro`. 8 zonas (Z1 $6 · Z2/Z3/Z6 $7 propia · Z4a
   retiro $6 · Z4b puerta $9 · Z4c asesor · Z5 $9).
 - **sectores_entrega** — `corregimiento`+`barrio`+`alias`→`zona`, con `validacion` (Alta/Media) y
-  `barrio_norm`/`alias_norm` (match sin acentos). 419 filas.
-- **RPC `resolver_tarifa(p_lugar)`** → jsonb: normaliza, matchea con ranking (exacto > parcial), devuelve
-  `ok`/`ambiguo`/`sin_match`. `security definer`, solo `service_role`. Lo llaman el bot (tool tarifa_entrega)
-  y —futuro— el Carrier Service de Shopify (una sola lógica, sin duplicar). Arquitectura: Supabase = verdad
-  de la LÓGICA; Shopify/Shipday/Servientrega derivan; nunca se replica el dato a 3 lados.
+  `barrio_norm`/`alias_norm` (match sin acentos). **427 filas** (21-jul: +8, ids 420-427, cierran Tumba Muerto,
+  Paseo del Norte, San Miguelito, Vía Tocumen, Vía España). **Convención CORREDORES** (avenidas que cruzan
+  varias zonas: Domingo Díaz en 5, Transístmica en 3 con $6/$7/$9): se cargan como VARIAS filas —una por zona—
+  con el mismo `barrio_norm` → el resolver devuelve `ambiguo` y el bot pregunta el tramo. Al agregar nombres:
+  frase completa, nunca fragmento (`boyd roosevelt` sí, `boyd` no — colisiona con Av. Federico Boyd).
+- **RPC `resolver_tarifa(p_lugar)`** → jsonb: `ok`/`ambiguo`/`sin_match`. `security definer`, solo `service_role`.
+  **v2 en vivo (21-jul; v1 = `resolver_tarifa_v1_backup`; el bot la llama por nombre → sin redeploy):** ranking
+  con **frontera de palabra** (mató los falsos positivos por subcadena: `san miguel` ⊄ `san miguelito`, "La Boca"
+  ⊄ "Bocas del Toro") + 3 niveles con desempate por longitud (exacto 300 / palabras completas 200 / consulta
+  contenida 100) + alias por coma + split de camelCase. **Contrato: campo NUEVO `match`** (array, diagnóstico de
+  contra qué matcheó) — additivo, `frasearTarifa` lo ignora; el `opciones[]` de `ambiguo` sigue con
+  `corregimiento`/`metodo`/`tarifa_usd` (verificado, no rompe el fraseo). Impacto: 2.202 `ok` (antes 1.939),
+  67 `ambiguo` (antes 216). Lo llaman el bot (tool tarifa_entrega) y —futuro— el Carrier Service de Shopify.
+  Arquitectura: Supabase = verdad de la LÓGICA; Shopify/Shipday/Servientrega derivan; nunca se replica a 3 lados.
 
 ## Flujo del webhook (resumen de index.ts)
 1. **GET** = healthcheck (status/version/mode/model/live_targets).
