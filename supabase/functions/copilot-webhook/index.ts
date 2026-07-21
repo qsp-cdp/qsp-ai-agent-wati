@@ -451,6 +451,12 @@ const SHOPIFY_ADMIN_API_BASE = (Deno.env.get("SHOPIFY_ADMIN_API_BASE") ?? "").tr
 // v28 — stitching WhatsApp→web por ref_code (atribución / identidad omnicanal en el CDP).
 const RESOLVE_SECRET = (Deno.env.get("RESOLVE_SECRET") ?? "").trim();   // guard del endpoint GET ?ref_code= (v45: trim)
 const STORE_APEX = "https://quickservicepanama.com";          // apex (sin www; www mete redirect)
+// v59 — SHADOW de búsqueda: compara search_catalog (Storefront/Catalog MCP de Shopify) contra suggest.json
+// SIN afectar la respuesta al cliente. Gateado (default OFF, mismo ADN que COPILOT_MODE). Endpoint
+// configurable: default el legacy /api/mcp (público, stateless, funciona hoy); el catálogo UCP en
+// /api/ucp/mcp exige un perfil de agente hosteado -> se migra antes del flip (v60).
+const CATALOG_MCP_URL = (Deno.env.get("SHOPIFY_CATALOG_MCP_URL") ?? `${STORE_APEX}/api/mcp`).trim();
+const BUSQUEDA_SHADOW = (Deno.env.get("BUSQUEDA_SHADOW") ?? "").trim() === "1";
 
 // Piloto gradual: en live, SOLO se envía a estos wa_id. Vacío = no se envía a nadie (sigue
 // registrando en sombra); "all"/"*" = todos. Evita ir a live total por accidente.
@@ -1162,6 +1168,62 @@ function algunTituloConCodigo(titulos: any[], codigos: any[]): boolean {
   return titulos.some((t) => codigos.some((c) => norm(c) && norm(t).includes(norm(c))));
 }
 
+// v59 — SHADOW de búsqueda contra el Catalog MCP de Shopify (search_catalog). Compara recall vs suggest.json
+// SIN cambiar la respuesta al cliente; corre en background (waitUntil). La parte RIESGOSA —parsear la
+// respuesta anidada del MCP (result.content[].text = string JSON, + un 2º bloque con el aviso de
+// deprecación que NO es JSON)— se aísla en parseCatalogoMCP (pura, testeada con la respuesta REAL).
+function parseCatalogoMCP(j: any): any[] {
+  for (const c of (j?.result?.content ?? [])) {
+    if (!c || c.type !== "text") continue;
+    let parsed: any;
+    try { parsed = JSON.parse(c.text); } catch { continue; }  // el bloque de deprecación no es JSON
+    if (!parsed || !Array.isArray(parsed.products)) continue;
+    return parsed.products.map((p: any) => ({
+      titulo: String((p && p.title) ?? ""),
+      precio_usd: (p && p.price_range && p.price_range.min && p.price_range.min.amount != null)
+        ? (Number(p.price_range.min.amount) / 100).toFixed(2) : null,
+      disponible: (p && p.variants && p.variants[0] && p.variants[0].availability)
+        ? (p.variants[0].availability.available ?? null) : null,
+      url: (p && p.url) ?? null,
+      variant_id: (p && p.variants && p.variants[0] && p.variants[0].id) ?? null,
+    }));
+  }
+  return [];
+}
+
+// Llama al endpoint MCP (search_catalog). Best-effort: timeout corto; lanza si falla (el caller loguea).
+async function buscarCatalogoMCP(consulta: string): Promise<any[]> {
+  const body = { jsonrpc: "2.0", id: 1, method: "tools/call", params: { name: "search_catalog", arguments: { catalog: { query: consulta, pagination: { limit: 5 } } } } };
+  const res = await fetch(CATALOG_MCP_URL, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body), signal: AbortSignal.timeout(6000) });
+  if (!res.ok) throw new Error(`mcp_http_${res.status}`);
+  return parseCatalogoMCP(await res.json());
+}
+
+// Compara el resultado REAL de buscarProducto (array de productos, o {resultado/error} si no encontró)
+// contra search_catalog y loguea ambos a job_log (busqueda_shadow). NUNCA lanza al camino del cliente.
+async function compararShadow(consulta: string, salidaBuscar: string): Promise<void> {
+  try {
+    let suggestTitulos: string[] = [];
+    try { const p = JSON.parse(salidaBuscar); if (Array.isArray(p)) suggestTitulos = p.map((x: any) => String((x && x.titulo) ?? "")).filter(Boolean); } catch { /* no-array = sin coincidencias */ }
+    const t0 = Date.now();
+    let mcpTitulos: string[] = [];
+    let mcpError: string | null = null;
+    try { mcpTitulos = (await buscarCatalogoMCP(consulta)).map((p: any) => String(p.titulo ?? "")).filter(Boolean).slice(0, 5); }
+    catch (e) { mcpError = String(e).slice(0, 120); }
+    await log("busqueda_shadow", !mcpError, {
+      consulta: String(consulta).slice(0, 120),
+      suggest_n: suggestTitulos.length, mcp_n: mcpTitulos.length,
+      suggest_titulos: suggestTitulos.slice(0, 5), mcp_titulos: mcpTitulos,
+      mcp_ms: Date.now() - t0,
+      mcp_gana: suggestTitulos.length === 0 && mcpTitulos.length > 0,     // suggest 0, MCP encontró (lo que buscamos)
+      suggest_gana: mcpTitulos.length === 0 && suggestTitulos.length > 0, // regresión potencial: MCP 0, suggest sí
+      ...(mcpError ? { mcp_error: mcpError } : {}),
+    });
+  } catch (e) {
+    try { await log("busqueda_shadow", false, { consulta: String(consulta).slice(0, 120), error: String(e).slice(0, 160) }); } catch { /* nunca romper */ }
+  }
+}
+
 async function buscarProducto(consulta: string, waId: string = "", linksTracked?: Record<string, string>): Promise<string> {
   // Consulta libre tal cual; si no encuentra, reintenta por: (v53) la versión normalizada de dimensiones,
   // (v18) el código de modelo con/sin guion, y (v54) los modelos espaciados JUNTADOS. Deduplica.
@@ -1559,6 +1621,13 @@ async function responderLLM(history: { role: string; content: string; model?: st
           : block.name === "calcular_cotizacion"
           ? calcularCotizacion((block.input as any).items)
           : JSON.stringify({ error: "tool desconocida" });
+        // v59 — SHADOW: compara search_catalog vs suggest.json en BACKGROUND (no cambia la respuesta ni
+        // agrega latencia al cliente). Solo buscar_producto, y solo si BUSQUEDA_SHADOW=1.
+        if (BUSQUEDA_SHADOW && block.name === "buscar_producto") {
+          const st = compararShadow((block.input as any).consulta ?? "", out);
+          // @ts-ignore EdgeRuntime es global en Supabase Edge Functions
+          if (typeof EdgeRuntime !== "undefined") EdgeRuntime.waitUntil(st); else st.catch(() => {});
+        }
         results.push({ type: "tool_result", tool_use_id: block.id, content: out });
       }
     }
@@ -1729,7 +1798,7 @@ Deno.serve(async (req) => {
       const diag = await inventarioSelfTest(pid);
       return Response.json({ selftest: "inventario", ...diag, ts: new Date().toISOString() });
     }
-    return Response.json({ status: "ok", function: "copilot-webhook", version: "v58-envio-interior-domicilio", mode: MODE, mode_raw: MODE_RAW, model: MODEL, llm_configured: !!anthropic, wati_send_configured: !!(WATI_API_TOKEN && WATI_API_BASE), inventario_configurado: !!(SHOPIFY_ADMIN_TOKEN && SHOPIFY_ADMIN_API_BASE), resolve_configured: !!RESOLVE_SECRET, webhook_key_es_default: WEBHOOK_KEY_ES_DEFAULT, handoff_assist_min: HANDOFF_ASSIST_MIN, handoff_cold_hours: HANDOFF_COLD_HOURS, debounce_ms: DEBOUNCE_MS, live_targets: MODE === "live" ? (LIVE_ALL ? "all" : LIVE_ALLOWLIST.length) : 0, ts: new Date().toISOString() });
+    return Response.json({ status: "ok", function: "copilot-webhook", version: "v59-busqueda-shadow", mode: MODE, mode_raw: MODE_RAW, model: MODEL, llm_configured: !!anthropic, wati_send_configured: !!(WATI_API_TOKEN && WATI_API_BASE), inventario_configurado: !!(SHOPIFY_ADMIN_TOKEN && SHOPIFY_ADMIN_API_BASE), resolve_configured: !!RESOLVE_SECRET, webhook_key_es_default: WEBHOOK_KEY_ES_DEFAULT, handoff_assist_min: HANDOFF_ASSIST_MIN, handoff_cold_hours: HANDOFF_COLD_HOURS, debounce_ms: DEBOUNCE_MS, busqueda_shadow: BUSQUEDA_SHADOW, live_targets: MODE === "live" ? (LIVE_ALL ? "all" : LIVE_ALLOWLIST.length) : 0, ts: new Date().toISOString() });
   }
   if (req.method !== "POST") return Response.json({ error: "method_not_allowed" }, { status: 405 });
   if (url.searchParams.get("key") !== WEBHOOK_KEY) return Response.json({ error: "forbidden" }, { status: 403 });

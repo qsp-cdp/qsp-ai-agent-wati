@@ -20,6 +20,24 @@ con certeza, y calla/deriva cuando es mejor que responda un humano. Tienda:
 **quickservicepanama.com** (suministros de impresión y tecnología en Panamá).
 
 ## Estado actual (2026-07-20)
+- **EN EL REPO, LISTO PARA DESPLEGAR (SHADOW, riesgo cero al cliente): v59 (`v59-busqueda-shadow`).** Prep para
+  reemplazar el motor de búsqueda por el **Catalog MCP de Shopify** (`search_catalog`). Contexto: v18/v33/v53/v54/
+  v55 fueron 5 versiones peleando la MISMA raíz — `suggest.json` es búsqueda literal tipo AND (un término que no
+  existe tal cual → 0). Probado contra la tienda REAL, `search_catalog` resuelve los 2 casos insignia **como
+  resultado #1, en español**: "toner TN830XL" (sin guion, la regresión v55) → el tóner correcto $116; "papel bond
+  30 pulgadas plotter" (el `30"` de v53) → el rollo correcto $20. Devuelve precio (minor units, SIN ITBMS →
+  nuestro cálculo en código queda igual), `variant_id` (habilita carrito/checkout fase 2), specs e imágenes.
+  **v59 = SHADOW:** en el dispatch, tras `buscarProducto`, se dispara `compararShadow` en BACKGROUND
+  (`EdgeRuntime.waitUntil`, NO agrega latencia ni cambia la respuesta) que llama `search_catalog` y loguea ambos
+  a `job_log` (`busqueda_shadow`: `suggest_n`/`mcp_n`/títulos/`mcp_gana`/`suggest_gana`). Gateado por
+  **`BUSQUEDA_SHADOW=1`** (default OFF, ADN de COPILOT_MODE). Endpoint por env **`SHOPIFY_CATALOG_MCP_URL`**
+  (default el legacy `/api/mcp`, público y stateless, funciona hoy). Parser aislado en `parseCatalogoMCP` (puro,
+  probado con la respuesta REAL). 372 golden tests. **Endpoint UCP:** el catálogo ya migró a `/api/ucp/mcp` (el
+  `/api/mcp` legacy muere ~31-ago); `/api/ucp/mcp` exige un **perfil de agente hosteado** (`meta.ucp-agent.profile`,
+  probado: sin token, solo el perfil) → se sirve desde una ruta GET del copiloto y se migra ANTES del flip. Deploy:
+  `.\deploy.ps1 copilot-webhook` + setear `BUSQUEDA_SHADOW=1` para arrancar la medición. **Plan:** v59 shadow (mide
+  recall una semana) → v60 flip a `search_catalog` (con suggest.json de fallback; retira la escalera de guiones/
+  `normalizarConsulta`/`juntarModelosEspaciados`/`algunTituloConCodigo`) → fase 2 carrito→checkout por WhatsApp.
 - **🚀 EN VIVO (desplegado 20-jul, healthcheck `version:v58-envio-interior-domicilio`; SQL de `store_facts` aplicado; espejo en metaobjeto Shopify PENDIENTE): v58 (`v58-envio-interior-domicilio`).** Dos cosas del envío, de un caso
   real (Chitré): (1) **el interior ofrecía SOLO retiro en sucursal ($6), omitía la entrega a domicilio puerta
   a puerta ($9)**. Raíz: NO era la data — `store_facts.tarifa_interior` YA traía ambas; el bot relayó solo la

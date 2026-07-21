@@ -77,6 +77,7 @@ const RESPUESTA_NO_RESUELTA_RE = extraerConst("RESPUESTA_NO_RESUELTA_RE");
 const PROMESA_ASESOR_RE = extraerConst("PROMESA_ASESOR_RE");
 const prometeSeguimientoSinResolver = extraerFuncion("prometeSeguimientoSinResolver");
 const calcularCotizacion = extraerFuncion("calcularCotizacion");
+const parseCatalogoMCP = extraerFuncion("parseCatalogoMCP");
 const SYSTEM_PROMPT = extraerSystemPrompt();
 
 // --- harness -------------------------------------------------------------------------------------
@@ -628,6 +629,46 @@ caso("v58: envío propio muestra ITBMS ($6.00 → $6.42)", /6\.00 \+ ITBMS \(7%\
 caso("v58: método asesor sigue sin precio (no ITBMS espurio)", !/ITBMS/.test(rCa.respuesta_sugerida));
 // ambiguo también cotiza con ITBMS en cada opción.
 caso("v58: ambiguo muestra ITBMS por opción", /ITBMS \(7%\) = B\/\.6\.42/.test(rSj.respuesta_sugerida));
+
+// --- v59: SHADOW de búsqueda (parser del Catalog MCP, probado con la respuesta REAL) --------------
+console.log("v59 parseCatalogoMCP");
+// Shape EXACTO capturado del endpoint real (search_catalog "toner TN830XL"): result.content = [ {text: JSON
+// con products[...]}, {text: aviso de deprecación NO-JSON} ]. Cada product: title, price_range.min.amount
+// (minor units), variants[0].availability.available, variants[0].id, url.
+const MCP_TN = { result: { content: [
+  { type: "text", text: JSON.stringify({ products: [
+    { title: "Toner Brother TN-830XL | Para DCP-L2640DW / HL-L2460DW | 3,000 Páginas",
+      url: "https://quickservicepanama.com/products/toner-brother-tn-830xl-dcp-l2640dw-3000-paginas",
+      price_range: { min: { amount: 11600, currency: "USD" }, max: { amount: 11600, currency: "USD" } },
+      variants: [{ id: "gid://shopify/ProductVariant/42325644673094", availability: { available: true } }] },
+  ] }) },
+  { type: "text", text: "DEPRECATION NOTICE: This tool is served by the Storefront MCP server at /api/mcp and will no longer be accessible after August 31, 2026." },
+] } };
+const rMcp = parseCatalogoMCP(MCP_TN);
+caso("v59: parsea el título del tóner correcto", rMcp.length === 1 && rMcp[0].titulo.includes("TN-830XL"));
+caso("v59: precio de minor units a dólares (11600 → 116.00)", rMcp[0].precio_usd === "116.00");
+caso("v59: disponible=true", rMcp[0].disponible === true);
+caso("v59: variant_id presente (para el carrito de fase 2)", rMcp[0].variant_id === "gid://shopify/ProductVariant/42325644673094");
+caso("v59: url presente", rMcp[0].url && rMcp[0].url.includes("/products/"));
+caso("v59: IGNORA el 2º bloque (aviso de deprecación, no-JSON) sin trunar", Array.isArray(rMcp) && rMcp.length === 1);
+// robustez: respuestas raras nunca truenan y devuelven [] o campos null.
+caso("v59: content solo con deprecación → []", parseCatalogoMCP({ result: { content: [{ type: "text", text: "DEPRECATION..." }] } }).length === 0);
+caso("v59: respuesta vacía/null → []", parseCatalogoMCP({}).length === 0 && parseCatalogoMCP(null).length === 0 && parseCatalogoMCP(undefined).length === 0);
+caso("v59: producto sin precio/variantes → campos null, no truena", (() => {
+  const r = parseCatalogoMCP({ result: { content: [{ type: "text", text: JSON.stringify({ products: [{ title: "X" }] }) }] } });
+  return r.length === 1 && r[0].precio_usd === null && r[0].disponible === null && r[0].variant_id === null;
+})());
+caso("v59: multi-producto conserva el orden (ranking del MCP)", (() => {
+  const r = parseCatalogoMCP({ result: { content: [{ type: "text", text: JSON.stringify({ products: [{ title: "A" }, { title: "B" }] }) }] } });
+  return r.length === 2 && r[0].titulo === "A" && r[1].titulo === "B";
+})());
+// wiring en el source real: gate OFF por default, endpoint configurable, background (no bloquea al cliente).
+caso("v59: shadow gateado por BUSQUEDA_SHADOW (default OFF)", /const BUSQUEDA_SHADOW = \(Deno\.env\.get\("BUSQUEDA_SHADOW"\) \?\? ""\)\.trim\(\) === "1"/.test(src));
+caso("v59: endpoint configurable (SHOPIFY_CATALOG_MCP_URL, default legacy /api/mcp)", /SHOPIFY_CATALOG_MCP_URL/.test(src) && /\/api\/mcp/.test(src));
+caso("v59: buscarCatalogoMCP llama search_catalog", /name: "search_catalog"/.test(src));
+caso("v59: shadow corre en background (waitUntil, no await en el camino del cliente)", /EdgeRuntime\.waitUntil\(st\)/.test(src) && /BUSQUEDA_SHADOW && block\.name === "buscar_producto"/.test(src));
+caso("v59: loguea a job_log busqueda_shadow con el flag mcp_gana", /"busqueda_shadow"/.test(src) && /mcp_gana:/.test(src));
+caso("v59: healthcheck expone busqueda_shadow", /busqueda_shadow: BUSQUEDA_SHADOW/.test(src));
 
 // --- resumen --------------------------------------------------------------------------------------
 console.log(`\n${ok} OK, ${mal} FALLA${mal === 1 ? "" : "S"}`);
