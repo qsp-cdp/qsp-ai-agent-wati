@@ -654,7 +654,9 @@ console.log("v59 parseCatalogoMCP");
 // (minor units), variants[0].availability.available, variants[0].id, url.
 const MCP_TN = { result: { content: [
   { type: "text", text: JSON.stringify({ products: [
-    { title: "Toner Brother TN-830XL | Para DCP-L2640DW / HL-L2460DW | 3,000 Páginas",
+    { id: "gid://shopify/Product/7740515942470",
+      title: "Toner Brother TN-830XL | Para DCP-L2640DW / HL-L2460DW | 3,000 Páginas",
+      description: { html: "<p>Compatible con Brother HL-L2460DW</p>" },
       url: "https://quickservicepanama.com/products/toner-brother-tn-830xl-dcp-l2640dw-3000-paginas",
       price_range: { min: { amount: 11600, currency: "USD" }, max: { amount: 11600, currency: "USD" } },
       variants: [{ id: "gid://shopify/ProductVariant/42325644673094", availability: { available: true } }] },
@@ -699,6 +701,22 @@ caso("v59.2: ciudad a domicilio vs interior a sucursal (distinción explícita)"
 const shopifySrc = readFileSync(join(dirname(fileURLToPath(import.meta.url)), "..", "supabase", "functions", "shopify-webhook", "index.ts"), "utf8");
 caso("v59.2: shopify-webhook rescata envío gratis por zona (esEnvioGratis + esFlotaPropia)", /esEnvioGratis\(shopifyOrder\)/.test(shopifySrc) && /esFlotaPropia\(zona\)/.test(shopifySrc));
 caso("v59.2: rescate solo despacha flota PROPIA (interior/servientrega/retiro → no Shipday)", /if \(zona\.estado === 'ok'\) return zona\.metodo === 'propia';/.test(shopifySrc) && /envio_gratis_omitido/.test(shopifySrc));
+
+// --- v60: FLIP a search_catalog (Catalog MCP) como motor primario ---------------------------------
+console.log("v60 flip a search_catalog");
+// parseCatalogoMCP ahora también da `id` (para inventarioShopify) y `descripcion_html` (para especificaciones).
+caso("v60: parseCatalogoMCP devuelve id (gid, para inventarioShopify)", rMcp[0].id === "gid://shopify/Product/7740515942470");
+caso("v60: parseCatalogoMCP devuelve descripcion_html (para especificaciones)", /Compatible con Brother/.test(rMcp[0].descripcion_html || ""));
+// prompt: la regla del guardrail (coincidencia aproximada → pedido especial).
+caso("v60: SYSTEM_PROMPT tiene la regla COINCIDENCIA APROXIMADA / PEDIDO ESPECIAL", /COINCIDENCIA APROXIMADA \/ PEDIDO ESPECIAL/.test(SYSTEM_PROMPT) && /PEDIDO ESPECIAL/.test(SYSTEM_PROMPT));
+caso("v60: la regla prohíbe presentar la alternativa como el modelo pedido", /NUNCA como si fueran el modelo pedido/.test(SYSTEM_PROMPT));
+// wiring en el source real:
+caso("v60: gated por BUSQUEDA_MCP (default OFF)", /const BUSQUEDA_MCP = \(Deno\.env\.get\("BUSQUEDA_MCP"\) \?\? ""\)\.trim\(\) === "1"/.test(src));
+caso("v60: MCP primario en buscarProducto", /if \(BUSQUEDA_MCP\) \{/.test(src) && /const mcp = await buscarCatalogoMCP\(consulta\)/.test(src));
+caso("v60: guardrail — cross-check con suggest.json cuando el código no está en ningún título del MCP", /codigos\.length && !algunTituloConCodigo\(top\.map\(\(p\) => p\.titulo\), codigos\)/.test(src) && /exacto = suggestN > 0/.test(src));
+caso("v60: enriquecer señaliza 'aproximada' (alternativas) cuando no es exacto", /if \(exacto\) return JSON\.stringify\(enriquecidos\)/.test(src) && /coincidencia: "aproximada"/.test(src) && /alternativas: enriquecidos/.test(src));
+caso("v60: fallback de confiabilidad — MCP caído cae a la escalera suggest.json (busqueda_mcp_fallo)", /busqueda_mcp_fallo/.test(src) && /motor legacy \/ fallback de confiabilidad/.test(src));
+caso("v60: healthcheck expone busqueda_mcp", /busqueda_mcp: BUSQUEDA_MCP/.test(src));
 
 // --- resumen --------------------------------------------------------------------------------------
 console.log(`\n${ok} OK, ${mal} FALLA${mal === 1 ? "" : "S"}`);

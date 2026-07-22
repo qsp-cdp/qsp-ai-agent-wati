@@ -19,7 +19,28 @@ equipo humano: contesta preguntas generales, indica disponibilidad/stock y da pr
 con certeza, y calla/deriva cuando es mejor que responda un humano. Tienda:
 **quickservicepanama.com** (suministros de impresión y tecnología en Panamá).
 
-## Estado actual (2026-07-20)
+## Estado actual (2026-07-22)
+- **EN EL REPO, LISTO PARA DESPLEGAR (FLIP env-gated, riesgo cero al deploy): v60 (`v60-busqueda-catalog-mcp`).**
+  El motor de búsqueda pasa de `suggest.json` (literal AND) a **`search_catalog` (Catalog MCP de Shopify)**.
+  Motivado por la auditoría del 22-jul: ~10% de las búsquedas daban 0 y **el 94% de esos "no" eran FALSOS**
+  (el producto existía) — pura formulación literal (formato GI-16BK, unidades 610mm, color "morada", lenguaje
+  "oficina básica"). En `buscarProducto`, si **`BUSQUEDA_MCP=1`** (default OFF), el primario es
+  `buscarCatalogoMCP`; **suggest.json queda de FALLBACK** (si el MCP falla/timeout → escalera de siempre, la
+  búsqueda nunca se rompe; `job_log` `busqueda_mcp_fallo`) **y de VERIFICADOR** (cross-check). **GUARDRAIL
+  obligatorio** (la lección del audit: el MCP es semántico, nunca da vacío — "Printhead PF-04" devolvió *una
+  mochila*): si la consulta trae un código y NINGÚN título del MCP lo contiene, se cruza con suggest.json; si el
+  literal (con tags/body) TAMPOCO halla → `enriquecer` marca **`coincidencia:"aproximada"`** con `alternativas` +
+  nota de **PEDIDO ESPECIAL** (regla de prompt nueva: el bot NO presenta el vecino como el modelo pedido, lo
+  ofrece como alternativa y deriva el pedido especial). `parseCatalogoMCP` ahora también da `id` (gid, para
+  `inventarioShopify`) y `descripcion_html` (para `especificaciones`); el resto del enriquecimiento (ITBMS en
+  código, stock por Admin GraphQL, ref_codes/tracking) se reusa igual. El shadow (v59) se auto-apaga si MCP es
+  primario. 393 golden + 21 node tests. Revisión adversarial inline. **Endpoint:** `SHOPIFY_CATALOG_MCP_URL`
+  (default el legacy `/api/mcp`, que el shadow probó con 0 errores; muere ~31-ago → migrar a `/api/ucp/mcp` con
+  perfil de agente ANTES del flip definitivo). **Deploy:** `.\deploy.ps1 copilot-webhook` (no-op) → probar con
+  las insignia (TN830XL, PF-04, bond 30, Kyocera 3253ci) seteando `BUSQUEDA_MCP=1` → confirmar el guardrail →
+  apagar `BUSQUEDA_SHADOW`. Rollback instantáneo: `BUSQUEDA_MCP=0`. **NO retira** la escalera de guiones/
+  `normalizarConsulta`/`juntarModelosEspaciados`/`algunTituloConCodigo` — son el fallback + verificador.
+## Estado histórico (2026-07-20)
 - **EN EL REPO, LISTO PARA DESPLEGAR: v59.2 (`v59.2-envio-gratis-interior`) + rescate de despacho.** Frente
   "envíos de Shopify", punto 1 (el envío gratis >$300). DOS piezas, mismo redeploy:
   (1) **Bot (v59.2, `copilot-webhook`):** regla de prompt ENVÍO GRATIS — >$300 gratis en TODO el país, pero

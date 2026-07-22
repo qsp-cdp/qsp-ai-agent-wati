@@ -457,6 +457,9 @@ const STORE_APEX = "https://quickservicepanama.com";          // apex (sin www; 
 // /api/ucp/mcp exige un perfil de agente hosteado -> se migra antes del flip (v60).
 const CATALOG_MCP_URL = (Deno.env.get("SHOPIFY_CATALOG_MCP_URL") ?? `${STORE_APEX}/api/mcp`).trim();
 const BUSQUEDA_SHADOW = (Deno.env.get("BUSQUEDA_SHADOW") ?? "").trim() === "1";
+// v60 — FLIP: motor de búsqueda primario = search_catalog (Catalog MCP) en vez de suggest.json. Default OFF
+// (deploy = no-op hasta flipear). suggest.json queda de fallback de confiabilidad + verificador de código.
+const BUSQUEDA_MCP = (Deno.env.get("BUSQUEDA_MCP") ?? "").trim() === "1";
 
 // Piloto gradual: en live, SOLO se envía a estos wa_id. Vacío = no se envía a nadie (sigue
 // registrando en sombra); "all"/"*" = todos. Evita ir a live total por accidente.
@@ -595,6 +598,7 @@ BÚSQUEDA DE PRODUCTOS (cómo usar buscar_producto)
 - CONSUMIBLE SIN MODELO — pregunta primero: si piden tinta/tóner/cartucho/cinta de una marca o "para mi impresora" SIN indicar el modelo ("¿tienen tinta Canon?"), NO respondas con una lista de productos: el consumible correcto depende del modelo exacto y una lista al azar confunde. Después de buscar (para confirmar que manejamos la marca), responde que sí trabajamos esa marca y PREGUNTA el modelo de la tinta o de la impresora (una sola pregunta corta; también sirve una foto del cartucho o del equipo). Solo si el cliente dice que no lo sabe, oriéntalo con 1-2 ejemplos de lo que devolvió la búsqueda.
 - COMPATIBILIDAD: NO afirmes que un producto sirve para cierto equipo a menos que el resultado de buscar_producto lo indique — NI SIQUIERA como probabilidad ("suele ser la misma tinta", "debería servir"): eso también es adivinar. Si no estás seguro, dilo y deja que un asesor confirme.
 - MODELO EXACTO: usa el TÍTULO tal cual lo devuelve buscar_producto. Si el modelo que pidió el cliente NO aparece en el título del resultado, NO lo renombres ni asumas que es el mismo equipo: dilo claro (ej. "no encontré el [modelo] exacto; lo más parecido que tenemos es [título real]…") y ofrécelo como alternativa o deriva. NUNCA pongas el modelo pedido junto al precio o link de otro producto.
+- COINCIDENCIA APROXIMADA / PEDIDO ESPECIAL: si buscar_producto devuelve un objeto con coincidencia:"aproximada" (en vez de una lista de productos), significa que NO tenemos el modelo exacto que pidió el cliente. Dile con honestidad que ese modelo exacto no está en el catálogo; ofrece las "alternativas" como opciones similares o compatibles SOLO si de verdad aplican (NUNCA como si fueran el modelo pedido); y aclara que un asesor puede confirmar si el modelo exacto se consigue por PEDIDO ESPECIAL. Sigue la regla de oro: no afirmes compatibilidad que no sabés.
 
 VENTA CONSULTIVA — ayuda a elegir bien (sin inventar)
 - No solo respondas: ayuda a comprar bien, como un buen asesor. Si el cliente no sabe qué llevar o pide una recomendación, haz 1-2 preguntas cortas antes de sugerir (¿para casa, oficina o empresa?, ¿cuánto imprime al mes?, ¿color/WiFi/escáner?, ¿presupuesto?).
@@ -1180,6 +1184,7 @@ function parseCatalogoMCP(j: any): any[] {
     try { parsed = JSON.parse(c.text); } catch { continue; }  // el bloque de deprecación no es JSON
     if (!parsed || !Array.isArray(parsed.products)) continue;
     return parsed.products.map((p: any) => ({
+      id: (p && p.id) ?? null,   // gid://shopify/Product/N — inventarioShopify le saca los dígitos
       titulo: String((p && p.title) ?? ""),
       precio_usd: (p && p.price_range && p.price_range.min && p.price_range.min.amount != null)
         ? (Number(p.price_range.min.amount) / 100).toFixed(2) : null,
@@ -1187,6 +1192,7 @@ function parseCatalogoMCP(j: any): any[] {
         ? (p.variants[0].availability.available ?? null) : null,
       url: (p && p.url) ?? null,
       variant_id: (p && p.variants && p.variants[0] && p.variants[0].id) ?? null,
+      descripcion_html: (p && p.description && p.description.html) ? p.description.html : undefined,  // v60 → especificaciones
     }));
   }
   return [];
@@ -1230,12 +1236,45 @@ async function buscarProducto(consulta: string, waId: string = "", linksTracked?
   // (v18) el código de modelo con/sin guion, y (v54) los modelos espaciados JUNTADOS. Deduplica.
   // v55: si la consulta trae códigos de modelo, un resultado sin el código en NINGÚN título no corta la
   // escalera (queda de fallback) — ver algunTituloConCodigo.
+  const codigos = modelosEn(consulta);
+  let lastErr: string | null = null;
+
+  // === v60 — motor PRIMARIO: Catalog MCP (search_catalog), gated por BUSQUEDA_MCP (default OFF). ===
+  // El MCP es semántico → nunca da vacío, devuelve el vecino más cercano AUNQUE no tengamos el producto
+  // (caso real: "Printhead PF-04" → una mochila). Guardrail: si la consulta trae un código y NINGÚN título
+  // del MCP lo contiene, se cruza con suggest.json; si el motor literal (con tags/body) TAMPOCO halla nada,
+  // el modelo no está → coincidencia "aproximada" (el bot lo ofrece como alternativa/pedido especial, nunca
+  // como el modelo pedido). suggest.json queda de FALLBACK de confiabilidad: si el MCP falla/timeout, la
+  // búsqueda no se rompe (cae a la escalera de abajo).
+  if (BUSQUEDA_MCP) {
+    try {
+      const mcp = await buscarCatalogoMCP(consulta);
+      if (mcp.length) {
+        const top = mcp.slice(0, 5).map((p: any) => ({
+          id: p.id, titulo: p.titulo, precio_usd: p.precio_usd, disponible: p.disponible,
+          marca: undefined, tipo: undefined, url: p.url, descripcion_html: p.descripcion_html,
+        }));
+        let exacto = true;
+        if (codigos.length && !algunTituloConCodigo(top.map((p) => p.titulo), codigos)) {
+          let suggestN = 0;
+          try { suggestN = (await suggestShopify(consulta)).length; } catch { /* suggest caído → conservador: no-hallado */ }
+          exacto = suggestN > 0;   // el literal (con tags/body) confirma que el código existe en el catálogo
+        }
+        return await enriquecer(top, exacto);
+      }
+      // MCP vacío (rarísimo) → cae a suggest.json.
+    } catch (e) {
+      lastErr = String(e).slice(0, 120);
+      await log("busqueda_mcp_fallo", false, { consulta: String(consulta).slice(0, 120), error: lastErr });
+      // MCP caído/timeout → sigue al fallback suggest.json (la búsqueda nunca se rompe).
+    }
+  }
+
+  // === suggest.json — motor legacy / fallback de confiabilidad. La escalera de siempre (v18/v33/v53/v54/v55). ===
   const norm = normalizarConsulta(consulta);
   const junta = juntarModelosEspaciados(consulta);
-  const codigos = modelosEn(consulta);
   const intentos = [consulta, ...(norm && norm !== consulta ? [norm] : []), ...codigos.flatMap(variantesModelo), ...(junta !== consulta ? [junta] : [])];
   const vistos = new Set<string>();
-  let lastErr: string | null = null;
   let fallback: any[] | null = null; // primer resultado no-vacío SIN match de título (la consulta más precisa)
   for (const q of intentos) {
     const k = q.trim().toLowerCase();
@@ -1262,7 +1301,7 @@ async function buscarProducto(consulta: string, waId: string = "", linksTracked?
 
   // Enriquecimiento (v21 ITBMS + stock real; v28/v29 tracking; v52 especificaciones) — compartido por el
   // hit directo y el fallback v55.
-  async function enriquecer(top: any[]): Promise<string> {
+  async function enriquecer(top: any[], exacto: boolean = true): Promise<string> {
     // v21: enriquece con ITBMS (cálculo en código) y stock real (Shopify Admin, best-effort).
     const inv = await inventarioShopify(top.map((p) => p.id).filter(Boolean));
     // v28: tracking — URL apex + UTMs + ref_code (guarda el mapeo para el stitch WhatsApp→web).
@@ -1294,7 +1333,14 @@ async function buscarProducto(consulta: string, waId: string = "", linksTracked?
         especificaciones_truncada: specsLimpias.length > 1500 || undefined,
       };
     });
-    return JSON.stringify(enriquecidos);
+    if (exacto) return JSON.stringify(enriquecidos);
+    // v60 guardrail: coincidencia APROXIMADA (vecino semántico del MCP, no el modelo exacto). El bot NO debe
+    // presentarlas como el modelo pedido — las ofrece como alternativas / pedido especial.
+    return JSON.stringify({
+      coincidencia: "aproximada",
+      nota: "No se encontró el modelo EXACTO que pidió el cliente en el catálogo. Estos son productos similares o compatibles: NO los presentes como el modelo pedido; ofrécelos como alternativas y aclara que un asesor confirma si el modelo exacto se consigue por PEDIDO ESPECIAL.",
+      alternativas: enriquecidos,
+    });
   }
   if (lastErr) return JSON.stringify({ error: lastErr });
   return JSON.stringify({ resultado: "sin coincidencias en el catálogo" });
@@ -1634,7 +1680,7 @@ async function responderLLM(history: { role: string; content: string; model?: st
           : JSON.stringify({ error: "tool desconocida" });
         // v59 — SHADOW: compara search_catalog vs suggest.json en BACKGROUND (no cambia la respuesta ni
         // agrega latencia al cliente). Solo buscar_producto, y solo si BUSQUEDA_SHADOW=1.
-        if (BUSQUEDA_SHADOW && block.name === "buscar_producto") {
+        if (BUSQUEDA_SHADOW && !BUSQUEDA_MCP && block.name === "buscar_producto") {
           const st = compararShadow((block.input as any).consulta ?? "", out);
           // @ts-ignore EdgeRuntime es global en Supabase Edge Functions
           if (typeof EdgeRuntime !== "undefined") EdgeRuntime.waitUntil(st); else st.catch(() => {});
@@ -1809,7 +1855,7 @@ Deno.serve(async (req) => {
       const diag = await inventarioSelfTest(pid);
       return Response.json({ selftest: "inventario", ...diag, ts: new Date().toISOString() });
     }
-    return Response.json({ status: "ok", function: "copilot-webhook", version: "v59.2-envio-gratis-interior", mode: MODE, mode_raw: MODE_RAW, model: MODEL, llm_configured: !!anthropic, wati_send_configured: !!(WATI_API_TOKEN && WATI_API_BASE), inventario_configurado: !!(SHOPIFY_ADMIN_TOKEN && SHOPIFY_ADMIN_API_BASE), resolve_configured: !!RESOLVE_SECRET, webhook_key_es_default: WEBHOOK_KEY_ES_DEFAULT, handoff_assist_min: HANDOFF_ASSIST_MIN, handoff_cold_hours: HANDOFF_COLD_HOURS, debounce_ms: DEBOUNCE_MS, busqueda_shadow: BUSQUEDA_SHADOW, live_targets: MODE === "live" ? (LIVE_ALL ? "all" : LIVE_ALLOWLIST.length) : 0, ts: new Date().toISOString() });
+    return Response.json({ status: "ok", function: "copilot-webhook", version: "v60-busqueda-catalog-mcp", mode: MODE, mode_raw: MODE_RAW, model: MODEL, llm_configured: !!anthropic, wati_send_configured: !!(WATI_API_TOKEN && WATI_API_BASE), inventario_configurado: !!(SHOPIFY_ADMIN_TOKEN && SHOPIFY_ADMIN_API_BASE), resolve_configured: !!RESOLVE_SECRET, webhook_key_es_default: WEBHOOK_KEY_ES_DEFAULT, handoff_assist_min: HANDOFF_ASSIST_MIN, handoff_cold_hours: HANDOFF_COLD_HOURS, debounce_ms: DEBOUNCE_MS, busqueda_shadow: BUSQUEDA_SHADOW, busqueda_mcp: BUSQUEDA_MCP, live_targets: MODE === "live" ? (LIVE_ALL ? "all" : LIVE_ALLOWLIST.length) : 0, ts: new Date().toISOString() });
   }
   if (req.method !== "POST") return Response.json({ error: "method_not_allowed" }, { status: 405 });
   if (url.searchParams.get("key") !== WEBHOOK_KEY) return Response.json({ error: "forbidden" }, { status: 403 });
