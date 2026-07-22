@@ -687,6 +687,19 @@ caso("v59: shadow corre en background (waitUntil, no await en el camino del clie
 caso("v59: loguea a job_log busqueda_shadow con el flag mcp_gana", /"busqueda_shadow"/.test(src) && /mcp_gana:/.test(src));
 caso("v59: healthcheck expone busqueda_shadow", /busqueda_shadow: BUSQUEDA_SHADOW/.test(src));
 
+// --- v59.2: envío gratis >$300 — distinción ciudad (domicilio) vs interior (sucursal Servientrega) -
+console.log("v59.2 envío gratis interior");
+// Decisión de Gerencia: >$300 gratis en todo el país, PERO en el interior el envío gratis es a la sucursal
+// Servientrega para RETIRO (no puerta a puerta). El bot debe SIEMPRE aclarar esa distinción.
+caso("v59.2: SYSTEM_PROMPT tiene la regla ENVÍO GRATIS (>$300)", /ENVÍO GRATIS \(compras mayores a US\$300\)/.test(SYSTEM_PROMPT));
+caso("v59.2: interior = sucursal Servientrega para RETIRO", /SUCURSAL SERVIENTREGA para RETIRO/.test(SYSTEM_PROMPT) && /\(NO puerta a puerta\)/.test(SYSTEM_PROMPT));
+caso("v59.2: prohíbe prometer puerta a puerta gratis en el interior", /NUNCA prometas domicilio puerta a puerta gratis en el interior/.test(SYSTEM_PROMPT));
+caso("v59.2: ciudad a domicilio vs interior a sucursal (distinción explícita)", /Ciudad de Panamá es gratis a DOMICILIO/.test(SYSTEM_PROMPT));
+// wiring del despacho (shopify-webhook, no copilot): fuente real chequeada por si la lógica se toca.
+const shopifySrc = readFileSync(join(dirname(fileURLToPath(import.meta.url)), "..", "supabase", "functions", "shopify-webhook", "index.ts"), "utf8");
+caso("v59.2: shopify-webhook rescata envío gratis por zona (esEnvioGratis + esFlotaPropia)", /esEnvioGratis\(shopifyOrder\)/.test(shopifySrc) && /esFlotaPropia\(zona\)/.test(shopifySrc));
+caso("v59.2: rescate solo despacha flota PROPIA (interior/servientrega/retiro → no Shipday)", /if \(zona\.estado === 'ok'\) return zona\.metodo === 'propia';/.test(shopifySrc) && /envio_gratis_omitido/.test(shopifySrc));
+
 // --- resumen --------------------------------------------------------------------------------------
 console.log(`\n${ok} OK, ${mal} FALLA${mal === 1 ? "" : "S"}`);
 if (mal > 0) process.exit(1);

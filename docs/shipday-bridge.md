@@ -34,6 +34,15 @@ Con eso, cada pedido de Shopify crea automáticamente la orden de entrega en Shi
 > que el copiloto lo lea. **NO altera la dirección** que Shipday geocodifica; es best-effort (si el RPC falla o
 > tarda >5s, el pedido sale igual que antes). Detalle del contrato: `docs/handoff-pedidos-conciencia.md`.
 
+> **Rescate de envío gratis >$300:** la tarifa "¡Envío GRATIS! …" **no pasa el filtro por nombre**
+> (`SHOPIFY_DELIVERY_FILTER`) → esos pedidos (los más grandes) no llegaban a Shipday. Fix: si un pedido no pasa
+> el filtro pero **es envío gratis** (`esEnvioGratis`, detecta por TÉRMINO en el nombre de la tarifa —env
+> `SHOPIFY_FREE_SHIP_TERMS`, default `gratis,free`— **no** por precio $0, para que "Recoger en tienda" no cuente),
+> se resuelve la zona y se despacha a Shipday **solo si es flota PROPIA** (ciudad). El **interior** con envío
+> gratis va a la **sucursal Servientrega para retiro** (NO puerta a puerta) → **no** va a Shipday. Estrictamente
+> aditivo (solo agrega despachos que hoy se pierden; el peor caso —RPC caído— es el statu quo). Telemetría:
+> `job_log` `envio_gratis_rescatado` / `envio_gratis_omitido` (con la zona y el total).
+
 ## 2. WATI → Shipday (compra asistida por WhatsApp)
 
 Cuando el cliente quiere que lo ayudemos a comprar por WhatsApp, el flujo de WATI captura los datos con la plantilla de dirección (ver [`docs/plantilla-wati.md`](docs/plantilla-wati.md)) y al final llama a este servicio:

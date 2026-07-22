@@ -9,7 +9,29 @@ import {
   shopifyOrderToShipday,
   shouldDispatchShopifyOrder,
 } from '../_shared/shipday.ts';
-import { resolverTarifa, upsertPedido } from '../_shared/db.ts';
+import { logJob, resolverTarifa, upsertPedido, type ZonaResuelta } from '../_shared/db.ts';
+
+// Detecta la tarifa de envío GRATIS (>$300 aplica en todo el país). Por NOMBRE de la tarifa (término
+// configurable por env), NO por precio $0 — así "Recoger en tienda" (también $0) NO cuenta como envío gratis.
+function esEnvioGratis(shopifyOrder: any): boolean {
+  const terms = (Deno.env.get('SHOPIFY_FREE_SHIP_TERMS') ?? 'gratis,free').split(',').map((t) => t.trim().toLowerCase()).filter(Boolean);
+  const lines: string[] = (shopifyOrder?.shipping_lines || []).map((l: any) => `${l?.title ?? ''} ${l?.code ?? ''}`.toLowerCase());
+  return terms.length > 0 && lines.some((m) => terms.some((t) => m.includes(t)));
+}
+
+// ¿La zona resuelta es entrega de FLOTA PROPIA (→ Shipday)? Solo entonces se despacha un envío gratis
+// "rescatado". Cualquier otra cosa (sin_match=interior, servientrega, retiro, asesor, o RPC caído/null) → false:
+// no es nuestra flota, va por Servientrega a la sucursal o lo ve el operador. `ambiguo` solo si TODAS las
+// opciones son propias (ej. San Miguelito Z3/Z6, ambas $7 propia). Conservador: ante la duda, NO despacha.
+function esFlotaPropia(zona: ZonaResuelta | null): boolean {
+  if (!zona) return false;
+  if (zona.estado === 'ok') return zona.metodo === 'propia';
+  if (zona.estado === 'ambiguo') {
+    const ops = zona.opciones ?? [];
+    return ops.length > 0 && ops.every((o: any) => o?.metodo === 'propia');
+  }
+  return false;
+}
 
 async function verifyShopifyHmac(rawBody: string, hmacHeader: string): Promise<boolean> {
   const secret = Deno.env.get('SHOPIFY_WEBHOOK_SECRET');
@@ -37,15 +59,28 @@ Deno.serve(async (req) => {
 
   try {
     const shopifyOrder = JSON.parse(rawBody);
-    if (!shouldDispatchShopifyOrder(shopifyOrder)) {
+    const order = shopifyOrderToShipday(shopifyOrder);
+    // Decisión de despacho. Normalmente por el filtro de nombre de la tarifa (shouldDispatchShopifyOrder).
+    // RESCATE de envío gratis (>$300, todo el país): esa tarifa no pasa el filtro por nombre, pero SÍ debe ir
+    // a Shipday cuando es entrega de flota PROPIA (ciudad). En el interior el envío gratis es a la sucursal
+    // Servientrega (retiro) → NO va a Shipday. La zona resuelta decide; se reutiliza para el enriquecimiento.
+    let zona: ZonaResuelta | null = null;
+    let despachar = shouldDispatchShopifyOrder(shopifyOrder);
+    if (!despachar && esEnvioGratis(shopifyOrder)) {
+      zona = await resolverTarifa(String(order.customerAddress ?? ''));
+      despachar = esFlotaPropia(zona);
+      await logJob('shopify-webhook', despachar ? 'envio_gratis_rescatado' : 'envio_gratis_omitido', true, {
+        order: order.orderNumber, zona: zona?.zona ?? zona?.estado ?? 'n/d', total: shopifyOrder.total_price ?? null,
+      });
+    }
+    if (!despachar) {
       console.log(`Pedido ${shopifyOrder.order_number ?? shopifyOrder.id} omitido (no es entrega local)`);
       return json({ ok: true, skipped: true });
     }
-    const order = shopifyOrderToShipday(shopifyOrder);
     // v52: enriquecimiento de despacho. NO altera la dirección que Shipday geocodifica;
     // agrega la zona resuelta a las instrucciones para quien despacha. Best-effort:
     // si el RPC falla o tarda, `zona` es null y el pedido sale igual que antes.
-    const zona = await resolverTarifa(String(order.customerAddress ?? ''));
+    if (zona === null) zona = await resolverTarifa(String(order.customerAddress ?? ''));
     const nota: string[] = [];
     if (zona?.estado === 'ok') {
       nota.push(`🗺️ ${zona.zona} · $${zona.tarifa_usd} · ${zona.metodo} · confianza ${zona.confianza}`);
@@ -67,7 +102,7 @@ Deno.serve(async (req) => {
     const result = await createShipdayOrder(order);
     console.log(`Pedido Shopify ${order.orderNumber} enviado a Shipday (zona: ${zona?.zona ?? zona?.estado ?? 'n/d'})`);
     // v48: conciencia de pedidos — deja el estado en `pedidos` para el copiloto (best-effort, no rompe).
-    // Va a Shipday porque pasó el filtro de entrega local → método 'propia'. estado 'nuevo' (o 'cancelado').
+    // `metodo` REAL (v52) — resuelto por la zona; cae a 'propia' si el resolver no dio 'ok'. estado 'nuevo'/'cancelado'.
     await upsertPedido({
       wa_id: normalizePhone(String(order.customerPhoneNumber ?? '')),
       fuente: 'shopify',

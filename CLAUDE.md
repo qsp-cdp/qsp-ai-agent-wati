@@ -20,6 +20,22 @@ con certeza, y calla/deriva cuando es mejor que responda un humano. Tienda:
 **quickservicepanama.com** (suministros de impresión y tecnología en Panamá).
 
 ## Estado actual (2026-07-20)
+- **EN EL REPO, LISTO PARA DESPLEGAR: v59.2 (`v59.2-envio-gratis-interior`) + rescate de despacho.** Frente
+  "envíos de Shopify", punto 1 (el envío gratis >$300). DOS piezas, mismo redeploy:
+  (1) **Bot (v59.2, `copilot-webhook`):** regla de prompt ENVÍO GRATIS — >$300 gratis en TODO el país, pero
+  **SIEMPRE aclarar** la distinción: ciudad = a domicilio; **interior = a la sucursal Servientrega para RETIRO,
+  NO puerta a puerta** (evita el reclamo del cliente del interior que esperaba domicilio gratis). + migración
+  `20260722130000_store_facts_envio_gratis.sql` que reescribe `store_facts.envio_resumen` con esa distinción
+  (espejar en el metaobjeto Shopify). Coexiste con la regla de interior v58 (retiro $6/puerta $9 para <$300).
+  (2) **Despacho (`shopify-webhook`):** RESCATE — la tarifa "¡Envío GRATIS!" no pasaba el filtro por nombre →
+  los pedidos >$300 (los más grandes) no llegaban a Shipday. Ahora, si no pasa el filtro pero es envío gratis
+  (`esEnvioGratis`, por término del NOMBRE de la tarifa —env `SHOPIFY_FREE_SHIP_TERMS`, default `gratis,free`—
+  no por $0), se resuelve la zona y se despacha **solo si es flota propia** (ciudad); el interior gratis va a la
+  sucursal Servientrega → no Shipday. **Estrictamente aditivo** (solo agrega despachos que hoy se pierden; RPC
+  caído = statu quo). `job_log` `envio_gratis_rescatado`/`omitido`. Revisión adversarial inline (solo agrega,
+  RPC-fail=statu quo, sin doble RPC, esFlotaPropia correcto en los 4 estados, esEnvioGratis por nombre no $0).
+  383 golden + 21 node tests. Deploy: `.\deploy.ps1 copilot-webhook shopify-webhook` + la migración +
+  espejo Shopify.
 - **EN EL REPO, LISTO PARA DESPLEGAR: v59.1 (`v59.1-ambiguo-condensado`).** Pulido del fraseo `ambiguo` de
   `tarifa_entrega`: los corredores (Transístmica/Domingo Díaz cruzan ~5 zonas → el resolver v2 devuelve 5
   opciones) + el ITBMS-por-opción de v58 hacían un muro de texto en WhatsApp (5 líneas, cada una con su
