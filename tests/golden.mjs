@@ -220,7 +220,24 @@ const rEd = frasearTarifa(V_ED);
 caso("propia: $6.00 mismo día", rEd.respuesta_sugerida.includes("6.00") && /mismo d[ií]a/i.test(rEd.respuesta_sugerida));
 
 const rSj = frasearTarifa(V_SJ);
-caso("ambiguo: pide corregimiento y nombra ambas zonas", rSj.estado === "ambiguo" && /corregimiento/i.test(rSj.respuesta_sugerida) && /Betania/.test(rSj.respuesta_sugerida) && /Mañanitas/.test(rSj.respuesta_sugerida));
+// v59.1 — el ambiguo se CONDENSÓ: costo (rango o valor) + pide corregimiento, SIN enumerar cada zona.
+caso("ambiguo (v59.1): condensado — costo + pide corregimiento, sin enumerar zonas", rSj.estado === "ambiguo" && /corregimiento/i.test(rSj.respuesta_sugerida) && /6\.42/.test(rSj.respuesta_sugerida) && !/Mañanitas/.test(rSj.respuesta_sugerida));
+caso("ambiguo: método mixto (retiro) agrega la nota de método/plazo", /m[eé]todo|tramo/i.test(rSj.respuesta_sugerida));
+// corredor real (Transístmica, 5 tramos, $6/$7/$9, uno servientrega): rango, no un muro de 5 líneas.
+const V_COR5 = { estado: "ambiguo", opciones: [
+  { corregimiento: "Betania", metodo: "propia", tarifa_usd: 6 },
+  { corregimiento: "Amelia Denis de Icaza", metodo: "propia", tarifa_usd: 7 },
+  { corregimiento: "Las Cumbres", metodo: "servientrega", tarifa_usd: 9 },
+  { corregimiento: "Mateo Iturralde", metodo: "propia", tarifa_usd: 7 },
+  { corregimiento: "Victoriano Lorenzo", metodo: "propia", tarifa_usd: 7 } ] };
+const rCor5 = frasearTarifa(V_COR5);
+caso("v59.1: corredor 5 tramos → rango B/.6.42–B/.9.63", /6\.42/.test(rCor5.respuesta_sugerida) && /9\.63/.test(rCor5.respuesta_sugerida) && /desde/.test(rCor5.respuesta_sugerida));
+caso("v59.1: corredor NO enumera los 5 corregimientos (condensado)", !/Victoriano Lorenzo/.test(rCor5.respuesta_sugerida) && !/Mateo Iturralde/.test(rCor5.respuesta_sugerida));
+caso("v59.1: corredor mixto (servientrega) agrega la nota de método", /m[eé]todo|tramo/i.test(rCor5.respuesta_sugerida));
+// todas propias, mismo precio → sin nota de método, costo directo (no rango).
+const rSoloProp = frasearTarifa({ estado: "ambiguo", opciones: [
+  { corregimiento: "A", metodo: "propia", tarifa_usd: 7 }, { corregimiento: "B", metodo: "propia", tarifa_usd: 7 } ] });
+caso("v59.1: ambiguo todo-propia mismo precio → 'es B/.7.49', sin nota de método", /es B\/\.7\.00 \+ ITBMS \(7%\) = B\/\.7\.49/.test(rSoloProp.respuesta_sugerida) && !/dependen del tramo/.test(rSoloProp.respuesta_sugerida));
 
 const rCor = frasearTarifa(V_COR);
 caso("sin_match: nota con interior/asesor", rCor.estado === "sin_match" && /interior|asesor/i.test(rCor.nota));

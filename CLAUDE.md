@@ -20,6 +20,14 @@ con certeza, y calla/deriva cuando es mejor que responda un humano. Tienda:
 **quickservicepanama.com** (suministros de impresión y tecnología en Panamá).
 
 ## Estado actual (2026-07-20)
+- **EN EL REPO, LISTO PARA DESPLEGAR: v59.1 (`v59.1-ambiguo-condensado`).** Pulido del fraseo `ambiguo` de
+  `tarifa_entrega`: los corredores (Transístmica/Domingo Díaz cruzan ~5 zonas → el resolver v2 devuelve 5
+  opciones) + el ITBMS-por-opción de v58 hacían un muro de texto en WhatsApp (5 líneas, cada una con su
+  ITBMS). Ahora `frasearTarifa` CONDENSA el ambiguo: RANGO de costo (min–max con ITBMS, ej. "va desde B/.6.42
+  hasta B/.9.63 según el sector") + una nota de método SOLO si hay algo distinto de entrega propia (para no
+  prometer domicilio donde hay retiro) + pide el corregimiento; el precio EXACTO sale en la re-consulta
+  (flujo v47, ya existente). Verificado contra `resolver_tarifa('transistmica')` real (5 tramos). 377 golden
+  tests. Solo `frasearTarifa`; sin migración; sin tocar el shadow de v59. Deploy: `.\deploy.ps1 copilot-webhook`.
 - **EN EL REPO, LISTO PARA DESPLEGAR (SHADOW, riesgo cero al cliente): v59 (`v59-busqueda-shadow`).** Prep para
   reemplazar el motor de búsqueda por el **Catalog MCP de Shopify** (`search_catalog`). Contexto: v18/v33/v53/v54/
   v55 fueron 5 versiones peleando la MISMA raíz — `suggest.json` es búsqueda literal tipo AND (un término que no

@@ -1396,11 +1396,21 @@ function frasearTarifa(v: any): Record<string, unknown> {
       nota: "Ese lugar no está en la cobertura metro (Ciudad de Panamá / San Miguelito). Si el cliente es del INTERIOR, usa sucursales_interior + info_tienda (tarifa/plazo del interior). Si no lo ubicas, deriva a un asesor para que cotice." };
   }
   if (estado === "ambiguo") {
-    const desc = (o: any) => o.metodo === "retiro_agente_verde" ? `retiro por ${conImp(o.tarifa_usd)}`
-      : o.metodo === "asesor" ? "lo coordina un asesor" : `${conImp(o.tarifa_usd)} a domicilio`;
-    const ops = (v.opciones ?? []).map((o: any) => `${o.corregimiento} (${desc(o)})`);
-    return { estado: "ambiguo", opciones: v.opciones ?? [],
-      respuesta_sugerida: `Hay más de una zona con ese nombre y el envío cambia según cuál: ${ops.join("; ")}. ¿En qué corregimiento se encuentra, para confirmarle el costo exacto?` };
+    // v59.1 — CONDENSADO: los corredores (avenidas que cruzan varias zonas: Transístmica y Domingo Díaz en
+    // ~5) hacían un muro de texto (una línea con ITBMS por CADA tramo). Ahora se da el RANGO de costo + una
+    // nota de método SOLO si hay algo distinto de entrega propia (para no prometer domicilio donde hay
+    // retiro), y se pide el corregimiento; el precio exacto sale en la re-consulta (flujo v47).
+    const ops = v.opciones ?? [];
+    const tarifas = ops.map((o: any) => Number(o.tarifa_usd)).filter((n: any) => isFinite(n) && n > 0);
+    const soloPropia = ops.length > 0 && ops.every((o: any) => o.metodo === "propia");
+    let costo = "cambia según el sector";
+    if (tarifas.length) {
+      const min = Math.min(...tarifas), max = Math.max(...tarifas);
+      costo = (min === max) ? `es ${conImp(min)}` : `va desde ${conImp(min)} hasta ${conImp(max)} según el sector`;
+    }
+    const notaMetodo = soloPropia ? "" : " El método y el plazo también dependen del tramo (entrega a domicilio, Servientrega o retiro en un punto).";
+    return { estado: "ambiguo", opciones: ops,
+      respuesta_sugerida: `Para esa zona el costo del envío ${costo}.${notaMetodo} ¿En qué corregimiento o cerca de qué punto se encuentra? Así le confirmo el costo y la forma de entrega exactos.` };
   }
   if (estado === "ok") {
     const met = v.metodo;
@@ -1798,7 +1808,7 @@ Deno.serve(async (req) => {
       const diag = await inventarioSelfTest(pid);
       return Response.json({ selftest: "inventario", ...diag, ts: new Date().toISOString() });
     }
-    return Response.json({ status: "ok", function: "copilot-webhook", version: "v59-busqueda-shadow", mode: MODE, mode_raw: MODE_RAW, model: MODEL, llm_configured: !!anthropic, wati_send_configured: !!(WATI_API_TOKEN && WATI_API_BASE), inventario_configurado: !!(SHOPIFY_ADMIN_TOKEN && SHOPIFY_ADMIN_API_BASE), resolve_configured: !!RESOLVE_SECRET, webhook_key_es_default: WEBHOOK_KEY_ES_DEFAULT, handoff_assist_min: HANDOFF_ASSIST_MIN, handoff_cold_hours: HANDOFF_COLD_HOURS, debounce_ms: DEBOUNCE_MS, busqueda_shadow: BUSQUEDA_SHADOW, live_targets: MODE === "live" ? (LIVE_ALL ? "all" : LIVE_ALLOWLIST.length) : 0, ts: new Date().toISOString() });
+    return Response.json({ status: "ok", function: "copilot-webhook", version: "v59.1-ambiguo-condensado", mode: MODE, mode_raw: MODE_RAW, model: MODEL, llm_configured: !!anthropic, wati_send_configured: !!(WATI_API_TOKEN && WATI_API_BASE), inventario_configurado: !!(SHOPIFY_ADMIN_TOKEN && SHOPIFY_ADMIN_API_BASE), resolve_configured: !!RESOLVE_SECRET, webhook_key_es_default: WEBHOOK_KEY_ES_DEFAULT, handoff_assist_min: HANDOFF_ASSIST_MIN, handoff_cold_hours: HANDOFF_COLD_HOURS, debounce_ms: DEBOUNCE_MS, busqueda_shadow: BUSQUEDA_SHADOW, live_targets: MODE === "live" ? (LIVE_ALL ? "all" : LIVE_ALLOWLIST.length) : 0, ts: new Date().toISOString() });
   }
   if (req.method !== "POST") return Response.json({ error: "method_not_allowed" }, { status: 405 });
   if (url.searchParams.get("key") !== WEBHOOK_KEY) return Response.json({ error: "forbidden" }, { status: 403 });
