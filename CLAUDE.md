@@ -1091,6 +1091,19 @@ Eventos WATI suscritos (necesarios): **Message Received**, **Session Message Sen
     (el del cron de re-enganche, con el fix del endpoint `?whatsappNumber=` del 17-jul) + el patrón de webhook
     del puente Shipday. **Falta decidir:** plantilla nueva aprobada por Meta (ej. "¡Buenas noticias! El
     [producto] ya está disponible") y el disparador exacto en Shopify (evitar spam si el stock oscila 0↔1).
+16. **Carrito WATI → checkout (fase 2 del MCP) + migración UCP — EN PAUSA (decisión 22-jul: "luego lo
+    vemos").** El plan acordado: tool `armar_carrito` sobre el **UCP Cart MCP** (`update_cart`/`get_cart` →
+    URL de checkout con todo adentro; v60 ya captura `variant_id` para esto), con guardrails (el bot arma y
+    deja el LINK listo; nunca paga ni coordina pago). Sinergia: requiere el **perfil de agente hosteado** en
+    `/api/ucp/mcp` = la MISMA migración de endpoint que el catálogo necesita **antes del ~31-ago** (el legacy
+    `/api/mcp` que usa v60 muere; la migración del endpoint puede hacerse sola sin el carrito si se acerca la
+    fecha). Contexto contable (decisión de la misma conversación): la migración **Sage 50 → QBO Advanced** va
+    a fin de año; se DESCARTÓ escribir cotizaciones en Sage 50 desde el bot (ODBC es solo-lectura, escribir
+    vía ODBC arriesga corromper la contabilidad, requeriría un puente local a la PC, y sería descartable en
+    ~5 meses). El ODBC read-only de Sage queda para análisis LOCALES del usuario; el match **SKU Shopify ↔
+    items Sage** validado es la llave para la futura integración. **Post-migración (≈enero):** cotización
+    formal vía **QBO Estimates API** (nube, OAuth) — el bot arma el borrador (items por SKU + lead +
+    `calcular_cotizacion`) y el ASESOR revisa/envía (datos fiscales siguen en manos humanas).
 
 ## Cómo leer el estado real (debugging)
 - Código en vivo: `get_edge_function` o healthcheck GET. Esquema: `list_tables`.
