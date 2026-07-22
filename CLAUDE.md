@@ -736,7 +736,11 @@ Panamá+San Miguelito] + RPC `resolver_tarifa`, fuente ÚNICA de envíos por sec
 `20260706180000_zonas_este_retiro` (v47 — **aplicada**, refactor de la zona este: retiro $6 / puerta $9 / asesor),
 `20260706190000_store_facts_zonas` (v47 — **aplicada**, genérico de envío honesto: Tocumen, "mismo día"),
 `20260707120000_pedidos` (v48 — **APLICADA 07-jul** (validada antes en local), tabla `pedidos` + RPC `estado_pedido`,
-puente de conciencia de pedidos del bot).
+puente de conciencia de pedidos del bot),
+`20260721170000_resolver_tarifa_v2` + `20260721171000_sectores_corredores` (back-port al repo del cambio manual
+de prod 21-jul: RPC `resolver_tarifa` v2 [frontera de palabra] + los 8 sectores/corredores 420-427; **YA en prod**
+—estas migraciones son para fidelidad del repo, no hace falta re-aplicarlas—; **validadas end-to-end en Postgres 16
+local**: cadena completa corre limpia, 427 sectores, resolver reproduce prod en 7 casos clave).
 
 **Data layer de envíos (v47 — fuente única, editable en Supabase):**
 - **zonas_entrega** — `zona` (PK), `tarifa_base_usd` (nullable), `metodo` (`propia`/`servientrega`/
