@@ -27,6 +27,13 @@ Con eso, cada pedido de Shopify crea automáticamente la orden de entrega en Shi
 2. En Shopify Admin: **Settings → Notifications → Webhooks → Create webhook**, evento `Order creation`, formato JSON, URL `https://TU-SERVICIO/webhooks/shopify/orders-create`.
 3. Copia el *signing secret* que muestra Shopify a `SHOPIFY_WEBHOOK_SECRET` (el servicio valida la firma HMAC de cada llamada).
 
+> **Enriquecimiento de zona (v52):** en la versión Supabase (`shopify-webhook`), antes de crear la orden en
+> Shipday se consulta el RPC `resolver_tarifa` con la dirección y se agrega la **zona/tarifa/método/sector** a
+> las instrucciones del repartidor (`deliveryInstruction`), marcando con ⚠️ los casos ambiguo / sin match /
+> que NO son de flota propia. Además graba el `metodo` REAL en la tabla `pedidos` (no el `'propia'` fijo) para
+> que el copiloto lo lea. **NO altera la dirección** que Shipday geocodifica; es best-effort (si el RPC falla o
+> tarda >5s, el pedido sale igual que antes). Detalle del contrato: `docs/handoff-pedidos-conciencia.md`.
+
 ## 2. WATI → Shipday (compra asistida por WhatsApp)
 
 Cuando el cliente quiere que lo ayudemos a comprar por WhatsApp, el flujo de WATI captura los datos con la plantilla de dirección (ver [`docs/plantilla-wati.md`](docs/plantilla-wati.md)) y al final llama a este servicio:

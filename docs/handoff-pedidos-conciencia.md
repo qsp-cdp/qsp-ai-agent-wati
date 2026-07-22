@@ -46,8 +46,9 @@ no colgar la respuesta; solo envía los campos con valor, así una fila `shipday
 el `waId` de WATI. Quedó cableado así:
 
 - **`shopify-webhook`** (tras `createShipdayOrder` OK): `fuente:'shopify'`, `pedido_ref:String(order.orderNumber)`,
-  `estado: cancelled_at ? 'cancelado' : 'nuevo'`, `metodo:'propia'` (pasó el filtro de entrega local → reparto
-  propio), `total_usd`, `resumen` (líneas), `shopify_order_id`.
+  `estado: cancelled_at ? 'cancelado' : 'nuevo'`, **`metodo` REAL (v52)** — resuelto por `resolver_tarifa(dirección)`
+  cuando el veredicto es `ok` (`servientrega`/`retiro_agente_verde`/`asesor`/`propia`); cae a `'propia'` si es
+  `ambiguo`/`sin_match` o el RPC falla — `total_usd`, `resumen` (líneas), `shopify_order_id`.
 - **`shipday-status`** (tras parsear el evento): `fuente:'shipday'`, `pedido_ref:event.orderNumber`,
   `estado: estadoNormalizado(event.status)` (helper en `_shared/status.ts`), `estado_raw`, `tracking`, `metodo:'propia'`.
 - **`wati-order`** (tras `createShipdayOrder` OK): `fuente:'wati'`, `pedido_ref:String(order.orderNumber)`,
@@ -68,10 +69,12 @@ const ESTADO_SHIPDAY = {
 } as Record<string, string>; // ajustar a los estados EXACTOS que emita su cuenta Shipday
 ```
 
-**Método** — en la implementación actual, todo pedido que llega a Shipday pasó el filtro de entrega local
-(`shouldDispatchShopifyOrder` / `SHOPIFY_DELIVERY_FILTER`) → es reparto **propio**, así que los tres escritores
-ponen `metodo:'propia'`. A futuro, si Shipday también rutea servientrega/retiro, la fuente única del método por
-sector es el RPC `resolver_tarifa(lugar)` (data layer de zonas), para no duplicar la lógica.
+**Método** — **`shopify-webhook` (v52) ya resuelve el método REAL** con el RPC `resolver_tarifa(dirección)` (fuente
+única = data layer de zonas): para pedidos de Shopify el `metodo` de `pedidos` puede ser `servientrega`,
+`retiro_agente_verde`, `asesor` o `propia` (cae a `propia` si el resolver no da veredicto `ok`). **El copiloto LEE
+ese campo** (`frasearPedido`) → ya no asume flota propia para Shopify. `shipday-status` y `wati-order` **siguen** con
+`metodo:'propia'` hardcodeado (pendiente: cuando haya asignaciones / tráfico real, resolverlos igual con
+`resolver_tarifa`, para no duplicar la lógica).
 
 **wa_id** — SIEMPRE dígitos sin `+`, con código de país (`normalizePhone` de `_shared/shipday.ts`, que ya
 maneja Panamá +507). El RPC de lectura normaliza ambos lados, pero guardar normalizado mantiene el índice útil.

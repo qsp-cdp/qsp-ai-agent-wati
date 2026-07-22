@@ -9,7 +9,7 @@ import {
   shopifyOrderToShipday,
   shouldDispatchShopifyOrder,
 } from '../_shared/shipday.ts';
-import { upsertPedido } from '../_shared/db.ts';
+import { resolverTarifa, upsertPedido } from '../_shared/db.ts';
 
 async function verifyShopifyHmac(rawBody: string, hmacHeader: string): Promise<boolean> {
   const secret = Deno.env.get('SHOPIFY_WEBHOOK_SECRET');
@@ -42,8 +42,30 @@ Deno.serve(async (req) => {
       return json({ ok: true, skipped: true });
     }
     const order = shopifyOrderToShipday(shopifyOrder);
+    // v52: enriquecimiento de despacho. NO altera la dirección que Shipday geocodifica;
+    // agrega la zona resuelta a las instrucciones para quien despacha. Best-effort:
+    // si el RPC falla o tarda, `zona` es null y el pedido sale igual que antes.
+    const zona = await resolverTarifa(String(order.customerAddress ?? ''));
+    const nota: string[] = [];
+    if (zona?.estado === 'ok') {
+      nota.push(`🗺️ ${zona.zona} · $${zona.tarifa_usd} · ${zona.metodo} · confianza ${zona.confianza}`);
+      if (zona.sectores?.length) nota.push(`Sector: ${zona.sectores.join(' / ')}`);
+      if (zona.metodo && zona.metodo !== 'propia') {
+        nota.push(`⚠️ NO es flota propia (${zona.metodo}). ${zona.puntos_retiro ?? ''}`.trim());
+      }
+    } else if (zona?.estado === 'ambiguo') {
+      const ops = (zona.opciones ?? [])
+        .map((o: Record<string, unknown>) => `${o.zona} $${o.tarifa_usd}`)
+        .join(' | ');
+      nota.push(`⚠️ Zona ambigua — confirmar sector antes de despachar. Opciones: ${ops}`);
+    } else if (zona?.estado === 'sin_match') {
+      nota.push('⚠️ Dirección no reconocida en el diccionario de zonas — verificar antes de despachar.');
+    }
+    if (nota.length) {
+      order.deliveryInstruction = [order.deliveryInstruction, ...nota].filter(Boolean).join('\n');
+    }
     const result = await createShipdayOrder(order);
-    console.log(`Pedido Shopify ${order.orderNumber} enviado a Shipday`);
+    console.log(`Pedido Shopify ${order.orderNumber} enviado a Shipday (zona: ${zona?.zona ?? zona?.estado ?? 'n/d'})`);
     // v48: conciencia de pedidos — deja el estado en `pedidos` para el copiloto (best-effort, no rompe).
     // Va a Shipday porque pasó el filtro de entrega local → método 'propia'. estado 'nuevo' (o 'cancelado').
     await upsertPedido({
@@ -53,7 +75,7 @@ Deno.serve(async (req) => {
       shopify_order_id: shopifyOrder.id != null ? String(shopifyOrder.id) : null,
       estado: shopifyOrder.cancelled_at ? 'cancelado' : 'nuevo',
       estado_raw: shopifyOrder.financial_status ?? null,
-      metodo: 'propia',
+      metodo: zona?.estado === 'ok' ? (zona.metodo ?? 'propia') : 'propia',
       total_usd: Number(shopifyOrder.total_price) || null,
       resumen: (shopifyOrder.line_items || []).map((li: any) => `${li.quantity}x ${li.title}`).slice(0, 3).join(', ') || null,
     });

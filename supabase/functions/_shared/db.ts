@@ -160,3 +160,42 @@ export async function upsertPedido(p: PedidoUpsert): Promise<void> {
     console.error('upsertPedido error:', (err as Error).message);
   }
 }
+
+// --- Resolución de zona (v52) --------------------------------------------------------------------
+// El diccionario `sectores_entrega` + el RPC `resolver_tarifa` saben la zona real de una dirección;
+// Shipday solo geocodifica texto libre. Esto NO reemplaza el geocoding: enriquece la orden con la
+// zona/tarifa/método de la tabla para quien despacha, y alimenta el campo `metodo` de `pedidos`.
+// BEST-EFFORT: ante cualquier fallo devuelve null y el despacho sigue exactamente igual que antes.
+export interface ZonaResuelta {
+  estado: 'ok' | 'ambiguo' | 'sin_match';
+  zona?: string;
+  tarifa_usd?: number;
+  metodo?: string;
+  plazo?: string;
+  puntos_retiro?: string | null;
+  confianza?: string;
+  sectores?: string[];
+  ubicacion?: { provincia?: string; distrito?: string | null; corregimiento?: string | null; barrio?: string | null };
+  opciones?: Array<Record<string, unknown>>;
+  motivo?: string;
+}
+
+export async function resolverTarifa(lugar: string): Promise<ZonaResuelta | null> {
+  if (!String(lugar ?? '').trim()) return null;
+  try {
+    const res = await fetch(restUrl('/rpc/resolver_tarifa'), {
+      method: 'POST',
+      headers: serviceHeaders(),
+      body: JSON.stringify({ p_lugar: lugar }),
+      signal: AbortSignal.timeout(5000),
+    });
+    if (!res.ok) {
+      console.error(`resolver_tarifa falló: ${res.status} ${await res.text()}`);
+      return null;
+    }
+    return await res.json() as ZonaResuelta;
+  } catch (err) {
+    console.error('resolver_tarifa error:', (err as Error).message);
+    return null;
+  }
+}
