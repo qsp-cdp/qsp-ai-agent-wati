@@ -599,6 +599,7 @@ BÚSQUEDA DE PRODUCTOS (cómo usar buscar_producto)
 - COMPATIBILIDAD: NO afirmes que un producto sirve para cierto equipo a menos que el resultado de buscar_producto lo indique — NI SIQUIERA como probabilidad ("suele ser la misma tinta", "debería servir"): eso también es adivinar. Si no estás seguro, dilo y deja que un asesor confirme.
 - MODELO EXACTO: usa el TÍTULO tal cual lo devuelve buscar_producto. Si el modelo que pidió el cliente NO aparece en el título del resultado, NO lo renombres ni asumas que es el mismo equipo: dilo claro (ej. "no encontré el [modelo] exacto; lo más parecido que tenemos es [título real]…") y ofrécelo como alternativa o deriva. NUNCA pongas el modelo pedido junto al precio o link de otro producto.
 - COINCIDENCIA APROXIMADA / PEDIDO ESPECIAL: si buscar_producto devuelve un objeto con coincidencia:"aproximada" (en vez de una lista de productos), significa que NO tenemos el modelo exacto que pidió el cliente. Dile con honestidad que ese modelo exacto no está en el catálogo; ofrece las "alternativas" como opciones similares o compatibles SOLO si de verdad aplican (NUNCA como si fueran el modelo pedido); y aclara que un asesor puede confirmar si el modelo exacto se consigue por PEDIDO ESPECIAL. Sigue la regla de oro: no afirmes compatibilidad que no sabés.
+- ALTERNATIVAS CON CRITERIO: cuando el modelo pedido no esté (o solo tengamos sus consumibles) y vayas a ofrecer un sustituto, CONSERVA los atributos de lo que pidió: la misma marca si la manejamos, y las mismas características clave (color vs blanco y negro, multifuncional o no, láser o tinta, tamaño/formato). Haz una búsqueda NUEVA con esos atributos (ej. pidió una láser COLOR multifuncional Canon → busca "impresora láser color multifuncional Canon") ANTES de ofrecer otra marca u otra categoría. NUNCA ofrezcas una de blanco y negro como sustituto de una a color (ni al revés) sin aclarar la diferencia; si el sustituto cambia de marca o de tipo, dilo explícito.
 
 VENTA CONSULTIVA — ayuda a elegir bien (sin inventar)
 - No solo respondas: ayuda a comprar bien, como un buen asesor. Si el cliente no sabe qué llevar o pide una recomendación, haz 1-2 preguntas cortas antes de sugerir (¿para casa, oficina o empresa?, ¿cuánto imprime al mes?, ¿color/WiFi/escáner?, ¿presupuesto?).
@@ -1246,6 +1247,7 @@ async function buscarProducto(consulta: string, waId: string = "", linksTracked?
   // el modelo no está → coincidencia "aproximada" (el bot lo ofrece como alternativa/pedido especial, nunca
   // como el modelo pedido). suggest.json queda de FALLBACK de confiabilidad: si el MCP falla/timeout, la
   // búsqueda no se rompe (cae a la escalera de abajo).
+  let mcpAprox: any[] | null = null; // vecinos semánticos del MCP SIN el código pedido → candidatos a "aproximada"
   if (BUSQUEDA_MCP) {
     try {
       const mcp = await buscarCatalogoMCP(consulta);
@@ -1254,13 +1256,15 @@ async function buscarProducto(consulta: string, waId: string = "", linksTracked?
           id: p.id, titulo: p.titulo, precio_usd: p.precio_usd, disponible: p.disponible,
           marca: undefined, tipo: undefined, url: p.url, descripcion_html: p.descripcion_html,
         }));
-        let exacto = true;
-        if (codigos.length && !algunTituloConCodigo(top.map((p) => p.titulo), codigos)) {
-          let suggestN = 0;
-          try { suggestN = (await suggestShopify(consulta)).length; } catch { /* suggest caído → conservador: no-hallado */ }
-          exacto = suggestN > 0;   // el literal (con tags/body) confirma que el código existe en el catálogo
+        if (!codigos.length || algunTituloConCodigo(top.map((p) => p.titulo), codigos)) {
+          return await enriquecer(top, true);
         }
-        return await enriquecer(top, exacto);
+        // v60.1 — la consulta trae un código y NINGÚN título del MCP lo contiene. NO devolver estos vecinos
+        // como si fueran el producto (bug real del v60: el MCP enterraba el exacto fuera de su top-5 y el bot
+        // respondía "no lo encontré" TENIÉNDOLO — el cross-check confirmaba que existía pero devolvía los
+        // vecinos igual). Ahora la ESCALERA literal (variantes con/sin guion + tags + body, v18–v55) busca el
+        // exacto; estos vecinos quedan de RESPALDO para "aproximada"/pedido especial si tampoco lo halla.
+        mcpAprox = top;
       }
       // MCP vacío (rarísimo) → cae a suggest.json.
     } catch (e) {
@@ -1297,6 +1301,12 @@ async function buscarProducto(consulta: string, waId: string = "", linksTracked?
   // de v55 (puede ser un producto compatible legítimo cuyo título no lleva el código, p.ej. hallado por tag).
   if (fallback) {
     try { return await enriquecer(fallback); } catch (e) { lastErr = String(e).slice(0, 120); }
+  }
+  // v60.1 — la escalera literal TAMPOCO halló el código: el modelo pedido no está en el catálogo. Los
+  // vecinos semánticos del MCP salen como coincidencia "aproximada" (alternativas + PEDIDO ESPECIAL) —
+  // nunca como el modelo pedido.
+  if (mcpAprox) {
+    try { return await enriquecer(mcpAprox, false); } catch (e) { lastErr = String(e).slice(0, 120); }
   }
 
   // Enriquecimiento (v21 ITBMS + stock real; v28/v29 tracking; v52 especificaciones) — compartido por el
@@ -1855,7 +1865,7 @@ Deno.serve(async (req) => {
       const diag = await inventarioSelfTest(pid);
       return Response.json({ selftest: "inventario", ...diag, ts: new Date().toISOString() });
     }
-    return Response.json({ status: "ok", function: "copilot-webhook", version: "v60-busqueda-catalog-mcp", mode: MODE, mode_raw: MODE_RAW, model: MODEL, llm_configured: !!anthropic, wati_send_configured: !!(WATI_API_TOKEN && WATI_API_BASE), inventario_configurado: !!(SHOPIFY_ADMIN_TOKEN && SHOPIFY_ADMIN_API_BASE), resolve_configured: !!RESOLVE_SECRET, webhook_key_es_default: WEBHOOK_KEY_ES_DEFAULT, handoff_assist_min: HANDOFF_ASSIST_MIN, handoff_cold_hours: HANDOFF_COLD_HOURS, debounce_ms: DEBOUNCE_MS, busqueda_shadow: BUSQUEDA_SHADOW, busqueda_mcp: BUSQUEDA_MCP, live_targets: MODE === "live" ? (LIVE_ALL ? "all" : LIVE_ALLOWLIST.length) : 0, ts: new Date().toISOString() });
+    return Response.json({ status: "ok", function: "copilot-webhook", version: "v60.1-busqueda-hibrida", mode: MODE, mode_raw: MODE_RAW, model: MODEL, llm_configured: !!anthropic, wati_send_configured: !!(WATI_API_TOKEN && WATI_API_BASE), inventario_configurado: !!(SHOPIFY_ADMIN_TOKEN && SHOPIFY_ADMIN_API_BASE), resolve_configured: !!RESOLVE_SECRET, webhook_key_es_default: WEBHOOK_KEY_ES_DEFAULT, handoff_assist_min: HANDOFF_ASSIST_MIN, handoff_cold_hours: HANDOFF_COLD_HOURS, debounce_ms: DEBOUNCE_MS, busqueda_shadow: BUSQUEDA_SHADOW, busqueda_mcp: BUSQUEDA_MCP, live_targets: MODE === "live" ? (LIVE_ALL ? "all" : LIVE_ALLOWLIST.length) : 0, ts: new Date().toISOString() });
   }
   if (req.method !== "POST") return Response.json({ error: "method_not_allowed" }, { status: 405 });
   if (url.searchParams.get("key") !== WEBHOOK_KEY) return Response.json({ error: "forbidden" }, { status: 403 });

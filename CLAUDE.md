@@ -19,8 +19,21 @@ equipo humano: contesta preguntas generales, indica disponibilidad/stock y da pr
 con certeza, y calla/deriva cuando es mejor que responda un humano. Tienda:
 **quickservicepanama.com** (suministros de impresión y tecnología en Panamá).
 
-## Estado actual (2026-07-22)
-- **EN EL REPO, LISTO PARA DESPLEGAR (FLIP env-gated, riesgo cero al deploy): v60 (`v60-busqueda-catalog-mcp`).**
+## Estado actual (2026-07-23)
+- **EN EL REPO, LISTO PARA DESPLEGAR: v60.1 (`v60.1-busqueda-hibrida`).** Dos fixes del feedback real del
+  23-jul sobre el v60 en vivo ("productos que tenemos no los encuentra; y no recomienda el similar obvio"):
+  (1) **BUG del cross-check v60:** con código no-en-títulos-MCP, si suggest.json confirmaba que el producto
+  existía, igual se devolvían los 5 vecinos del MCP (sin el producto) marcados como exactos → el bot decía
+  "no lo encontré" TENIÉNDOLO. Ahora el flujo es HÍBRIDO: código-no-en-MCP → **la escalera literal
+  (v18–v55: variantes con/sin guion + tags + body) busca el EXACTO** y responde si lo halla; los vecinos del
+  MCP quedan de respaldo y salen como `coincidencia:"aproximada"` SOLO si la escalera tampoco halla (lock:
+  el aproximada sale AL FINAL). El shadow lock v59 se actualizó (auto-apagado `!BUSQUEDA_MCP`).
+  (2) **Regla ALTERNATIVAS CON CRITERIO** (caso real: pidió Canon MF656Cdw láser COLOR y ofreció HP 137fnw
+  B/N en vez de la Canon MF665CDW que sí manejamos): al sustituir, CONSERVAR marca y atributos clave
+  (color/B-N, multifuncional, láser/tinta) con una búsqueda NUEVA de esos atributos antes de cambiar de
+  marca/categoría; nunca B/N por color sin aclararlo. 398 golden + 21 node tests. Deploy:
+  `.\deploy.ps1 copilot-webhook` (sin migración; `BUSQUEDA_MCP` sigue en 1).
+- **🚀 EN VIVO (flipeado 22-jul con `BUSQUEDA_MCP=1`, validado con 6 pruebas reales; superseded por v60.1 en repo): v60 (`v60-busqueda-catalog-mcp`).**
   El motor de búsqueda pasa de `suggest.json` (literal AND) a **`search_catalog` (Catalog MCP de Shopify)**.
   Motivado por la auditoría del 22-jul: ~10% de las búsquedas daban 0 y **el 94% de esos "no" eran FALSOS**
   (el producto existía) — pura formulación literal (formato GI-16BK, unidades 610mm, color "morada", lenguaje

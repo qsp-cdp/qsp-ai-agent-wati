@@ -685,7 +685,7 @@ caso("v59: multi-producto conserva el orden (ranking del MCP)", (() => {
 caso("v59: shadow gateado por BUSQUEDA_SHADOW (default OFF)", /const BUSQUEDA_SHADOW = \(Deno\.env\.get\("BUSQUEDA_SHADOW"\) \?\? ""\)\.trim\(\) === "1"/.test(src));
 caso("v59: endpoint configurable (SHOPIFY_CATALOG_MCP_URL, default legacy /api/mcp)", /SHOPIFY_CATALOG_MCP_URL/.test(src) && /\/api\/mcp/.test(src));
 caso("v59: buscarCatalogoMCP llama search_catalog", /name: "search_catalog"/.test(src));
-caso("v59: shadow corre en background (waitUntil, no await en el camino del cliente)", /EdgeRuntime\.waitUntil\(st\)/.test(src) && /BUSQUEDA_SHADOW && block\.name === "buscar_producto"/.test(src));
+caso("v59/v60: shadow en background y AUTO-APAGADO cuando el MCP es primario", /EdgeRuntime\.waitUntil\(st\)/.test(src) && /BUSQUEDA_SHADOW && !BUSQUEDA_MCP && block\.name === "buscar_producto"/.test(src));
 caso("v59: loguea a job_log busqueda_shadow con el flag mcp_gana", /"busqueda_shadow"/.test(src) && /mcp_gana:/.test(src));
 caso("v59: healthcheck expone busqueda_shadow", /busqueda_shadow: BUSQUEDA_SHADOW/.test(src));
 
@@ -713,7 +713,19 @@ caso("v60: la regla prohíbe presentar la alternativa como el modelo pedido", /N
 // wiring en el source real:
 caso("v60: gated por BUSQUEDA_MCP (default OFF)", /const BUSQUEDA_MCP = \(Deno\.env\.get\("BUSQUEDA_MCP"\) \?\? ""\)\.trim\(\) === "1"/.test(src));
 caso("v60: MCP primario en buscarProducto", /if \(BUSQUEDA_MCP\) \{/.test(src) && /const mcp = await buscarCatalogoMCP\(consulta\)/.test(src));
-caso("v60: guardrail — cross-check con suggest.json cuando el código no está en ningún título del MCP", /codigos\.length && !algunTituloConCodigo\(top\.map\(\(p\) => p\.titulo\), codigos\)/.test(src) && /exacto = suggestN > 0/.test(src));
+// v60.1: el cross-check viejo (que devolvía los vecinos del MCP aunque suggest confirmara que el producto
+// existía) se reemplazó por el flujo HÍBRIDO: código-no-en-MCP → la escalera literal busca el EXACTO;
+// los vecinos quedan de respaldo "aproximada" solo si la escalera tampoco halla.
+caso("v60.1: el cross-check viejo (exacto=suggestN>0) fue RETIRADO", !/exacto = suggestN > 0/.test(src));
+caso("v60.1: código no en títulos MCP → vecinos a mcpAprox y la escalera corre", /mcpAprox = top;/.test(src) && /!codigos\.length \|\| algunTituloConCodigo\(top\.map\(\(p\) => p\.titulo\), codigos\)/.test(src));
+caso("v60.1: aproximada sale AL FINAL (tras el fallback v55 de la escalera)", (() => {
+  const iFb = src.indexOf("if (fallback) {");
+  const iAprox = src.indexOf("if (mcpAprox) {");
+  return iFb > -1 && iAprox > -1 && iFb < iAprox && /enriquecer\(mcpAprox, false\)/.test(src);
+})());
+caso("v60.1: SYSTEM_PROMPT tiene ALTERNATIVAS CON CRITERIO (conservar marca/atributos)", /ALTERNATIVAS CON CRITERIO/.test(SYSTEM_PROMPT) && /CONSERVA los atributos/.test(SYSTEM_PROMPT));
+caso("v60.1: prohíbe B/N como sustituto de color sin aclarar", /NUNCA ofrezcas una de blanco y negro como sustituto de una a color/.test(SYSTEM_PROMPT));
+caso("v60.1: manda búsqueda NUEVA con los atributos antes de cambiar marca/categoría", /impresora láser color multifuncional Canon/.test(SYSTEM_PROMPT));
 caso("v60: enriquecer señaliza 'aproximada' (alternativas) cuando no es exacto", /if \(exacto\) return JSON\.stringify\(enriquecidos\)/.test(src) && /coincidencia: "aproximada"/.test(src) && /alternativas: enriquecidos/.test(src));
 caso("v60: fallback de confiabilidad — MCP caído cae a la escalera suggest.json (busqueda_mcp_fallo)", /busqueda_mcp_fallo/.test(src) && /motor legacy \/ fallback de confiabilidad/.test(src));
 caso("v60: healthcheck expone busqueda_mcp", /busqueda_mcp: BUSQUEDA_MCP/.test(src));
