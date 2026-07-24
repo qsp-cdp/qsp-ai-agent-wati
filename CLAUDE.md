@@ -20,6 +20,15 @@ con certeza, y calla/deriva cuando es mejor que responda un humano. Tienda:
 **quickservicepanama.com** (suministros de impresión y tecnología en Panamá).
 
 ## Estado actual (2026-07-23)
+- **EN EL REPO, LISTO PARA DESPLEGAR: v60.2 (`v60.2-envio-gratis-web`).** Corrección de negocio (23-jul): el
+  **envío gratis >$300 es EXCLUSIVO del checkout WEB**; en un pedido/cotización coordinado por WhatsApp NO
+  aplica (se cobra la tarifa normal). La regla de v59.2 lo hacía "siempre aclarar gratis" → el bot prometía
+  "sigue calificando para envío gratis 🎉" en una cotización WhatsApp de $326 (caso real). Fix: (1) regla de
+  prompt reescrita — envío gratis SOLO al completar la compra por la web; por WhatsApp NUNCA decir "califica
+  para envío gratis" (puede mencionarlo como opción "si compra por la web >$300"); (2) migración
+  `20260723160000_store_facts_envio_gratis_web.sql` reescribe `envio_resumen` (web-only, espejar en Shopify).
+  **El rescate de despacho de `shopify-webhook` (v59.2) NO cambia** — ese es para pedidos WEB reales, que sí
+  llevan envío gratis. 398 golden tests. Deploy: `.\deploy.ps1 copilot-webhook` + la migración.
 - **EN EL REPO, LISTO PARA DESPLEGAR: v60.1 (`v60.1-busqueda-hibrida`).** Dos fixes del feedback real del
   23-jul sobre el v60 en vivo ("productos que tenemos no los encuentra; y no recomienda el similar obvio"):
   (1) **BUG del cross-check v60:** con código no-en-títulos-MCP, si suggest.json confirmaba que el producto

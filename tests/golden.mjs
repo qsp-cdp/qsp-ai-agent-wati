@@ -693,10 +693,11 @@ caso("v59: healthcheck expone busqueda_shadow", /busqueda_shadow: BUSQUEDA_SHADO
 console.log("v59.2 envío gratis interior");
 // Decisión de Gerencia: >$300 gratis en todo el país, PERO en el interior el envío gratis es a la sucursal
 // Servientrega para RETIRO (no puerta a puerta). El bot debe SIEMPRE aclarar esa distinción.
-caso("v59.2: SYSTEM_PROMPT tiene la regla ENVÍO GRATIS (>$300)", /ENVÍO GRATIS \(compras mayores a US\$300\)/.test(SYSTEM_PROMPT));
-caso("v59.2: interior = sucursal Servientrega para RETIRO", /SUCURSAL SERVIENTREGA para RETIRO/.test(SYSTEM_PROMPT) && /\(NO puerta a puerta\)/.test(SYSTEM_PROMPT));
-caso("v59.2: prohíbe prometer puerta a puerta gratis en el interior", /NUNCA prometas domicilio puerta a puerta gratis en el interior/.test(SYSTEM_PROMPT));
-caso("v59.2: ciudad a domicilio vs interior a sucursal (distinción explícita)", /Ciudad de Panamá es gratis a DOMICILIO/.test(SYSTEM_PROMPT));
+// v60.2 (corrección): el envío gratis >$300 es EXCLUSIVO del checkout web; por WhatsApp NO aplica.
+caso("v60.2: ENVÍO GRATIS es SOLO por la WEB", /ENVÍO GRATIS — SOLO compra por la WEB/.test(SYSTEM_PROMPT) && /ÚNICAMENTE cuando el cliente COMPLETA la compra en línea por la web/.test(SYSTEM_PROMPT));
+caso("v60.2: por WhatsApp el envío gratis NO aplica (tarifa normal)", /por WhatsApp, el envío gratis NO aplica/.test(SYSTEM_PROMPT));
+caso("v60.2: prohíbe decir 'califica/sigue calificando para envío gratis' en cotización WhatsApp", /NUNCA digas "califica" ni "sigue calificando para envío gratis"/.test(SYSTEM_PROMPT));
+caso("v60.2: cuando aplica (web) interior = sucursal Servientrega retiro, no puerta a puerta", /sucursal Servientrega para RETIRO, no puerta a puerta/.test(SYSTEM_PROMPT));
 // wiring del despacho (shopify-webhook, no copilot): fuente real chequeada por si la lógica se toca.
 const shopifySrc = readFileSync(join(dirname(fileURLToPath(import.meta.url)), "..", "supabase", "functions", "shopify-webhook", "index.ts"), "utf8");
 caso("v59.2: shopify-webhook rescata envío gratis por zona (esEnvioGratis + esFlotaPropia)", /esEnvioGratis\(shopifyOrder\)/.test(shopifySrc) && /esFlotaPropia\(zona\)/.test(shopifySrc));
