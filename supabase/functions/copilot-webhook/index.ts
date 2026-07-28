@@ -460,6 +460,13 @@ const BUSQUEDA_SHADOW = (Deno.env.get("BUSQUEDA_SHADOW") ?? "").trim() === "1";
 // v60 — FLIP: motor de búsqueda primario = search_catalog (Catalog MCP) en vez de suggest.json. Default OFF
 // (deploy = no-op hasta flipear). suggest.json queda de fallback de confiabilidad + verificador de código.
 const BUSQUEDA_MCP = (Deno.env.get("BUSQUEDA_MCP") ?? "").trim() === "1";
+// v61 — cuántos productos se le PIDEN al MCP (la spec UCP permite 1-50; 10 es el default de Shopify). Se pide
+// de más para poder RE-RANKEAR en código (el combo de una familia de tintas caía en posición 6+ y nunca
+// llegaba al modelo); al modelo se le siguen entregando máx 5 → sin cambio de costo de tokens/ref_codes.
+const BUSQUEDA_MCP_LIMIT = (() => {
+  const n = parseInt((Deno.env.get("BUSQUEDA_MCP_LIMIT") ?? "").trim(), 10);
+  return Number.isFinite(n) && n >= 1 ? Math.min(n, 50) : 10;
+})();
 
 // Piloto gradual: en live, SOLO se envía a estos wa_id. Vacío = no se envía a nadie (sigue
 // registrando en sombra); "all"/"*" = todos. Evita ir a live total por accidente.
@@ -596,6 +603,7 @@ BÚSQUEDA DE PRODUCTOS (cómo usar buscar_producto)
 - Si la primera búsqueda no encuentra, REFORMULA y vuelve a llamar buscar_producto (prueba solo el número de modelo, la línea, la medida sin "pulgadas", o el modelo de la tinta) ANTES de derivar.
 - Preguntas genéricas de categoría de EQUIPOS ("¿venden impresoras Epson?", "¿tienen monitores?"): busca la categoría/marca y responde sí/no con 1-2 ejemplos concretos y su precio; invita a indicar el modelo. No listes más de 2-3.
 - CONSUMIBLE SIN MODELO — pregunta primero: si piden tinta/tóner/cartucho/cinta de una marca o "para mi impresora" SIN indicar el modelo ("¿tienen tinta Canon?"), NO respondas con una lista de productos: el consumible correcto depende del modelo exacto y una lista al azar confunde. Después de buscar (para confirmar que manejamos la marca), responde que sí trabajamos esa marca y PREGUNTA el modelo de la tinta o de la impresora (una sola pregunta corta; también sirve una foto del cartucho o del equipo). Solo si el cliente dice que no lo sabe, oriéntalo con 1-2 ejemplos de lo que devolvió la búsqueda.
+- COMBOS / JUEGOS DE TINTAS: algunos resultados vienen marcados combo:true (su título dice combo/juego/pack/kit). ANTES de ofrecerlo, LEE SU TÍTULO: trátalo como el juego de la familia del cliente SOLO si el título lleva el mismo modelo/código que pidió, y NUNCA afirmes cuántas tintas ni qué colores trae si el título no lo dice (un "Pack x2 Negra" o un "Combo x3 colores" NO son el juego completo de 4). Si el cliente ya definió su modelo y quiere el JUEGO COMPLETO, y hay un combo que de verdad lo es, COTIZA EL COMBO (no la suma de las individuales). Si pidió UNA sola tinta, cotiza LA INDIVIDUAL: el combo se menciona como máximo en una frase corta y solo si su título incluye esa misma tinta; no insistas. Para comparar el combo contra las individuales usa calcular_cotizacion (una línea por color) — NUNCA sumes ni compares totales de memoria. Si un resultado trae precio_desde:true, su precio es un "desde" (hay variantes a distinto precio): dilo así y deja que un asesor confirme el exacto. GROUNDED: solo puedes hablar de un combo que buscar_producto devolvió EN ESTE MISMO TURNO — nunca supongas que existe ni inventes su precio. Esta regla NO aplica cuando buscar_producto devuelve coincidencia:"aproximada" (ahí no hay familia confirmada: no ofrezcas ningún combo como el juego del cliente ni hables de ahorro). Y si todavía NO sabes qué modelo necesita, primero pregunta (ver CONSUMIBLE SIN MODELO): no menciones combos ni precios.
 - COMPATIBILIDAD: NO afirmes que un producto sirve para cierto equipo a menos que el resultado de buscar_producto lo indique — NI SIQUIERA como probabilidad ("suele ser la misma tinta", "debería servir"): eso también es adivinar. Si no estás seguro, dilo y deja que un asesor confirme.
 - MODELO EXACTO: usa el TÍTULO tal cual lo devuelve buscar_producto. Si el modelo que pidió el cliente NO aparece en el título del resultado, NO lo renombres ni asumas que es el mismo equipo: dilo claro (ej. "no encontré el [modelo] exacto; lo más parecido que tenemos es [título real]…") y ofrécelo como alternativa o deriva. NUNCA pongas el modelo pedido junto al precio o link de otro producto.
 - COINCIDENCIA APROXIMADA / PEDIDO ESPECIAL: si buscar_producto devuelve un objeto con coincidencia:"aproximada" (en vez de una lista de productos), significa que NO tenemos el modelo exacto que pidió el cliente. Dile con honestidad que ese modelo exacto no está en el catálogo; ofrece las "alternativas" como opciones similares o compatibles SOLO si de verdad aplican (NUNCA como si fueran el modelo pedido); y aclara que un asesor puede confirmar si el modelo exacto se consigue por PEDIDO ESPECIAL. Sigue la regla de oro: no afirmes compatibilidad que no sabés.
@@ -675,7 +683,7 @@ Un compañero del equipo tiene esta conversación, pero lleva un rato sin respon
 
 const TOOLS: Anthropic.Tool[] = [{
   name: "buscar_producto",
-  description: "Busca productos en el catálogo de Quick Service Panamá (Shopify). Llámala SIEMPRE que el cliente pregunte precio, disponibilidad/stock, compatibilidad, características (bandeja de papel, dúplex, conectividad, etc.), o mencione/insinúe un producto, marca o categoría (tinta, toner, impresora Epson/Canon/HP, etc.). Pasa términos CONCISOS: marca + MODELO (el número de modelo es la mejor señal); para 'tinta para [impresora]' busca por el modelo de la impresora; para una CARACTERÍSTICA (ej. 'bandeja legal y carta') pasa la característica en los términos, no solo la marca. Puedes llamarla varias veces reformulando si no encuentras. Devuelve título, precio (precio_usd SIN ITBMS + itbms_7pct + total_con_itbms), stock (disponibilidad ya resuelta: muestra el número si hay >3, si no deriva a un asesor), marca, tipo, link y especificaciones (texto real de la ficha del producto, cuando la tienda lo tenga — pertenece SOLO a ese resultado, nunca la mezcles con otro producto de la lista; úsala solo para características físicas/técnicas, NUNCA para precio/promo; si especificaciones_truncada=true puede haber más datos que no viste) (máx 5).",
+  description: "Busca productos en el catálogo de Quick Service Panamá (Shopify). Llámala SIEMPRE que el cliente pregunte precio, disponibilidad/stock, compatibilidad, características (bandeja de papel, dúplex, conectividad, etc.), o mencione/insinúe un producto, marca o categoría (tinta, toner, impresora Epson/Canon/HP, etc.). Pasa términos CONCISOS: marca + MODELO (el número de modelo es la mejor señal); para 'tinta para [impresora]' busca por el modelo de la impresora; para una CARACTERÍSTICA (ej. 'bandeja legal y carta') pasa la característica en los términos, no solo la marca. Puedes llamarla varias veces reformulando si no encuentras. Devuelve título, precio (precio_usd SIN ITBMS + itbms_7pct + total_con_itbms), stock (disponibilidad ya resuelta: muestra el número si hay >3, si no deriva a un asesor), marca, tipo, link y especificaciones (texto real de la ficha del producto, cuando la tienda lo tenga — pertenece SOLO a ese resultado, nunca la mezcles con otro producto de la lista; úsala solo para características físicas/técnicas, NUNCA para precio/promo; si especificaciones_truncada=true puede haber más datos que no viste). Devuelve hasta 6 resultados; algunos pueden venir marcados combo:true (presentación combo/juego/pack/kit — LEE su título antes de presentarlo como el juego de la familia pedida) y precio_desde:true (el precio es un 'desde' porque hay variantes a distinto precio).",
   strict: true,
   input_schema: { type: "object", properties: { consulta: { type: "string", description: "Términos de búsqueda, ej: 'tinta hp 954 negra'" } }, required: ["consulta"], additionalProperties: false },
 } as Anthropic.Tool, {
@@ -1174,6 +1182,54 @@ function algunTituloConCodigo(titulos: any[], codigos: any[]): boolean {
   return titulos.some((t) => codigos.some((c) => norm(c) && norm(t).includes(norm(c))));
 }
 
+// v61 — ¿el título es un COMBO/juego/pack/kit (las 4 tintas juntas, mejor precio)? Mismas palabras que el
+// set NO_MODELO de juntarModelosEspaciados (ahí marcan "no es código"; aquí, "es presentación combo").
+// Pura y auto-contenida para el golden.
+function esComboTitulo(titulo: any): boolean {
+  return /\b(combo|juego|pack|kit)\b/i.test(String(titulo ?? ""));
+}
+
+// v61 — RE-RANKING del set del MCP antes de entregar 5 al modelo. Incidente real (28-jul, familia Epson
+// T544): el ranking semántico llenó el top-5 con las 4 tintas individuales + el combo x3, y el COMBO x4
+// ($36, más barato que las 4 sueltas a $43) quedó en posición 6+ → el bot cotizó de más. Se pide limit 10
+// al MCP y aquí se eligen los 5 con prioridad: (1) títulos con el código pedido, (2) el/los combos de la
+// familia, (3) el resto por ranking del MCP. Estable (respeta el orden original dentro de cada grupo).
+// Formas del código con las que se reconoce la FAMILIA en un título: la original y —solo para códigos de una
+// letra + 3+ dígitos— la forma corta (T544 → 544), porque el combo Epson se titula "Epson 544", no "T544".
+// No se aplica a códigos con guion/2+ letras (TN-830XL → NO da "830XL": evita falsos positivos amplios).
+function clavesFamilia(codigos: any[]): string[] {
+  const out = new Set<string>();
+  for (const c of (codigos ?? [])) {
+    const s = String(c ?? "");
+    const n = s.replace(/[-\s]/g, "").toLowerCase();
+    if (n) out.add(n);
+    if (/^[a-z]\d{3,}$/i.test(s)) out.add(s.slice(1).toLowerCase());
+  }
+  return [...out];
+}
+
+function rerankearCombos(prods: any[], codigos: any[], max: number = 6): any[] {
+  const norm = (s: any) => String(s ?? "").replace(/[-\s]/g, "").toLowerCase();
+  const claves = clavesFamilia(codigos);
+  const esDeFamilia = (t: any) => claves.length > 0 && claves.some((c) => norm(t).includes(c));
+  const lista = Array.isArray(prods) ? prods.filter(Boolean) : [];
+  // Sin anotaciones de tipo en el cuerpo: el extractor de tests/golden.mjs quita ": any" y dejaría "const x[]".
+  const comboFam = [], conCodigo = [], resto = [];
+  for (const p of lista) {
+    const t = (p && p.titulo) ?? "";
+    const deFamilia = esDeFamilia(t);
+    if (deFamilia && esComboTitulo(t)) comboFam.push(p);      // el combo de LA familia pedida
+    else if (deFamilia) conCodigo.push(p);                     // la individual pedida
+    else resto.push(p);                                        // todo lo demás, en el orden del MCP
+  }
+  // Se promueven SOLO los combos de la familia (máx 2) y con max=6 no desplazan a las individuales: para
+  // Epson T544 el set queda [combo x3, combo x4, negro, cyan, magenta, amarillo]. Revisión adversarial: un
+  // combo AJENO ("Kit de limpieza", "Pack de 500 hojas") NUNCA se promueve — quedaba por encima del propio
+  // producto pedido; y sin códigos en la consulta no se reordena nada (respeta el ranking del MCP).
+  const RESERVA = 2;
+  return [...comboFam.slice(0, RESERVA), ...conCodigo, ...comboFam.slice(RESERVA), ...resto].slice(0, max);
+}
+
 // v59 — SHADOW de búsqueda contra el Catalog MCP de Shopify (search_catalog). Compara recall vs suggest.json
 // SIN cambiar la respuesta al cliente; corre en background (waitUntil). La parte RIESGOSA —parsear la
 // respuesta anidada del MCP (result.content[].text = string JSON, + un 2º bloque con el aviso de
@@ -1191,6 +1247,10 @@ function parseCatalogoMCP(j: any): any[] {
         ? (Number(p.price_range.min.amount) / 100).toFixed(2) : null,
       disponible: (p && p.variants && p.variants[0] && p.variants[0].availability)
         ? (p.variants[0].availability.available ?? null) : null,
+      // v61: precio_usd sale de price_range.MIN → si el max difiere, hay variantes a distinto precio y el
+      // número es un "desde" (importa en combos: el prompt manda cotizarlos).
+      precio_desde: !!(p && p.price_range && p.price_range.max && p.price_range.min &&
+        p.price_range.max.amount != null && p.price_range.max.amount !== p.price_range.min.amount) || undefined,
       url: (p && p.url) ?? null,
       variant_id: (p && p.variants && p.variants[0] && p.variants[0].id) ?? null,
       descripcion_html: (p && p.description && p.description.html) ? p.description.html : undefined,  // v60 → especificaciones
@@ -1201,7 +1261,7 @@ function parseCatalogoMCP(j: any): any[] {
 
 // Llama al endpoint MCP (search_catalog). Best-effort: timeout corto; lanza si falla (el caller loguea).
 async function buscarCatalogoMCP(consulta: string): Promise<any[]> {
-  const body = { jsonrpc: "2.0", id: 1, method: "tools/call", params: { name: "search_catalog", arguments: { catalog: { query: consulta, pagination: { limit: 5 } } } } };
+  const body = { jsonrpc: "2.0", id: 1, method: "tools/call", params: { name: "search_catalog", arguments: { catalog: { query: consulta, pagination: { limit: BUSQUEDA_MCP_LIMIT } } } } };
   const res = await fetch(CATALOG_MCP_URL, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body), signal: AbortSignal.timeout(6000) });
   if (!res.ok) throw new Error(`mcp_http_${res.status}`);
   return parseCatalogoMCP(await res.json());
@@ -1252,12 +1312,19 @@ async function buscarProducto(consulta: string, waId: string = "", linksTracked?
     try {
       const mcp = await buscarCatalogoMCP(consulta);
       if (mcp.length) {
-        const top = mcp.slice(0, 5).map((p: any) => ({
-          id: p.id, titulo: p.titulo, precio_usd: p.precio_usd, disponible: p.disponible,
+        // v61: se piden 10 al MCP y se re-rankea en código para que el COMBO de la familia no quede fuera
+        // (antes el top-5 se llenaba con las individuales). Se entregan hasta 6 (5 + el combo promovido);
+        // el costo extra es 1 fila de ref_codes y ~200 tokens por búsqueda con combo.
+        const top = rerankearCombos(mcp, codigos, 6).map((p: any) => ({
+          id: p.id, titulo: p.titulo, precio_usd: p.precio_usd, disponible: p.disponible, precio_desde: p.precio_desde,
           marca: undefined, tipo: undefined, url: p.url, descripcion_html: p.descripcion_html,
         }));
-        if (!codigos.length || algunTituloConCodigo(top.map((p) => p.titulo), codigos)) {
-          return await enriquecer(top, true);
+        // El guard v60.1 se evalúa sobre el TOP-5 ORIGINAL del MCP (no sobre los 10 ni sobre el set
+        // re-rankeado): pedir 10 no debe ensanchar qué se considera "coincidencia exacta" — un match casual
+        // de subcadena en rank 6-10 haría pasar el guard y saltearía la escalera literal (revisión adversarial).
+        if (!codigos.length || algunTituloConCodigo(mcp.slice(0, 5).map((p: any) => p.titulo), codigos)) {
+          const conCombo = await anexarCombo(top, codigos);
+          return await enriquecer(conCombo, true);
         }
         // v60.1 — la consulta trae un código y NINGÚN título del MCP lo contiene. NO devolver estos vecinos
         // como si fueran el producto (bug real del v60: el MCP enterraba el exacto fuera de su top-5 y el bot
@@ -1309,6 +1376,45 @@ async function buscarProducto(consulta: string, waId: string = "", linksTracked?
     try { return await enriquecer(mcpAprox, false); } catch (e) { lastErr = String(e).slice(0, 120); }
   }
 
+  // v61 — SONDA DE COMBO (respaldo, no el mecanismo principal: el re-ranking ya cubre el caso normal).
+  // Si la consulta trae código de tinta y NINGÚN título del set final es combo/juego/pack/kit, se hace UNA
+  // búsqueda extra "combo <código>" (y sin la letra inicial: T544 → 544, porque el título del combo Epson
+  // dice "Epson 544", no "T544"). Anexa máx 1 hit marcado `combo_disponible` — NO desplaza a los 5 ni pasa
+  // por el guard de título-con-código (viene explícitamente como acompañante). Best-effort: nunca rompe.
+  async function anexarCombo(top: any[], codigos: any[]): Promise<any[]> {
+    try {
+      const claves = clavesFamilia(codigos);
+      if (!claves.length || top.some((p: any) => esComboTitulo(p?.titulo))) return top;   // ya hay combo → no gastar
+      // GATE de contexto: la sonda es para FAMILIAS DE TINTAS. Sin esto disparaba en casi toda búsqueda con
+      // código ("toner TN-830XL", "impresora L3250", "monitor P2422H") sumando llamadas HTTP al camino
+      // crítico sin ninguna chance de encontrar un combo (revisión adversarial).
+      const esTinta = /tinta|botella|cartucho/i.test(consulta) ||
+        top.some((p: any) => /tinta|botella|cartucho/i.test(String(p?.titulo ?? "")));
+      if (!esTinta) return top;
+      // Clave de dedup normalizada a dígitos: el MCP da gid://shopify/Product/N y suggest.json da N.
+      const clave = (p: any) => String(p?.id ?? "").replace(/\D/g, "") || String(handleDeUrl(p?.url) ?? "").toLowerCase();
+      const yaEsta = new Set(top.map(clave).filter(Boolean));
+      // UNA sola query, con la forma que usan los títulos de los combos (T544 → "544"; GI-11 queda igual).
+      const q = `combo ${claves[claves.length - 1]}`;
+      const esFamilia = (t: any) => claves.some((c) => String(t ?? "").replace(/[-\s]/g, "").toLowerCase().includes(c));
+      const buscarHit = (cands: any[]) => (cands ?? []).find((p: any) =>
+        p && esComboTitulo(p.titulo) && esFamilia(p.titulo) && !yaEsta.has(clave(p)));
+      let motor = "mcp", hit: any = null;
+      try { hit = buscarHit(BUSQUEDA_MCP ? await buscarCatalogoMCP(q) : []); } catch { /* sigue a suggest */ }
+      // Escalada correcta: si el MCP no trajo un combo DE LA FAMILIA (no "si no trajo nada" — el MCP nunca
+      // devuelve vacío), se prueba el literal, que es el que mejor encuentra un título con el código.
+      if (!hit) { motor = "suggest"; try { hit = buscarHit(await suggestShopify(q)); } catch { /* nada */ } }
+      // Telemetría solo del caso accionable (disparo real) y en BACKGROUND: no sumar un round-trip a Postgres
+      // al camino que el cliente espera.
+      const detalle = { consulta: String(consulta).slice(0, 80), disparo: true, hallo: !!hit, motor };
+      // @ts-ignore EdgeRuntime es global en Supabase Edge Functions
+      if (typeof EdgeRuntime !== "undefined") EdgeRuntime.waitUntil(log("combo_sonda", true, detalle));
+      else void log("combo_sonda", true, detalle);
+      // El anexado NUNCA sale como "el modelo pedido": va marcado y el prompt manda leer su título. Tope 6.
+      return hit ? [...top.slice(0, 5), { ...hit, combo_disponible: true }] : top;
+    } catch { return top; } // nunca romper la búsqueda por la sonda
+  }
+
   // Enriquecimiento (v21 ITBMS + stock real; v28/v29 tracking; v52 especificaciones) — compartido por el
   // hit directo y el fallback v55.
   async function enriquecer(top: any[], exacto: boolean = true): Promise<string> {
@@ -1341,6 +1447,12 @@ async function buscarProducto(consulta: string, waId: string = "", linksTracked?
         url: urls[i],
         especificaciones: specs || undefined,
         especificaciones_truncada: specsLimpias.length > 1500 || undefined,
+        // v61: presentación COMBO (las 4 tintas juntas, normalmente más barato que sueltas). SOLO se emite en
+        // resultados EXACTOS: en una coincidencia "aproximada" no hay familia confirmada, y marcar ahí un
+        // combo aflojaría el guardrail v60.1 (el bot ofrecería el "juego" de otra familia). Revisión adversarial.
+        combo: (exacto && (p.combo_disponible === true || esComboTitulo(p.titulo))) || undefined,
+        // v61: el precio del MCP es price_range.min → si las variantes tienen precios distintos, es un "desde".
+        precio_desde: p.precio_desde || undefined,
       };
     });
     if (exacto) return JSON.stringify(enriquecidos);
@@ -1865,7 +1977,7 @@ Deno.serve(async (req) => {
       const diag = await inventarioSelfTest(pid);
       return Response.json({ selftest: "inventario", ...diag, ts: new Date().toISOString() });
     }
-    return Response.json({ status: "ok", function: "copilot-webhook", version: "v60.2-envio-gratis-web", mode: MODE, mode_raw: MODE_RAW, model: MODEL, llm_configured: !!anthropic, wati_send_configured: !!(WATI_API_TOKEN && WATI_API_BASE), inventario_configurado: !!(SHOPIFY_ADMIN_TOKEN && SHOPIFY_ADMIN_API_BASE), resolve_configured: !!RESOLVE_SECRET, webhook_key_es_default: WEBHOOK_KEY_ES_DEFAULT, handoff_assist_min: HANDOFF_ASSIST_MIN, handoff_cold_hours: HANDOFF_COLD_HOURS, debounce_ms: DEBOUNCE_MS, busqueda_shadow: BUSQUEDA_SHADOW, busqueda_mcp: BUSQUEDA_MCP, live_targets: MODE === "live" ? (LIVE_ALL ? "all" : LIVE_ALLOWLIST.length) : 0, ts: new Date().toISOString() });
+    return Response.json({ status: "ok", function: "copilot-webhook", version: "v61-combos-tintas", mode: MODE, mode_raw: MODE_RAW, model: MODEL, llm_configured: !!anthropic, wati_send_configured: !!(WATI_API_TOKEN && WATI_API_BASE), inventario_configurado: !!(SHOPIFY_ADMIN_TOKEN && SHOPIFY_ADMIN_API_BASE), resolve_configured: !!RESOLVE_SECRET, webhook_key_es_default: WEBHOOK_KEY_ES_DEFAULT, handoff_assist_min: HANDOFF_ASSIST_MIN, handoff_cold_hours: HANDOFF_COLD_HOURS, debounce_ms: DEBOUNCE_MS, busqueda_shadow: BUSQUEDA_SHADOW, busqueda_mcp: BUSQUEDA_MCP, busqueda_mcp_limit: BUSQUEDA_MCP_LIMIT, live_targets: MODE === "live" ? (LIVE_ALL ? "all" : LIVE_ALLOWLIST.length) : 0, ts: new Date().toISOString() });
   }
   if (req.method !== "POST") return Response.json({ error: "method_not_allowed" }, { status: 405 });
   if (url.searchParams.get("key") !== WEBHOOK_KEY) return Response.json({ error: "forbidden" }, { status: 403 });

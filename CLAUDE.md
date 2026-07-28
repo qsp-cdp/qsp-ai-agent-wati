@@ -19,7 +19,38 @@ equipo humano: contesta preguntas generales, indica disponibilidad/stock y da pr
 con certeza, y calla/deriva cuando es mejor que responda un humano. Tienda:
 **quickservicepanama.com** (suministros de impresión y tecnología en Panamá).
 
-## Estado actual (2026-07-23)
+## Estado actual (2026-07-28)
+- **EN EL REPO, LISTO PARA DESPLEGAR: v61 (`v61-combos-tintas`).** Incidente real (28-jul): la clienta pidió la
+  familia Epson T544 y el bot cotizó las 4 tintas individuales ($43 + ITBMS) ofreciendo solo el combo x3 ($29)
+  — **el COMBO x4 existe a $36 con 31 uds** y la clienta lo encontró sola con una captura del sitio. Raíz: el
+  MCP devolvía 5 y su ranking semántico llenaba el top-5 con las 4 individuales + el combo x3 → **el combo x4
+  quedaba en posición 6+ y nunca llegaba al modelo**; además el guardrail `algunTituloConCodigo` no lo
+  rescataba (su título dice "Epson 544", no "T544" — la única de las 6 familias con ese hueco), y no había
+  regla de prompt que mandara ofrecer el combo. **4 piezas:** (1) **`BUSQUEDA_MCP_LIMIT`** (env, default
+  **10**, clamp 1-50) — se le piden 10 al MCP en vez de 5 (al modelo siguen llegando 5 → costo de
+  tokens/ref_codes/inventario sin cambio); (2) **`rerankearCombos`** (pura) — elige los 5 con **RESERVA de 2
+  slots para combos** (sin la reserva, las 4 individuales que llevan el código llenan el top-5 y el combo
+  queda fuera igual: el golden lo cazó), combos con el código en el título primero, resto por ranking del MCP;
+  (3) **sonda `anexarCombo`** (respaldo) — si el set final no trae combo Y hay contexto de TINTA, UNA búsqueda
+  extra `combo <forma corta>` por MCP→(si no hay hit de familia) suggest, anexa máx 1 hit **validado contra la
+  familia** como 6º marcado `combo_disponible`; telemetría `job_log` **`combo_sonda`** (solo el disparo real,
+  en background) para decidir en ~1 mes si el limit 10 alcanza; (4) **regla de prompt COMBOS / JUEGOS DE
+  TINTAS** — LEER el título antes de ofrecerlo (el flag es léxico: un "Pack x2 negra" no es el juego de 4),
+  cotizar el combo si quiere el juego completo, comparar con **`calcular_cotizacion`** (nunca sumar de
+  memoria), **grounded** (solo combos de ESE turno), NO aplica en `aproximada`, y si no sabe el modelo →
+  CONSUMIBLE SIN MODELO primero. `enriquecer` expone `combo:true` (solo en exactos) y `precio_desde`.
+  437 golden + 21 node tests. **Revisión adversarial (4 lentes + verificación adversarial): 6 hallazgos
+  CONFIRMADOS y corregidos antes de commitear** — (a) la sonda anexaba CUALQUIER combo sin validar familia
+  (reabría el bug v60.1 por la puerta de atrás); (b) el re-ranking hoisteaba combos AJENOS por encima del
+  producto pedido ("toner TN830XL" → "Kit de limpieza" #1) y el golden lo lockeaba; (c) RESERVA=2 con max=5
+  expulsaba la tinta AMARILLA del caso insignia → max=6; (d) pedir 10 ensanchaba el guard v60.1 → se evalúa
+  sobre el top-5 ORIGINAL del MCP; (e) la regla mandaba sumar de memoria (contradecía v57); (f) el flag combo
+  viajaba en `aproximada`. Sin migración. **Deploy:** `.\deploy.ps1 copilot-webhook`
+  (no-op sin la env var: el default 10 aplica igual) → smoke test de las 6 familias (T544, T504, GI-11,
+  GI-190, GI-16, GT52) → monitorear `combo_sonda`. **Pendiente de DATA (manual, no código):** agregar "T544"
+  a los tags del combo Epson 544 x4 (handle `juego-de-tintas-epson-t544-…`, SKU `T544520-4P`) para darle señal
+  léxica al ranking; preferir TAGS sobre tocar el título (plan SEO vigente).
+## Estado histórico (2026-07-23)
 - **EN EL REPO, LISTO PARA DESPLEGAR: v60.2 (`v60.2-envio-gratis-web`).** Corrección de negocio (23-jul): el
   **envío gratis >$300 es EXCLUSIVO del checkout WEB**; en un pedido/cotización coordinado por WhatsApp NO
   aplica (se cobra la tarifa normal). La regla de v59.2 lo hacía "siempre aclarar gratis" → el bot prometía

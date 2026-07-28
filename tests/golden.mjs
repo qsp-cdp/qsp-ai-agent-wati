@@ -78,6 +78,9 @@ const PROMESA_ASESOR_RE = extraerConst("PROMESA_ASESOR_RE");
 const prometeSeguimientoSinResolver = extraerFuncion("prometeSeguimientoSinResolver");
 const calcularCotizacion = extraerFuncion("calcularCotizacion");
 const parseCatalogoMCP = extraerFuncion("parseCatalogoMCP");
+const esComboTitulo = extraerFuncion("esComboTitulo");
+const clavesFamilia = extraerFuncion("clavesFamilia");
+const rerankearCombos = extraerFuncion("rerankearCombos");
 const SYSTEM_PROMPT = extraerSystemPrompt();
 
 // --- harness -------------------------------------------------------------------------------------
@@ -718,7 +721,8 @@ caso("v60: MCP primario en buscarProducto", /if \(BUSQUEDA_MCP\) \{/.test(src) &
 // existía) se reemplazó por el flujo HÍBRIDO: código-no-en-MCP → la escalera literal busca el EXACTO;
 // los vecinos quedan de respaldo "aproximada" solo si la escalera tampoco halla.
 caso("v60.1: el cross-check viejo (exacto=suggestN>0) fue RETIRADO", !/exacto = suggestN > 0/.test(src));
-caso("v60.1: código no en títulos MCP → vecinos a mcpAprox y la escalera corre", /mcpAprox = top;/.test(src) && /!codigos\.length \|\| algunTituloConCodigo\(top\.map\(\(p\) => p\.titulo\), codigos\)/.test(src));
+// v61: el guard pasó a evaluarse sobre el top-5 ORIGINAL del MCP (pedir 10 no debe ensanchar el "exacto").
+caso("v60.1/v61: código no en títulos MCP → vecinos a mcpAprox y la escalera corre", /mcpAprox = top;/.test(src) && /!codigos\.length \|\| algunTituloConCodigo\(mcp\.slice\(0, 5\)\.map/.test(src));
 caso("v60.1: aproximada sale AL FINAL (tras el fallback v55 de la escalera)", (() => {
   const iFb = src.indexOf("if (fallback) {");
   const iAprox = src.indexOf("if (mcpAprox) {");
@@ -730,6 +734,96 @@ caso("v60.1: manda búsqueda NUEVA con los atributos antes de cambiar marca/cate
 caso("v60: enriquecer señaliza 'aproximada' (alternativas) cuando no es exacto", /if \(exacto\) return JSON\.stringify\(enriquecidos\)/.test(src) && /coincidencia: "aproximada"/.test(src) && /alternativas: enriquecidos/.test(src));
 caso("v60: fallback de confiabilidad — MCP caído cae a la escalera suggest.json (busqueda_mcp_fallo)", /busqueda_mcp_fallo/.test(src) && /motor legacy \/ fallback de confiabilidad/.test(src));
 caso("v60: healthcheck expone busqueda_mcp", /busqueda_mcp: BUSQUEDA_MCP/.test(src));
+
+// --- v61: combos de tintas (re-ranking + límite MCP + sonda) --------------------------------------
+console.log("v61 combos de tintas");
+// Caso REAL (28-jul, Epson T544): el MCP llenó el top-5 con las 4 individuales + el combo x3, y el COMBO x4
+// ($36, más barato que las 4 sueltas a $43, 31 uds) quedó en posición 6+ → el bot cotizó $7 de más.
+caso("v61: esComboTitulo detecta combo/juego/pack/kit", esComboTitulo("Combo de Tintas Epson 544 Original – Combo x 4 Colores") && esComboTitulo("Juego de Tintas Epson T504 | Los 4 colores") && esComboTitulo("Combo Canon GI-16 — Kit Completo 4 Tintas"));
+caso("v61: esComboTitulo NO marca una tinta individual", !esComboTitulo("Tinta Epson T544120 - Negro | Epson 544") && !esComboTitulo("Toner Brother TN-830XL"));
+caso("v61: esComboTitulo tolera null/vacío", !esComboTitulo(null) && !esComboTitulo(""));
+
+// El set REAL que devolvió el MCP para "T544" (combo x4 en posición 6, fuera del top-5 viejo).
+const MCP_T544 = [
+  { titulo: "Tinta Epson T544120 - Negro | Epson 544 | Ecotank L3210/L3250", precio_usd: "11.00" },
+  { titulo: "Tinta Epson T544220 - Cyan | Epson 544", precio_usd: "11.00" },
+  { titulo: "Tinta Epson T544320 - Magenta| Epson 544", precio_usd: "11.00" },
+  { titulo: "Tinta Epson T544420 - Amarillo | Epson 544", precio_usd: "11.00" },
+  { titulo: "Tinta Epson 544 Original – Combo x 3 Colores (Cian, Magenta, Amarillo)", precio_usd: "29.00" },
+  { titulo: "Combo de Tintas Epson 544 Original – Combo x 4 Colores (Negro, Cian, Magenta, Amarillo)", precio_usd: "36.00" },
+  { titulo: "Pack de 2 Botellas de Tinta Epson 544 Negra", precio_usd: "18.50" },
+  { titulo: "Tinta Epson T664120 - Negro", precio_usd: "9.00" },
+];
+const top_T544 = rerankearCombos(MCP_T544, modelosEn("tinta epson T544"), 6);
+caso("v61: el COMBO x4 (pos 6 del MCP) ENTRA al set entregado al modelo", top_T544.some((p) => /Combo x 4 Colores/.test(p.titulo)));
+caso("v61: los combos de la familia van ARRIBA (la mejor oferta primero)", esComboTitulo(top_T544[0].titulo));
+// REGRESIÓN que cazó la revisión adversarial: con RESERVA=2 y max=5 la tinta AMARILLA quedaba fuera del set
+// (el propio caso insignia perdía un color). Con max=6 entra la familia COMPLETA + los dos combos.
+caso("v61: las 4 individuales SOBREVIVEN (la amarilla T544420 no se expulsa)",
+  ["T544120", "T544220", "T544320", "T544420"].every((c) => top_T544.some((p) => p.titulo.includes(c))));
+caso("v61: set acotado a 6", top_T544.length === 6);
+// el combo se reconoce por la forma corta del código (su título dice "Epson 544", no "T544")
+caso("v61: clavesFamilia T544 → también '544' (la forma corta del título del combo)", clavesFamilia(["T544"]).includes("544"));
+caso("v61: NO parte códigos con guion/2+ letras (TN-830XL no genera '830xl')", !clavesFamilia(["TN-830XL"]).includes("830xl"));
+// un combo cuyo TÍTULO trae el código (GI-11, GI-16…) va primero de todo.
+caso("v61: combo CON el código en el título va #1", (() => {
+  const set = [
+    { titulo: "Tinta Canon GI-11 Cyan" }, { titulo: "Tinta Canon GI-11 Amarillo" },
+    { titulo: "Tinta Canon GI-11 PGBK Negro" }, { titulo: "Tinta Canon GI-11 -Magenta" },
+    { titulo: "Impresora Canon Pixma G4170" },
+    { titulo: "Combo de Tintas Canon Mega Kit 4 colores GI-11" },
+  ];
+  return /Combo de Tintas Canon Mega Kit/.test(rerankearCombos(set, modelosEn("tinta canon GI-11"), 6)[0].titulo);
+})());
+// 🔴 REGRESIÓN CRÍTICA (revisión adversarial): los combos AJENOS —sin el código pedido— NO deben hoistearse;
+// quedaban por ENCIMA del propio producto que el cliente pidió.
+caso("v61: un combo AJENO no desplaza al producto pedido (toner TN-830XL)", (() => {
+  const set = [
+    { titulo: "Toner Brother TN-830XL | Para DCP-L2640DW" },
+    { titulo: "Kit de limpieza para impresoras" },
+    { titulo: "Combo de Tintas Epson 544 x 4 Colores" },
+  ];
+  return /TN-830XL/.test(rerankearCombos(set, modelosEn("toner TN830XL"), 6)[0].titulo);
+})());
+caso("v61: SIN códigos (consulta genérica) NO se reordena — respeta el ranking del MCP", (() => {
+  const set = [{ titulo: "Monitor HP M27fw" }, { titulo: "Kit de mantenimiento HP" }, { titulo: "Pack de 500 hojas" }];
+  const r = rerankearCombos(set, [], 6);
+  return /Monitor HP M27fw/.test(r[0].titulo) && /Kit de mantenimiento/.test(r[1].titulo);
+})());
+// estabilidad y bordes
+caso("v61: set más chico que max no truena", rerankearCombos([{ titulo: "Tinta X" }], ["x"], 6).length === 1);
+caso("v61: entrada vacía/no-array → []", rerankearCombos([], ["t544"], 6).length === 0 && rerankearCombos(null, ["t544"], 6).length === 0);
+caso("v61: elementos null tolerados", rerankearCombos([null, { titulo: "Combo A" }], [], 6).length === 1);
+
+// wiring en el source real
+caso("v61: BUSQUEDA_MCP_LIMIT env con default 10", /const BUSQUEDA_MCP_LIMIT = \(\(\) => \{/.test(src) && /Number\.isFinite\(n\) && n >= 1 \? Math\.min\(n, 50\) : 10/.test(src));
+caso("v61: el MCP se pide con ese límite (ya no 5 fijo)", /pagination: \{ limit: BUSQUEDA_MCP_LIMIT \}/.test(src) && !/pagination: \{ limit: 5 \}/.test(src));
+caso("v61: re-ranking cableado con max=6 antes de entregar al modelo", /rerankearCombos\(mcp, codigos, 6\)/.test(src));
+// el guard v60.1 se evalúa sobre el TOP-5 ORIGINAL del MCP: pedir 10 no debe ensanchar qué cuenta como
+// "coincidencia exacta" (un match casual de subcadena en rank 6-10 saltearía la escalera literal).
+caso("v61: el guard v60.1 sigue evaluándose sobre el top-5 original del MCP", /algunTituloConCodigo\(mcp\.slice\(0, 5\)\.map/.test(src));
+caso("v61: sonda de combo cableada (anexarCombo) solo en el camino exacto", /const conCombo = await anexarCombo\(top, codigos\)/.test(src));
+caso("v61: la sonda NO dispara si el set ya trae combo (anti doble-llamada)", /top\.some\(\(p: any\) => esComboTitulo\(p\?\.titulo\)\)\) return top;/.test(src));
+caso("v61: la sonda tiene GATE de contexto tinta (no dispara en tóner/impresoras/monitores)", /const esTinta = \/tinta\|botella\|cartucho\/i\.test\(consulta\)/.test(src) && /if \(!esTinta\) return top;/.test(src));
+caso("v61: el hit de la sonda se VALIDA contra la familia (no anexa un combo ajeno)", /esComboTitulo\(p\.titulo\) && esFamilia\(p\.titulo\)/.test(src));
+caso("v61: escalada a suggest cuando el MCP no trajo combo de la familia (no 'sin candidatos')", /if \(!hit\) \{ motor = "suggest"/.test(src));
+caso("v61: dedup normalizado a dígitos (gid del MCP vs id numérico de suggest)", /String\(p\?\.id \?\? ""\)\.replace\(\/\\D\/g, ""\)/.test(src));
+caso("v61: la sonda acota el set a 6 al anexar", /\[\.\.\.top\.slice\(0, 5\), \{ \.\.\.hit, combo_disponible: true \}\]/.test(src));
+caso("v61: telemetría combo_sonda solo del disparo real y en background", /"combo_sonda"/.test(src) && /EdgeRuntime\.waitUntil\(log\("combo_sonda"/.test(src) && !/disparo: false/.test(src));
+caso("v61: el flag combo SOLO se emite en resultados exactos (no afloja v60.1)", /combo: \(exacto && \(p\.combo_disponible === true \|\| esComboTitulo\(p\.titulo\)\)\) \|\| undefined/.test(src));
+caso("v61: precio_desde expuesto cuando las variantes tienen precios distintos", /precio_desde: !!\(p && p\.price_range/.test(src) && /precio_desde: p\.precio_desde \|\| undefined/.test(src));
+caso("v61: healthcheck expone busqueda_mcp_limit", /busqueda_mcp_limit: BUSQUEDA_MCP_LIMIT/.test(src));
+// prompt (grounded, sin aflojar guardrails)
+caso("v61: SYSTEM_PROMPT tiene la regla COMBOS / JUEGOS DE TINTAS", /COMBOS \/ JUEGOS DE TINTAS/.test(SYSTEM_PROMPT));
+caso("v61: cotiza el COMBO si quiere el juego completo", /COTIZA EL COMBO/.test(SYSTEM_PROMPT));
+caso("v61: la regla es GROUNDED (solo combos devueltos en el turno)", /nunca supongas que existe/.test(SYSTEM_PROMPT) && /EN ESTE MISMO TURNO/.test(SYSTEM_PROMPT));
+// revisión adversarial — 4 contradicciones cerradas:
+caso("v61: NO sumar de memoria — usa calcular_cotizacion (no contradice v57)", /usa calcular_cotizacion/.test(SYSTEM_PROMPT) && /NUNCA sumes ni compares totales de memoria/.test(SYSTEM_PROMPT));
+caso("v61: manda LEER el título del combo (el flag es solo léxico)", /LEE SU TÍTULO/.test(SYSTEM_PROMPT) && /NO son el juego completo de 4/.test(SYSTEM_PROMPT));
+caso("v61: la regla NO aplica en coincidencia aproximada (no afloja v60.1)", /NO aplica cuando buscar_producto devuelve coincidencia:"aproximada"/.test(SYSTEM_PROMPT));
+caso("v61: respeta CONSUMIBLE SIN MODELO (si no sabe el modelo, pregunta primero)", /primero pregunta \(ver CONSUMIBLE SIN MODELO\)/.test(SYSTEM_PROMPT));
+caso("v61: si pidió UNA sola tinta, cotiza la individual (no empuja el combo)", /Si pidió UNA sola tinta, cotiza LA INDIVIDUAL/.test(SYSTEM_PROMPT));
+caso("v61: precio_desde documentado en el prompt", /precio_desde:true/.test(SYSTEM_PROMPT));
 
 // --- resumen --------------------------------------------------------------------------------------
 console.log(`\n${ok} OK, ${mal} FALLA${mal === 1 ? "" : "S"}`);
