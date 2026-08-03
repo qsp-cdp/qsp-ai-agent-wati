@@ -804,7 +804,7 @@ caso("v61: re-ranking cableado con max=6 antes de entregar al modelo", /rerankea
 caso("v61: el guard v60.1 sigue evaluándose sobre el top-5 original del MCP", /algunTituloConCodigo\(mcp\.slice\(0, 5\)\.map/.test(src));
 caso("v61: sonda de combo cableada (anexarCombo) solo en el camino exacto", /const conCombo = await anexarCombo\(top, codigos\)/.test(src));
 caso("v61: la sonda NO dispara si el set ya trae combo (anti doble-llamada)", /top\.some\(\(p: any\) => esComboTitulo\(p\?\.titulo\)\)\) return top;/.test(src));
-caso("v61: la sonda tiene GATE de contexto tinta (no dispara en tóner/impresoras/monitores)", /const esTinta = \/tinta\|botella\|cartucho\/i\.test\(consulta\)/.test(src) && /if \(!esTinta\) return top;/.test(src));
+caso("v61: la sonda tiene GATE de contexto consumible (no dispara en impresoras/monitores)", /const esConsumibleCombo = \/tinta\|botella\|cartucho\|cabezal\/i\.test\(consulta\)/.test(src) && /if \(!esConsumibleCombo\) return top;/.test(src));
 caso("v61: el hit de la sonda se VALIDA contra la familia (no anexa un combo ajeno)", /esComboTitulo\(p\.titulo\) && esFamilia\(p\.titulo\)/.test(src));
 caso("v61: escalada a suggest cuando el MCP no trajo combo de la familia (no 'sin candidatos')", /if \(!hit\) \{ motor = "suggest"/.test(src));
 caso("v61: dedup normalizado a dígitos (gid del MCP vs id numérico de suggest)", /String\(p\?\.id \?\? ""\)\.replace\(\/\\D\/g, ""\)/.test(src));
@@ -822,8 +822,22 @@ caso("v61: NO sumar de memoria — usa calcular_cotizacion (no contradice v57)",
 caso("v61: manda LEER el título del combo (el flag es solo léxico)", /LEE SU TÍTULO/.test(SYSTEM_PROMPT) && /NO son el juego completo de 4/.test(SYSTEM_PROMPT));
 caso("v61: la regla NO aplica en coincidencia aproximada (no afloja v60.1)", /NO aplica cuando buscar_producto devuelve coincidencia:"aproximada"/.test(SYSTEM_PROMPT));
 caso("v61: respeta CONSUMIBLE SIN MODELO (si no sabe el modelo, pregunta primero)", /primero pregunta \(ver CONSUMIBLE SIN MODELO\)/.test(SYSTEM_PROMPT));
-caso("v61: si pidió UNA sola tinta, cotiza la individual (no empuja el combo)", /Si pidió UNA sola tinta, cotiza LA INDIVIDUAL/.test(SYSTEM_PROMPT));
+caso("v61: si pidió UNO solo, cotiza el individual (no empuja el combo)", /Si pidió UNA sola tinta o UN solo cabezal, cotiza EL INDIVIDUAL/.test(SYSTEM_PROMPT));
 caso("v61: precio_desde documentado en el prompt", /precio_desde:true/.test(SYSTEM_PROMPT));
+
+// --- v61.1: cabezales (caso real 03-ago, conv 50767698701) ----------------------------------------
+console.log("v61.1 cabezales + tipo de producto");
+// El cliente pidió "cabezales para HP 410" (una Ink Tank) y el bot le respondió que la 410 era TÓNER y que
+// no había cabezales — teniendo los cabezales de Ink Tank en catálogo. Dos fixes:
+caso("v61.1: el TIPO de producto lo define el cliente, no el número", /EL TIPO DE PRODUCTO LO DEFINE EL CLIENTE, NO EL NÚMERO/.test(SYSTEM_PROMPT));
+caso("v61.1: prohíbe corregir al cliente por inferencia propia del número", /jamás respondas "eso no existe para su equipo" por inferencia propia/.test(SYSTEM_PROMPT));
+caso("v61.1: manda buscar CON la palabra del cliente (cabezal HP 410)", /cabezal HP 410/.test(SYSTEM_PROMPT));
+// combos de CABEZALES (las de tanque llevan 2: negro + tricolor, y suele haber kit de ambos)
+caso("v61.1: la regla de combos cubre CABEZALES, no solo tintas", /COMBOS \/ JUEGOS DE TINTAS Y CABEZALES/.test(SYSTEM_PROMPT) && /ofrécele el kit de los dos cuando exista/.test(SYSTEM_PROMPT));
+caso("v61.1: la sonda dispara también en contexto de cabezal", /tinta\|botella\|cartucho\|cabezal/.test(src));
+// plurales en la detección de combo (título real del catálogo: "Kit de Cabezales Canon")
+caso("v61.1: esComboTitulo detecta 'Kit de Cabezales' y plurales", esComboTitulo("Kit de Cabezales Canon | BH-1 | CH-1 | Pixma G2100") && esComboTitulo("Kits de cabezales G4100") && esComboTitulo("Combos de tintas"));
+caso("v61.1: sigue sin marcar una individual", !esComboTitulo("Cabezal HP M0H51AL Negro Ink Tank 315 | 415") && !esComboTitulo("Tinta Epson T544120 - Negro"));
 
 // --- resumen --------------------------------------------------------------------------------------
 console.log(`\n${ok} OK, ${mal} FALLA${mal === 1 ? "" : "S"}`);

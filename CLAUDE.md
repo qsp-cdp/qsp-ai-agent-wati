@@ -19,7 +19,23 @@ equipo humano: contesta preguntas generales, indica disponibilidad/stock y da pr
 con certeza, y calla/deriva cuando es mejor que responda un humano. Tienda:
 **quickservicepanama.com** (suministros de impresión y tecnología en Panamá).
 
-## Estado actual (2026-07-28)
+## Estado actual (2026-08-03)
+- **EN EL REPO, LISTO PARA DESPLEGAR (junto con v61): v61.1 (`v61.1-cabezales-tipo`).** Caso real (conv
+  50767698701, 03-ago): el cliente preguntó *"¿tienen **cabezales** para impresora **HP 410**?"* y el bot
+  respondió *"la línea HP 410 corresponde a **tóner**… **no a cabezales**"* y cotizó el CF410A — pero el
+  cliente hablaba de la **HP Ink Tank 410** y **SÍ tenemos** sus cabezales (M0H50AL / M0H51AL / 3YP86AL); un
+  asesor lo rescató 11 min después ofreciendo *"el kit de cabezales, vienen ambos"*. (Verificado: a ese hilo
+  **no llegó ninguna imagen** — los 4 mensajes del cliente tienen `media_url` null, así que no fue falla de
+  visión.) Dos fixes de PROMPT + uno de lógica: (1) **EL TIPO DE PRODUCTO LO DEFINE EL CLIENTE, NO EL
+  NÚMERO** — si dice "cabezal/tóner/tinta/cartucho/cinta", esa palabra manda sobre la interpretación del
+  número (HP 410 existe como línea de TÓNER láser y como Ink Tank de TINTA con CABEZALES): buscar CON esa
+  palabra, y **NUNCA corregir al cliente** sobre qué usa su equipo por inferencia propia — si no aparece,
+  buscar la otra lectura o preguntar qué impresora tiene; (2) la regla de combos se generaliza a **TINTAS Y
+  CABEZALES** (las de tanque llevan DOS —negro y tricolor— y suele haber kit de ambos: ofrecerlo en vez de
+  cotizar uno solo); (3) **código**: el gate de la sonda ahora cubre `cabezal` (antes solo tinta/botella/
+  cartucho → los cabezales quedaban fuera del v61) y `esComboTitulo` reconoce **plurales** ("Kit**s** de
+  Cabezales", "Combo**s** de tintas", "multipack"). 444 golden + 21 node tests. Sin migración.
+## Estado histórico (2026-07-28)
 - **EN EL REPO, LISTO PARA DESPLEGAR: v61 (`v61-combos-tintas`).** Incidente real (28-jul): la clienta pidió la
   familia Epson T544 y el bot cotizó las 4 tintas individuales ($43 + ITBMS) ofreciendo solo el combo x3 ($29)
   — **el COMBO x4 existe a $36 con 31 uds** y la clienta lo encontró sola con una captura del sitio. Raíz: el
