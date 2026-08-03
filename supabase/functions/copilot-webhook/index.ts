@@ -1195,6 +1195,31 @@ function esComboTitulo(titulo: any): boolean {
 // ($36, más barato que las 4 sueltas a $43) quedó en posición 6+ → el bot cotizó de más. Se pide limit 10
 // al MCP y aquí se eligen los 5 con prioridad: (1) títulos con el código pedido, (2) el/los combos de la
 // familia, (3) el resto por ranking del MCP. Estable (respeta el orden original dentro de cada grupo).
+// v61.2 — el TIPO de consumible que nombra el cliente es EXCLUYENTE: un tóner nunca satisface un pedido de
+// cabezal (ni al revés). Caso real (03-ago): "cabezales para HP 410" → el "410" de "CF410A" hacía que la
+// escalera literal devolviera el TÓNER como coincidencia exacta. Con esto, un match de CÓDIGO en un producto
+// de otro tipo ya no cuenta como "encontré lo que pidió". Pura y auto-contenida (golden la extrae).
+function tipoPedido(consulta: any): string {
+  const q = String(consulta ?? "").toLowerCase();
+  if (/cabezal/.test(q)) return "cabezal";
+  if (/t[oó]ner/.test(q)) return "toner";
+  if (/\btintas?\b|botella/.test(q)) return "tinta";
+  return "";   // sin tipo declarado → no se filtra nada
+}
+
+// ¿El título es compatible con el tipo que pidió el cliente? Solo descarta lo que es CLARAMENTE de otro tipo
+// (los tres son mutuamente excluyentes); ante la duda deja pasar.
+function tituloDeTipo(titulo: any, tipo: string): boolean {
+  if (!tipo) return true;
+  const t = String(titulo ?? "").toLowerCase();
+  const esCabezal = /cabezal/.test(t), esToner = /t[oó]ner/.test(t), esTinta = /\btintas?\b|botella/.test(t);
+  if (!esCabezal && !esToner && !esTinta) return true;        // título sin tipo claro → no descartar
+  if (tipo === "cabezal") return esCabezal;
+  if (tipo === "toner") return esToner && !esCabezal;
+  if (tipo === "tinta") return esTinta && !esCabezal;
+  return true;
+}
+
 // Formas del código con las que se reconoce la FAMILIA en un título: la original y —solo para códigos de una
 // letra + 3+ dígitos— la forma corta (T544 → 544), porque el combo Epson se titula "Epson 544", no "T544".
 // No se aplica a códigos con guion/2+ letras (TN-830XL → NO da "830XL": evita falsos positivos amplios).
@@ -1215,20 +1240,18 @@ function rerankearCombos(prods: any[], codigos: any[], max: number = 6): any[] {
   const esDeFamilia = (t: any) => claves.length > 0 && claves.some((c) => norm(t).includes(c));
   const lista = Array.isArray(prods) ? prods.filter(Boolean) : [];
   // Sin anotaciones de tipo en el cuerpo: el extractor de tests/golden.mjs quita ": any" y dejaría "const x[]".
-  const comboFam = [], conCodigo = [], resto = [];
+  const comboFam = [], resto = [];
   for (const p of lista) {
     const t = (p && p.titulo) ?? "";
-    const deFamilia = esDeFamilia(t);
-    if (deFamilia && esComboTitulo(t)) comboFam.push(p);      // el combo de LA familia pedida
-    else if (deFamilia) conCodigo.push(p);                     // la individual pedida
-    else resto.push(p);                                        // todo lo demás, en el orden del MCP
+    if (esDeFamilia(t) && esComboTitulo(t)) comboFam.push(p);  // el combo de LA familia pedida
+    else resto.push(p);                                        // TODO lo demás, en el orden del MCP
   }
-  // Se promueven SOLO los combos de la familia (máx 2) y con max=6 no desplazan a las individuales: para
-  // Epson T544 el set queda [combo x3, combo x4, negro, cyan, magenta, amarillo]. Revisión adversarial: un
-  // combo AJENO ("Kit de limpieza", "Pack de 500 hojas") NUNCA se promueve — quedaba por encima del propio
-  // producto pedido; y sin códigos en la consulta no se reordena nada (respeta el ranking del MCP).
+  // Se promueven SOLO los combos de la familia (máx 2); con max=6 no desplazan a las individuales: para
+  // Epson T544 el set queda [combo x3, combo x4, negro, cyan, magenta, amarillo]. TODO lo demás conserva el
+  // ranking semántico del MCP —que suele ser bueno—: hoistear por "código en título" hacía daño real
+  // ("cabezal HP 410" → el 410 de "CF410A" subía el TÓNER al #1 por encima de los cabezales pedidos).
   const RESERVA = 2;
-  return [...comboFam.slice(0, RESERVA), ...conCodigo, ...comboFam.slice(RESERVA), ...resto].slice(0, max);
+  return [...comboFam.slice(0, RESERVA), ...resto, ...comboFam.slice(RESERVA)].slice(0, max);
 }
 
 // v59 — SHADOW de búsqueda contra el Catalog MCP de Shopify (search_catalog). Compara recall vs suggest.json
@@ -1299,6 +1322,7 @@ async function buscarProducto(consulta: string, waId: string = "", linksTracked?
   // v55: si la consulta trae códigos de modelo, un resultado sin el código en NINGÚN título no corta la
   // escalera (queda de fallback) — ver algunTituloConCodigo.
   const codigos = modelosEn(consulta);
+  const tipo = tipoPedido(consulta);   // v61.2 — cabezal|toner|tinta declarado por el cliente (excluyente)
   let lastErr: string | null = null;
 
   // === v60 — motor PRIMARIO: Catalog MCP (search_catalog), gated por BUSQUEDA_MCP (default OFF). ===
@@ -1311,7 +1335,11 @@ async function buscarProducto(consulta: string, waId: string = "", linksTracked?
   let mcpAprox: any[] | null = null; // vecinos semánticos del MCP SIN el código pedido → candidatos a "aproximada"
   if (BUSQUEDA_MCP) {
     try {
-      const mcp = await buscarCatalogoMCP(consulta);
+      const mcpCrudo = await buscarCatalogoMCP(consulta);
+      // v61.2: el MCP es semántico y mezcla tipos (para "cabezal HP 410" trae los cabezales pero también el
+      // tóner CF410A). Si el cliente nombró el tipo, se descarta lo de otro tipo — salvo que quedara vacío.
+      const mcpFiltrado = tipo ? mcpCrudo.filter((p: any) => tituloDeTipo(p.titulo, tipo)) : mcpCrudo;
+      const mcp = mcpFiltrado.length ? mcpFiltrado : mcpCrudo;
       if (mcp.length) {
         // v61: se piden 10 al MCP y se re-rankea en código para que el COMBO de la familia no quede fuera
         // (antes el top-5 se llenaba con las individuales). Se entregan hasta 6 (5 + el combo promovido);
@@ -1353,7 +1381,12 @@ async function buscarProducto(consulta: string, waId: string = "", linksTracked?
     if (!k || vistos.has(k)) continue;
     vistos.add(k);
     try {
-      const prods = await suggestShopify(q);
+      const crudos = await suggestShopify(q);
+      // v61.2: si el cliente nombró el TIPO (cabezal/tóner/tinta), descarta lo que es claramente de otro tipo.
+      // Sin esto, el intento por código suelto ("410", de "cabezal HP 410") devolvía el TÓNER CF410A y la
+      // escalera lo daba por exacto — el error del caso real del 03-ago.
+      const filtrados = tipo ? crudos.filter((p: any) => tituloDeTipo(p.titulo, tipo)) : crudos;
+      const prods = (tipo && !filtrados.length) ? [] : filtrados;
       if (prods.length) {
         let top = prods.slice(0, 5);
         if (codigos.length && !algunTituloConCodigo(top.map((p) => p.titulo), codigos)) {
@@ -1980,7 +2013,7 @@ Deno.serve(async (req) => {
       const diag = await inventarioSelfTest(pid);
       return Response.json({ selftest: "inventario", ...diag, ts: new Date().toISOString() });
     }
-    return Response.json({ status: "ok", function: "copilot-webhook", version: "v61.1-cabezales-tipo", mode: MODE, mode_raw: MODE_RAW, model: MODEL, llm_configured: !!anthropic, wati_send_configured: !!(WATI_API_TOKEN && WATI_API_BASE), inventario_configurado: !!(SHOPIFY_ADMIN_TOKEN && SHOPIFY_ADMIN_API_BASE), resolve_configured: !!RESOLVE_SECRET, webhook_key_es_default: WEBHOOK_KEY_ES_DEFAULT, handoff_assist_min: HANDOFF_ASSIST_MIN, handoff_cold_hours: HANDOFF_COLD_HOURS, debounce_ms: DEBOUNCE_MS, busqueda_shadow: BUSQUEDA_SHADOW, busqueda_mcp: BUSQUEDA_MCP, busqueda_mcp_limit: BUSQUEDA_MCP_LIMIT, live_targets: MODE === "live" ? (LIVE_ALL ? "all" : LIVE_ALLOWLIST.length) : 0, ts: new Date().toISOString() });
+    return Response.json({ status: "ok", function: "copilot-webhook", version: "v61.2-tipo-excluyente", mode: MODE, mode_raw: MODE_RAW, model: MODEL, llm_configured: !!anthropic, wati_send_configured: !!(WATI_API_TOKEN && WATI_API_BASE), inventario_configurado: !!(SHOPIFY_ADMIN_TOKEN && SHOPIFY_ADMIN_API_BASE), resolve_configured: !!RESOLVE_SECRET, webhook_key_es_default: WEBHOOK_KEY_ES_DEFAULT, handoff_assist_min: HANDOFF_ASSIST_MIN, handoff_cold_hours: HANDOFF_COLD_HOURS, debounce_ms: DEBOUNCE_MS, busqueda_shadow: BUSQUEDA_SHADOW, busqueda_mcp: BUSQUEDA_MCP, busqueda_mcp_limit: BUSQUEDA_MCP_LIMIT, live_targets: MODE === "live" ? (LIVE_ALL ? "all" : LIVE_ALLOWLIST.length) : 0, ts: new Date().toISOString() });
   }
   if (req.method !== "POST") return Response.json({ error: "method_not_allowed" }, { status: 405 });
   if (url.searchParams.get("key") !== WEBHOOK_KEY) return Response.json({ error: "forbidden" }, { status: 403 });

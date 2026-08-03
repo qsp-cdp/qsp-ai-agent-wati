@@ -20,7 +20,20 @@ con certeza, y calla/deriva cuando es mejor que responda un humano. Tienda:
 **quickservicepanama.com** (suministros de impresión y tecnología en Panamá).
 
 ## Estado actual (2026-08-03)
-- **EN EL REPO, LISTO PARA DESPLEGAR (junto con v61): v61.1 (`v61.1-cabezales-tipo`).** Caso real (conv
+- **EN EL REPO, LISTO PARA DESPLEGAR (junto con v61/v61.1): v61.2 (`v61.2-tipo-excluyente`).** La SIMULACIÓN
+  del caso real contra la tienda (query `cabezal HP 410` al MCP) destapó que el fix de prompt de v61.1 **no
+  alcanzaba**: el MCP rankea perfecto (5 cabezales, el **Combo de Cabezales HP 3YP86AL $48 en el puesto 3**)
+  pero el TÓNER `CF410A` sale 8º y **su título contiene "410"** → (a) el re-ranking de v61 lo hoisteaba al
+  **#1** (bucket "con código"), y (b) el guard v60.1 no hallaba "410" en los títulos de cabezales —los títulos
+  se ACORTARON y ya no listan "Ink Tank 315|415"— así que la escalera literal buscaba `410`, encontraba el
+  tóner y lo daba por **coincidencia exacta**. O sea: el bot habría vuelto a ofrecer tóner pese al prompt.
+  Dos fixes de CÓDIGO: (1) **el re-ranking ya NO hoistea por "código en título"** — solo promueve combos DE LA
+  FAMILIA y respeta el ranking semántico del MCP para todo lo demás; (2) **`tipoPedido`/`tituloDeTipo`**: el
+  tipo que nombra el cliente (**cabezal / tóner / tinta**) es EXCLUYENTE y se aplica en código —no solo en el
+  prompt— filtrando el set del MCP y **cada intento de la escalera literal** (si queda vacío cae al crudo:
+  nunca rompe). Un tóner ya no satisface un pedido de cabezal ni al revés; un título sin tipo claro no se
+  descarta (conservador). 455 golden + 21 node tests. Sin migración.
+- **EN EL REPO (incluido arriba): v61.1 (`v61.1-cabezales-tipo`).** Caso real (conv
   50767698701, 03-ago): el cliente preguntó *"¿tienen **cabezales** para impresora **HP 410**?"* y el bot
   respondió *"la línea HP 410 corresponde a **tóner**… **no a cabezales**"* y cotizó el CF410A — pero el
   cliente hablaba de la **HP Ink Tank 410** y **SÍ tenemos** sus cabezales (M0H50AL / M0H51AL / 3YP86AL); un

@@ -80,6 +80,8 @@ const calcularCotizacion = extraerFuncion("calcularCotizacion");
 const parseCatalogoMCP = extraerFuncion("parseCatalogoMCP");
 const esComboTitulo = extraerFuncion("esComboTitulo");
 const clavesFamilia = extraerFuncion("clavesFamilia");
+const tipoPedido = extraerFuncion("tipoPedido");
+const tituloDeTipo = extraerFuncion("tituloDeTipo");
 const rerankearCombos = extraerFuncion("rerankearCombos");
 const SYSTEM_PROMPT = extraerSystemPrompt();
 
@@ -716,7 +718,7 @@ caso("v60: SYSTEM_PROMPT tiene la regla COINCIDENCIA APROXIMADA / PEDIDO ESPECIA
 caso("v60: la regla prohíbe presentar la alternativa como el modelo pedido", /NUNCA como si fueran el modelo pedido/.test(SYSTEM_PROMPT));
 // wiring en el source real:
 caso("v60: gated por BUSQUEDA_MCP (default OFF)", /const BUSQUEDA_MCP = \(Deno\.env\.get\("BUSQUEDA_MCP"\) \?\? ""\)\.trim\(\) === "1"/.test(src));
-caso("v60: MCP primario en buscarProducto", /if \(BUSQUEDA_MCP\) \{/.test(src) && /const mcp = await buscarCatalogoMCP\(consulta\)/.test(src));
+caso("v60: MCP primario en buscarProducto", /if \(BUSQUEDA_MCP\) \{/.test(src) && /const mcpCrudo = await buscarCatalogoMCP\(consulta\)/.test(src));
 // v60.1: el cross-check viejo (que devolvía los vecinos del MCP aunque suggest confirmara que el producto
 // existía) se reemplazó por el flujo HÍBRIDO: código-no-en-MCP → la escalera literal busca el EXACTO;
 // los vecinos quedan de respaldo "aproximada" solo si la escalera tampoco halla.
@@ -838,6 +840,40 @@ caso("v61.1: la sonda dispara también en contexto de cabezal", /tinta\|botella\
 // plurales en la detección de combo (título real del catálogo: "Kit de Cabezales Canon")
 caso("v61.1: esComboTitulo detecta 'Kit de Cabezales' y plurales", esComboTitulo("Kit de Cabezales Canon | BH-1 | CH-1 | Pixma G2100") && esComboTitulo("Kits de cabezales G4100") && esComboTitulo("Combos de tintas"));
 caso("v61.1: sigue sin marcar una individual", !esComboTitulo("Cabezal HP M0H51AL Negro Ink Tank 315 | 415") && !esComboTitulo("Tinta Epson T544120 - Negro"));
+
+// --- v61.2: el TIPO de consumible es excluyente (en CÓDIGO, no solo prompt) -----------------------
+console.log("v61.2 tipo excluyente");
+// Simulación REAL del MCP para "cabezal HP 410" (capturada de la tienda el 03-ago): el motor rankea bien
+// los cabezales, pero el TÓNER CF410A aparece en el puesto 8 y su título contiene "410".
+const MCP_CAB410 = [
+  { titulo: "Cabezal HP X4E75AL Negro", precio_usd: "27.50" },
+  { titulo: "Cabezal HP M0H50AL Tricolor", precio_usd: "27.50" },
+  { titulo: "Combo de Cabezales HP 3YP86AL Negro y Color", precio_usd: "48.00" },
+  { titulo: "Cabezal HP M0H51AL Negro", precio_usd: "27.50" },
+  { titulo: "Cabezal HP 3YP17AL Tricolor", precio_usd: "38.00" },
+  { titulo: "Kit de Cabezales Canon BH-10 + CH-10", precio_usd: "54.99" },
+  { titulo: "Tinta HP 954XL Negra L0S71AL | OfficeJet Pro 7740", precio_usd: "67.00" },
+  { titulo: "Toner Hp CF410A 410A - Negro | Para LaserJet Pro M452 / M477", precio_usd: "118.00" },
+  { titulo: "Toner Hp CF410X - 410X Negro | Para LaserJet Pro M452 / M477", precio_usd: "198.00" },
+  { titulo: "Kit de Cabezales Canon BH-1 + CH-1", precio_usd: "54.99" },
+];
+caso("v61.2: tipoPedido detecta cabezal/tóner/tinta y vacío si no se declara",
+  tipoPedido("cabezales para impresora HP 410") === "cabezal" && tipoPedido("toner TN830XL") === "toner" &&
+  tipoPedido("tinta epson 544") === "tinta" && tipoPedido("impresora HP 410") === "");
+caso("v61.2: un TÓNER no satisface un pedido de CABEZAL (ni al revés)",
+  !tituloDeTipo("Toner Hp CF410A 410A - Negro", "cabezal") && !tituloDeTipo("Cabezal HP M0H50AL Tricolor", "toner"));
+caso("v61.2: título sin tipo claro NO se descarta (conservador)", tituloDeTipo("Impresora HP Smart Tank 583", "cabezal") && tituloDeTipo("Kit de Cabezales Canon BH-1 + CH-1", "cabezal"));
+caso("v61.2: sin tipo declarado no filtra nada", tituloDeTipo("Toner Hp CF410A", "") && tituloDeTipo("lo que sea", ""));
+// 🔴 el bug del 03-ago: el re-ranking hoisteaba el TÓNER (su título trae "410") por encima de los cabezales.
+const set410 = rerankearCombos(MCP_CAB410.filter((p) => tituloDeTipo(p.titulo, tipoPedido("cabezales para impresora HP 410"))), modelosEn("cabezales para impresora HP 410"), 6);
+caso("v61.2: el TÓNER CF410A NO entra cuando el cliente pidió CABEZALES", !set410.some((p) => /Toner/i.test(p.titulo)));
+caso("v61.2: los cabezales SÍ llegan al modelo", set410.some((p) => /M0H50AL/.test(p.titulo)) && set410.some((p) => /X4E75AL/.test(p.titulo)));
+caso("v61.2: el COMBO de cabezales llega al modelo (lo que ofreció el asesor)", set410.some((p) => /Combo de Cabezales HP 3YP86AL/.test(p.titulo)));
+caso("v61.2: el ranking del MCP se respeta (el #1 semántico sigue #1)", /X4E75AL/.test(set410[0].titulo));
+// wiring
+caso("v61.2: tipo cableado en buscarProducto (MCP + escalera literal)", /const tipo = tipoPedido\(consulta\)/.test(src) && /crudos\.filter\(\(p: any\) => tituloDeTipo\(p\.titulo, tipo\)\)/.test(src) && /mcpCrudo\.filter\(\(p: any\) => tituloDeTipo\(p\.titulo, tipo\)\)/.test(src));
+caso("v61.2: el re-ranking ya NO hoistea por 'código en título' (solo combos de familia)", !/\.\.\.conCodigo,/.test(src) && /\[\.\.\.comboFam\.slice\(0, RESERVA\), \.\.\.resto, \.\.\.comboFam\.slice\(RESERVA\)\]/.test(src));
+caso("v61.2: el filtro del MCP no deja el set vacío (cae al crudo)", /mcpFiltrado\.length \? mcpFiltrado : mcpCrudo/.test(src));
 
 // --- resumen --------------------------------------------------------------------------------------
 console.log(`\n${ok} OK, ${mal} FALLA${mal === 1 ? "" : "S"}`);
