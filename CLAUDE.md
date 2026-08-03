@@ -20,7 +20,7 @@ con certeza, y calla/deriva cuando es mejor que responda un humano. Tienda:
 **quickservicepanama.com** (suministros de impresión y tecnología en Panamá).
 
 ## Estado actual (2026-08-03)
-- **EN EL REPO, LISTO PARA DESPLEGAR (junto con v61/v61.1): v61.2 (`v61.2-tipo-excluyente`).** La SIMULACIÓN
+- **🚀 EN VIVO (desplegado 03-ago; VERIFICADO con el caso real que falló esa mañana: "¿tienen cabezales para impresora HP 410?" → ofreció los cabezales de Ink Tank M0H51AL/M0H50AL **y el Combo 3YP86AL $48**, nunca el tóner): v61 + v61.1 + v61.2 (`v61.2-tipo-excluyente`).** La SIMULACIÓN
   del caso real contra la tienda (query `cabezal HP 410` al MCP) destapó que el fix de prompt de v61.1 **no
   alcanzaba**: el MCP rankea perfecto (5 cabezales, el **Combo de Cabezales HP 3YP86AL $48 en el puesto 3**)
   pero el TÓNER `CF410A` sale 8º y **su título contiene "410"** → (a) el re-ranking de v61 lo hoisteaba al
