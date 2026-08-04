@@ -579,7 +579,7 @@ ESTILO
 - TRATO DE USTED, siempre. Es lo natural, respetuoso y profesional en Panamá. NUNCA uses voseo: nada de "vos", "tenés", "podés", "querés", "mirá", "dale", "fijate". Tampoco tutees ("tú", "te", "tienes"): el trato es de usted, y el usted también puede ser cálido. Ejemplos correctos: "Con gusto le ayudo", "¿Para qué impresora la necesita?", "Le confirmo el precio y la disponibilidad", "Quedamos atentos a cualquier consulta".
 - Negrita SOLO con UN asterisco: *así*. NUNCA uses dobles asteriscos (**texto**), porque en WhatsApp se ven literales y se ve mal. Tampoco uses otra sintaxis de Markdown (#, listas con guion, tablas). Para enlaces, escribe la URL completa tal cual (https://...); NUNCA uses el formato [texto](url) — en WhatsApp se ve literal.
 - Emojis con moderación (uno o dos por mensaje, no más).
-- Da la respuesta FINAL directamente: NUNCA pienses en voz alta ni te corrijas a mitad de mensaje ("espere, veo que…", "ah no, mejor…"). Y no afirmes acciones que no puedes hacer ni verificar: nada de "ya lo anoté/registré el pedido" ni "el asesor ya vio su mensaje" — di que un asesor le dará seguimiento por aquí (la conversación queda visible para el equipo, eso basta). Excepción: si guardar_lead confirmó que guardó los datos, decir "quedaron guardados" SÍ es real.
+- Da la respuesta FINAL directamente: NUNCA pienses en voz alta ni te corrijas a mitad de mensaje ("espere, veo que…", "ah no, mejor…"). Y no afirmes acciones que no puedes hacer ni verificar: NO tienes forma de anotar, apartar, reservar, preparar un pedido ni de avisarle a nadie del equipo. Están PROHIBIDAS las frases del tipo "ya lo anoté", "quedó anotado", "lo registré", "ya le avisamos al equipo", "ya le avisé a un asesor", "se lo tenemos listo/apartado" y "el asesor ya vio su mensaje" — aunque suenen amables, le hacen creer al cliente que alguien ya está actuando y NADIE lo está. Di en cambio que un asesor le dará seguimiento por aquí (la conversación queda visible para el equipo, eso basta). Excepción: si guardar_lead confirmó que guardó los datos, decir "quedaron guardados" SÍ es real.
 - CANAL: estás atendiendo POR WhatsApp, en este mismo chat. NUNCA le digas al cliente que te escriba o te contacte "por WhatsApp", ni le des el número de WhatsApp de la tienda (el que info_tienda trae como whatsapp/seguimiento) — ya está hablando con nosotros aquí; sonaría absurdo. Aunque info_tienda incluya ese número o un texto de "escríbenos por WhatsApp", NO lo repitas. Cuando derives a un asesor, di que un asesor le responde por aquí mismo / en este chat. Menciona el correo SOLO si de verdad hace falta enviar o recibir algo por esa vía.
 
 REGLA DE ORO — precio, stock y promociones
@@ -639,6 +639,7 @@ REGLA ANTI-INTERRUPCIÓN — no te metas si hay un humano atendiendo
 
 LOGÍSTICA, PAGOS Y DATOS DE LA TIENDA (envíos, ubicación, horarios, métodos de pago)
 - Para envíos/entregas, ubicación, horarios o métodos de pago usa SIEMPRE la herramienta info_tienda y responde SOLO con lo que devuelva. No respondas estos temas de memoria.
+- DATOS DEL LOCAL (dirección, PISO, número de OFICINA, plaza, teléfono, horario): salen SIEMPRE de info_tienda EN EL MISMO TURNO, TAL CUAL, nunca de memoria ni de lo que se dijo antes en la conversación. Si el cliente pregunta "¿qué oficina es?", "¿en qué piso?" o "¿cómo llego?", llama a info_tienda ANTES de responder y copia el dato exacto — un número de oficina inventado manda a una persona a tocar la puerta equivocada (caso real: el bot dijo "oficina 4008" cuando es la 454, y lo reconfirmó al dudar el cliente). Si el dato no está en info_tienda, dilo y deriva; jamás lo deduzcas.
 - NUNCA inventes montos, direcciones, horarios ni formas de pago, y NUNCA compartas números de cuenta (Yappy/ACH/transferencia). Para "cómo pago", responde con lo que devuelva info_tienda y deja la coordinación a un asesor.
 - DISTINGUE métodos vs trámite EN CURSO: explicar QUÉ formas de pago aceptamos o las tarifas de envío (vía info_tienda) está bien; pero COORDINAR el pago o la entrega de un pedido concreto (cuándo paga, a qué cuenta transfiere, cuándo le llega) es un trámite de un asesor. NUNCA te comprometas con "puede pagar hoy", "le llega mañana" ni des una cuenta para transferir: deriva esa coordinación a un asesor.
 - Si info_tienda no tiene el dato (devuelve "sin datos disponibles"): dilo con honestidad y deriva a un asesor para confirmarlo. No prometas plazos ni costos específicos.
@@ -805,6 +806,10 @@ const INTERRUPT_RE = new RegExp([
   // datos fiscales / facturación
   "\\bruc\\b", "\\bdv\\b", "c[eé]dula", "raz[oó]n social", "factura a nombre", "facturar a", "datos (de|para) (la )?factura", "a nombre de",
   "\\b\\d{1,4}-\\d{2,4}-\\d{4,7}\\b", // RUC/cédula PA (ej. 557-538-101617); no matchea fechas (último grupo >=4 dígitos)
+  // v61.3 (caso real 04-ago): el RUC de PERSONA JURÍDICA (155634770-2-2016) NO matcheaba — el patrón de
+  // arriba exige 1-4 dígitos en el primer grupo y este trae 9 → la clienta mandó su RUC y el guard no la
+  // protegió. El primer grupo >=6 dígitos no colisiona con fechas (2026-08-04) ni con teléfonos (6282-1798).
+  "\\b\\d{6,10}-\\d{1,2}-\\d{4}\\b",
   "\\b[a-z]{1,2}-\\d{1,4}-\\d{3,7}\\b", // v45: cédula PA con letra (E-8-104720, PE-12-3456, N-19-1234); no matchea SKUs (GI-190 = 1 solo grupo; FDC-… = 3 letras)
   // pago/comprobante EN CURSO (no "¿aceptan X?" / "¿cómo pago?", que son métodos → info_tienda)
   // v54 (auditoría 17-jul): "adjunto pago realizado" se escapaba — el patrón exigía artículo ("adjunto EL
@@ -843,6 +848,11 @@ const NEEDS_TOOL_RE = new RegExp([
   "precio", "cu[aá]nto", "cuesta", "cotiza", "disponib", "stock", "existenc", "\\bmodelo", "\\bvende", "manejan",
   "epson", "canon", "\\bhp\\b", "brother", "pixma", "ecotank", "workforce", "laserjet", "deskjet", "officejet", "\\bg\\d{3,4}\\b", "\\bl\\d{3,4}\\b", "gi-?\\d",
   "env[ií]o", "entrega", "delivery", "domicilio", "horario", "ubicaci", "direcci", "\\bd[oó]nde\\b", "\\bpago", "pagar", "yappy", "\\bach\\b", "transferen", "tarjeta", "reembols",
+  // v61.3 (caso real 04-ago, conv 50766740669): la clienta preguntó "Q oficina es" y el bot respondió
+  // "oficina 4008" DE MEMORIA (la real es la 454) y la reconfirmó cuando ella dudó — su esposo iba subiendo.
+  // Ninguno de los patrones de arriba cubría "oficina"/"piso": ahora estos datos del local SIEMPRE fuerzan
+  // info_tienda para que salgan del dato real y nunca de la memoria del modelo.
+  "oficina", "\\bpiso\\b", "\\blocal\\b", "\\bsuite\\b", "\\bapto\\b", "c[oó]mo llego", "c[oó]mo los ubico", "en qu[eé] parte",
   "repar", "soporte t[eé]cnico", "averi", "da[ñn]ad", "no enciende", "no prende", "no imprime", "sucursal", "recoger", "retir",
   // v52 (auditoría real): un cliente dijo "el sábado trataré de ir" y el bot confirmó "puede pasar el
   // sábado" sin consultar nada (la tienda NO atiende sábados). El patrón de INTERRUPT_RE para esto
@@ -1941,6 +1951,27 @@ async function hayMensajeClienteMasNuevo(convId: string, desde: string): Promise
   return !!(data && data.length);
 }
 
+// v61.3 — texto de la RÁFAGA que el bot está por contestar: los mensajes del cliente posteriores a la última
+// respuesta (de bot o asesor), acotados a los últimos minutos. Lo usa la anti-interrupción: con el debounce
+// solo contesta el ÚLTIMO mensaje, así que un dato fiscal/pago seguido de uno inocente evadía el guard
+// (caso real 04-ago: [razón social][RUC][correo] en 23 s → respondió al correo y entró a facturación).
+// El corte por tiempo evita quedar mudo para siempre: una abstención NO inserta fila de assistant, así que
+// sin él un "ya pagué" viejo seguiría bloqueando toda la conversación.
+async function textoDeRafagaSinResponder(convId: string, texto: string): Promise<string> {
+  try {
+    const desde = new Date(Date.now() - 3 * 60 * 1000).toISOString();
+    const { data } = await sb.from("messages").select("role,content")
+      .eq("conversation_id", convId).gte("created_at", desde)
+      .order("created_at", { ascending: false }).limit(8);
+    const partes: string[] = [texto];
+    for (const m of (data ?? []) as { role: string; content: string | null }[]) {
+      if (m.role !== "user") break;               // llegamos a la última respuesta → fin de la ráfaga
+      partes.push(String(m.content ?? ""));
+    }
+    return partes.join(" \n ");
+  } catch { return texto; }                        // ante fallo, el comportamiento de siempre
+}
+
 // v19 — descarga una imagen enviada por el cliente desde WATI (el campo `data` del webhook es
 // un link de live-mt-server.wati.io que requiere el token) y la devuelve en base64 para pasarla
 // a Claude vision. Devuelve null si falla, no es imagen soportada o pesa demasiado.
@@ -2013,7 +2044,7 @@ Deno.serve(async (req) => {
       const diag = await inventarioSelfTest(pid);
       return Response.json({ selftest: "inventario", ...diag, ts: new Date().toISOString() });
     }
-    return Response.json({ status: "ok", function: "copilot-webhook", version: "v61.2-tipo-excluyente", mode: MODE, mode_raw: MODE_RAW, model: MODEL, llm_configured: !!anthropic, wati_send_configured: !!(WATI_API_TOKEN && WATI_API_BASE), inventario_configurado: !!(SHOPIFY_ADMIN_TOKEN && SHOPIFY_ADMIN_API_BASE), resolve_configured: !!RESOLVE_SECRET, webhook_key_es_default: WEBHOOK_KEY_ES_DEFAULT, handoff_assist_min: HANDOFF_ASSIST_MIN, handoff_cold_hours: HANDOFF_COLD_HOURS, debounce_ms: DEBOUNCE_MS, busqueda_shadow: BUSQUEDA_SHADOW, busqueda_mcp: BUSQUEDA_MCP, busqueda_mcp_limit: BUSQUEDA_MCP_LIMIT, live_targets: MODE === "live" ? (LIVE_ALL ? "all" : LIVE_ALLOWLIST.length) : 0, ts: new Date().toISOString() });
+    return Response.json({ status: "ok", function: "copilot-webhook", version: "v61.3-datos-local", mode: MODE, mode_raw: MODE_RAW, model: MODEL, llm_configured: !!anthropic, wati_send_configured: !!(WATI_API_TOKEN && WATI_API_BASE), inventario_configurado: !!(SHOPIFY_ADMIN_TOKEN && SHOPIFY_ADMIN_API_BASE), resolve_configured: !!RESOLVE_SECRET, webhook_key_es_default: WEBHOOK_KEY_ES_DEFAULT, handoff_assist_min: HANDOFF_ASSIST_MIN, handoff_cold_hours: HANDOFF_COLD_HOURS, debounce_ms: DEBOUNCE_MS, busqueda_shadow: BUSQUEDA_SHADOW, busqueda_mcp: BUSQUEDA_MCP, busqueda_mcp_limit: BUSQUEDA_MCP_LIMIT, live_targets: MODE === "live" ? (LIVE_ALL ? "all" : LIVE_ALLOWLIST.length) : 0, ts: new Date().toISOString() });
   }
   if (req.method !== "POST") return Response.json({ error: "method_not_allowed" }, { status: 405 });
   if (url.searchParams.get("key") !== WEBHOOK_KEY) return Response.json({ error: "forbidden" }, { status: 403 });
@@ -2219,7 +2250,14 @@ Deno.serve(async (req) => {
     // cae aquí al flujo normal como cualquier cliente. El bot nunca pisa a un asesor activo.
 
     // Anti-interrupción 2: señales de trámite/pago/dato fiscal en curso → abstenerse.
-    if (INTERRUPT_RE.test(texto)) { await log("abstencion_interrupcion", true, { waId }); return Response.json({ ok: true, skipped: "interrupcion_tramite" }); }
+    // v61.3 — se evalúa sobre TODA la ráfaga sin responder, no solo el último mensaje. Caso real (04-ago):
+    // la clienta mandó [razón social][RUC][correo] en 23 s; con el debounce responde el ÚLTIMO (el correo,
+    // inocente), así que el RUC no pasaba por el guard y el bot entró en el flujo de facturación.
+    const rafaga = await textoDeRafagaSinResponder(conv.id, texto);
+    if (INTERRUPT_RE.test(rafaga)) {
+      await log("abstencion_interrupcion", true, { waId, por_rafaga: !INTERRUPT_RE.test(texto) });
+      return Response.json({ ok: true, skipped: "interrupcion_tramite" });
+    }
 
     if (HANDOFF_RE.test(texto)) {
       await sb.from("conversations").update({ status: "handoff" }).eq("id", conv.id);

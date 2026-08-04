@@ -19,7 +19,29 @@ equipo humano: contesta preguntas generales, indica disponibilidad/stock y da pr
 con certeza, y calla/deriva cuando es mejor que responda un humano. Tienda:
 **quickservicepanama.com** (suministros de impresión y tecnología en Panamá).
 
-## Estado actual (2026-08-03)
+## Estado actual (2026-08-04)
+- **EN EL REPO, LISTO PARA DESPLEGAR: v61.3 (`v61.3-datos-local`).** Auditoría de la conv 50766740669: la
+  clienta (piso 2 del mismo edificio) preguntó *"Q oficina es"* y el bot dijo **"oficina 4008"** y la
+  **RECONFIRMÓ** al dudar ella — la real es la **454** (`store_facts.direccion`) y su esposo iba subiendo.
+  Los `tool_calls` de ese turno están **vacíos**: respondió de MEMORIA. Tres fixes:
+  1. **`NEEDS_TOOL_RE` + regla DATOS DEL LOCAL:** ni "oficina" ni "piso" estaban en los patrones (sí
+     "ubicaci"/"direcci") → nada forzaba `info_tienda`. Ahora `oficina|piso|local|suite|apto|cómo llego|en
+     qué parte` fuerzan tool, y el prompt exige que dirección/piso/oficina/teléfono salgan de `info_tienda`
+     EN EL MISMO TURNO, tal cual, nunca de memoria ni de lo dicho antes en el hilo.
+  2. **Falsas afirmaciones de acción:** el bot dijo *"quedó anotado"* y *"ya le avisamos al equipo que va
+     subiendo"* — **nadie fue avisado** (esa respuesta ni genera ticket). La regla de estilo v45 solo listaba
+     "ya lo anoté"/"el asesor ya vio"; ahora enumera explícitamente *quedó anotado / lo registré / ya le
+     avisamos al equipo / se lo tenemos apartado* y aclara que el bot **NO puede anotar, apartar, reservar,
+     preparar ni avisarle a nadie**. Se mantiene la excepción real de `guardar_lead`.
+  3. **Anti-interrupción sobre la RÁFAGA + RUC de persona jurídica.** La clienta mandó [razón social][RUC]
+     [correo] en 23 s; con el debounce se responde al ÚLTIMO (el correo, inocente) → el RUC no pasaba por el
+     guard. Ahora `textoDeRafagaSinResponder` concatena los mensajes del cliente posteriores a la última
+     respuesta (tope 3 min / 8 filas, para que una abstención no deje al bot mudo para siempre). **Y un BUG
+     de fondo:** el patrón de RUC exigía 1-4 dígitos en el primer grupo (`557-538-101617`), así que el **RUC
+     de PERSONA JURÍDICA `155634770-2-2016` NO disparaba** — agregado `\d{6,10}-\d{1,2}-\d{4}` (no colisiona
+     con fechas ni teléfonos, verificado). Telemetría: `abstencion_interrupcion.por_rafaga`.
+  480 golden + 21 node tests. Sin migración.
+## Estado histórico (2026-08-03)
 - **🚀 EN VIVO (desplegado 03-ago; VERIFICADO con el caso real que falló esa mañana: "¿tienen cabezales para impresora HP 410?" → ofreció los cabezales de Ink Tank M0H51AL/M0H50AL **y el Combo 3YP86AL $48**, nunca el tóner): v61 + v61.1 + v61.2 (`v61.2-tipo-excluyente`).** La SIMULACIÓN
   del caso real contra la tienda (query `cabezal HP 410` al MCP) destapó que el fix de prompt de v61.1 **no
   alcanzaba**: el MCP rankea perfecto (5 cabezales, el **Combo de Cabezales HP 3YP86AL $48 en el puesto 3**)

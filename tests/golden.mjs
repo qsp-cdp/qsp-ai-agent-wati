@@ -875,6 +875,37 @@ caso("v61.2: tipo cableado en buscarProducto (MCP + escalera literal)", /const t
 caso("v61.2: el re-ranking ya NO hoistea por 'código en título' (solo combos de familia)", !/\.\.\.conCodigo,/.test(src) && /\[\.\.\.comboFam\.slice\(0, RESERVA\), \.\.\.resto, \.\.\.comboFam\.slice\(RESERVA\)\]/.test(src));
 caso("v61.2: el filtro del MCP no deja el set vacío (cae al crudo)", /mcpFiltrado\.length \? mcpFiltrado : mcpCrudo/.test(src));
 
+// --- v61.3: datos del local, falsas afirmaciones de acción y ráfaga fiscal ------------------------
+console.log("v61.3 oficina/acciones/ráfaga");
+// Caso real (conv 50766740669, 04-ago): la clienta preguntó "Q oficina es" y el bot respondió "oficina 4008"
+// DE MEMORIA (la real es la 454, según store_facts.direccion) y la RECONFIRMÓ al dudar ella — el esposo iba
+// subiendo. Los tool_calls de ese turno están vacíos: ningún patrón forzaba info_tienda.
+for (const t of ["Q oficina es", "¿qué oficina es?", "en qué piso están", "se me olvidó el número de oficina",
+  "cómo llego a ustedes", "en qué parte de Plaza Aventura"]) {
+  caso(`v61.3: "${t}" fuerza tool (info_tienda)`, NEEDS_TOOL_RE.test(t));
+}
+caso("v61.3: SYSTEM_PROMPT exige datos del local desde info_tienda EN EL MISMO TURNO", /DATOS DEL LOCAL/.test(SYSTEM_PROMPT) && /nunca de memoria/.test(SYSTEM_PROMPT));
+caso("v61.3: el prompt cita el caso real (4008 vs 454) como ancla", /oficina 4008.*454|454.*4008/s.test(SYSTEM_PROMPT));
+// El bot dijo "quedó anotado" y "ya le avisamos al equipo" — NADIE fue avisado (esa respuesta ni genera ticket).
+caso("v61.3: prohíbe explícitamente 'quedó anotado' y 'ya le avisamos al equipo'",
+  /"quedó anotado"/.test(SYSTEM_PROMPT) && /"ya le avisamos al equipo"/.test(SYSTEM_PROMPT));
+caso("v61.3: aclara que NO puede anotar/apartar/avisar", /NO tienes forma de anotar, apartar, reservar/.test(SYSTEM_PROMPT));
+caso("v61.3: mantiene la excepción real de guardar_lead", /si guardar_lead confirmó que guardó los datos/.test(SYSTEM_PROMPT));
+// La anti-interrupción ahora mira la ráfaga sin responder (el RUC iba seguido de un correo inocente).
+caso("v61.3: el RUC de la clienta dispara INTERRUPT_RE", INTERRUPT_RE.test("155634770-2-2016 DV42"));
+caso("v61.3: el correo suelto (el que respondió) NO lo dispara — de ahí el hueco", !INTERRUPT_RE.test("Rreyes@renova-empresarial.com"));
+// el patrón viejo exigía 1-4 dígitos en el 1er grupo → el RUC de persona jurídica (9 dígitos) se colaba.
+for (const t of ["155634770-2-2016", "155743728-2-2023 DV42", "8-717-2345"]) {
+  caso(`v61.3: RUC/cédula "${t}" → abstención`, INTERRUPT_RE.test(t));
+}
+for (const t of ["2026-08-04", "6282-1798", "tinta 544", "TN-830XL", "papel bond 30"]) {
+  caso(`v61.3: "${t}" NO dispara el patrón de RUC (sin falsos positivos)`, !INTERRUPT_RE.test(t));
+}
+caso("v61.3: la ráfaga concatenada SÍ lo dispara", INTERRUPT_RE.test("Rreyes@renova-empresarial.com \n 155634770-2-2016 DV42 \n La factura sería a nombre de Renova Empresarial, S.A."));
+caso("v61.3: anti-interrupción cableada sobre la ráfaga", /const rafaga = await textoDeRafagaSinResponder\(conv\.id, texto\)/.test(src) && /if \(INTERRUPT_RE\.test\(rafaga\)\)/.test(src));
+caso("v61.3: la ráfaga corta en la última respuesta y por tiempo (no deja al bot mudo)", /if \(m\.role !== "user"\) break;/.test(src) && /3 \* 60 \* 1000/.test(src));
+caso("v61.3: telemetría distingue si lo cazó la ráfaga", /por_rafaga: !INTERRUPT_RE\.test\(texto\)/.test(src));
+
 // --- resumen --------------------------------------------------------------------------------------
 console.log(`\n${ok} OK, ${mal} FALLA${mal === 1 ? "" : "S"}`);
 if (mal > 0) process.exit(1);
