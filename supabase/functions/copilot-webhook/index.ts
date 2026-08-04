@@ -591,7 +591,7 @@ REGLA DE ORO — precio, stock y promociones
 - Incluye el link del producto cuando lo tengas, copiándolo EXACTO como viene en el campo "url" de buscar_producto — con TODO lo que esté después del "?" (parámetros utm/ref_code de seguimiento). NUNCA acortes el link ni le quites esos parámetros.
 - PRECIO + ITBMS: los precios son SIN ITBMS. Muestra SIEMPRE el precio, el ITBMS (7%) y el total usando EXACTAMENTE los valores que devuelve la tool (precio_usd, itbms_7pct, total_con_itbms). Formato: "*$116.00 + ITBMS (7%) = $124.12*". NUNCA calcules el impuesto de memoria.
 - CANTIDADES / VARIOS PRODUCTOS: si el cliente pide 2+ unidades de algo, o el total combinado de varios productos, NUNCA multipliques, sumes ni apliques el ITBMS de memoria (aplicar el 7% dos veces cobra de más — es un error grave de plata). Llama a calcular_cotizacion pasándole cada producto con su precio_usd (el UNITARIO SIN ITBMS que te dio buscar_producto) y su cantidad; toma el subtotal, el ITBMS y el total EXACTAMENTE de lo que devuelva (relaya respuesta_sugerida). El ITBMS va UNA sola vez, sobre el subtotal — jamás sobre precios que ya lo incluyen.
-- STOCK / CANTIDAD: indica la disponibilidad usando el campo "stock" que devuelve la tool, TAL CUAL. Si dice "X unidades", dilo; si dice "stock bajo — un asesor verifica…", dilo así. NUNCA inventes ni adivines una cantidad: di solo lo que aparezca en ese campo "stock".
+- STOCK / CANTIDAD: indica la disponibilidad usando el campo "stock" que devuelve la tool, TAL CUAL — CONSERVANDO el emoji con el que viene (✅ disponible, ⚠️ stock bajo, ❌ sin stock, 🔎 por verificar): ese emoji hace que la disponibilidad se vea de un vistazo en el chat. No lo cambies por otro ni lo quites. Si dice "X unidades", dilo; si dice "stock bajo — un asesor verifica…", dilo así. NUNCA inventes ni adivines una cantidad: di solo lo que aparezca en ese campo "stock".
 - SIN STOCK — AVISO AUTOMÁTICO: si el campo "stock" dice "sin stock", además de indicar que un asesor puede confirmar el reingreso, comparte el link del producto y dile al cliente que EN ESA PÁGINA puede activar el botón de aviso de disponibilidad ("Avísame cuando esté disponible") para recibir una notificación automática apenas el producto reingrese. No prometas fechas de reingreso (eso lo confirma un asesor).
 - Si la tool no encuentra el producto, o piden algo fuera de catálogo: discúlpate breve e indica que un asesor confirmará disponibilidad y opciones.
 
@@ -1103,11 +1103,13 @@ async function inventarioSelfTest(pid: string): Promise<Record<string, unknown>>
 // v21 — texto de stock LISTO para el bot (determinista). >3: muestra el número; 1-3: deriva sin
 // exponer el número; 0/desconocido pero disponible: deriva (puede ser sin seguimiento de stock);
 // no disponible: sin stock. Así el bot nunca ve ni inventa una cantidad que no deba decir.
+// v61.4: el emoji va EN CÓDIGO (no en el prompt) para que la disponibilidad destaque siempre igual en el
+// chat y el modelo no lo olvide ni improvise otro. El prompt ya manda relayar este campo TAL CUAL.
 function stockTexto(disponible: boolean, cantidad: number | undefined): string {
-  if (typeof cantidad === "number" && cantidad >= 4) return `${cantidad} unidades disponibles`;
-  if (typeof cantidad === "number" && cantidad >= 1) return "stock bajo — un asesor verifica el inventario físico para confirmar la cantidad exacta";
-  if (disponible) return "un asesor verifica el inventario físico para confirmar la cantidad exacta";
-  return "sin stock — un asesor verifica el inventario físico";
+  if (typeof cantidad === "number" && cantidad >= 4) return `✅ ${cantidad} unidades disponibles`;
+  if (typeof cantidad === "number" && cantidad >= 1) return "⚠️ stock bajo — un asesor verifica el inventario físico para confirmar la cantidad exacta";
+  if (disponible) return "🔎 un asesor verifica el inventario físico para confirmar la cantidad exacta";
+  return "❌ sin stock — un asesor verifica el inventario físico";
 }
 
 // v28 — genera un ref_code (8 alfanuméricos, opaco, crypto) para el stitching WhatsApp→web. El PK de
@@ -2044,7 +2046,7 @@ Deno.serve(async (req) => {
       const diag = await inventarioSelfTest(pid);
       return Response.json({ selftest: "inventario", ...diag, ts: new Date().toISOString() });
     }
-    return Response.json({ status: "ok", function: "copilot-webhook", version: "v61.3-datos-local", mode: MODE, mode_raw: MODE_RAW, model: MODEL, llm_configured: !!anthropic, wati_send_configured: !!(WATI_API_TOKEN && WATI_API_BASE), inventario_configurado: !!(SHOPIFY_ADMIN_TOKEN && SHOPIFY_ADMIN_API_BASE), resolve_configured: !!RESOLVE_SECRET, webhook_key_es_default: WEBHOOK_KEY_ES_DEFAULT, handoff_assist_min: HANDOFF_ASSIST_MIN, handoff_cold_hours: HANDOFF_COLD_HOURS, debounce_ms: DEBOUNCE_MS, busqueda_shadow: BUSQUEDA_SHADOW, busqueda_mcp: BUSQUEDA_MCP, busqueda_mcp_limit: BUSQUEDA_MCP_LIMIT, live_targets: MODE === "live" ? (LIVE_ALL ? "all" : LIVE_ALLOWLIST.length) : 0, ts: new Date().toISOString() });
+    return Response.json({ status: "ok", function: "copilot-webhook", version: "v61.4-stock-emoji", mode: MODE, mode_raw: MODE_RAW, model: MODEL, llm_configured: !!anthropic, wati_send_configured: !!(WATI_API_TOKEN && WATI_API_BASE), inventario_configurado: !!(SHOPIFY_ADMIN_TOKEN && SHOPIFY_ADMIN_API_BASE), resolve_configured: !!RESOLVE_SECRET, webhook_key_es_default: WEBHOOK_KEY_ES_DEFAULT, handoff_assist_min: HANDOFF_ASSIST_MIN, handoff_cold_hours: HANDOFF_COLD_HOURS, debounce_ms: DEBOUNCE_MS, busqueda_shadow: BUSQUEDA_SHADOW, busqueda_mcp: BUSQUEDA_MCP, busqueda_mcp_limit: BUSQUEDA_MCP_LIMIT, live_targets: MODE === "live" ? (LIVE_ALL ? "all" : LIVE_ALLOWLIST.length) : 0, ts: new Date().toISOString() });
   }
   if (req.method !== "POST") return Response.json({ error: "method_not_allowed" }, { status: 405 });
   if (url.searchParams.get("key") !== WEBHOOK_KEY) return Response.json({ error: "forbidden" }, { status: 403 });

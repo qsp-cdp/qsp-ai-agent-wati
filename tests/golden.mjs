@@ -170,10 +170,19 @@ caso("variantesModelo PT-H110 → PTH110", variantesModelo("PT-H110").includes("
 caso("conItbms 70 → 74.90", conItbms("70").total_con_itbms === "74.90");
 caso("conItbms 199 → 212.93", conItbms(199).total_con_itbms === "212.93");
 caso("conItbms basura → vacío", conItbms("abc").total_con_itbms === "");
-caso("stockTexto 87 → cantidad", stockTexto(true, 87) === "87 unidades disponibles");
+caso("stockTexto 87 → cantidad", stockTexto(true, 87) === "✅ 87 unidades disponibles");
 caso("stockTexto 2 → stock bajo", stockTexto(true, 2).includes("stock bajo"));
 caso("stockTexto undefined+disponible → asesor", stockTexto(true, undefined).includes("asesor"));
 caso("stockTexto no disponible → sin stock", stockTexto(false, 0).includes("sin stock"));
+// v61.4 — emoji de disponibilidad EN CÓDIGO (destaca en el chat; el prompt manda conservarlo).
+caso("v61.4: ✅ cuando hay unidades", stockTexto(true, 9).startsWith("✅"));
+caso("v61.4: ⚠️ en stock bajo", stockTexto(true, 2).startsWith("⚠️"));
+caso("v61.4: ❌ sin stock", stockTexto(false, 0).startsWith("❌"));
+caso("v61.4: 🔎 cuando hay que verificar", stockTexto(true, undefined).startsWith("🔎"));
+caso("v61.4: el prompt manda CONSERVAR el emoji", /CONSERVANDO el emoji/.test(SYSTEM_PROMPT));
+// no debe romper el detector de tickets de promesa (busca "sin stock" en la RESPUESTA del bot).
+caso("v61.4: 'sin stock' con emoji sigue disparando el ticket de promesa",
+  prometeSeguimientoSinResolver("❌ sin stock — un asesor verifica el inventario físico y le confirma"));
 caso("pareceFuncionEnTexto detecta <invoke>", pareceFuncionEnTexto('<invoke name="buscar_producto">x</invoke>'));
 caso("pareceFuncionEnTexto detecta name=tool", pareceFuncionEnTexto('llamo a name="info_tienda" ahora'));
 caso("pareceFuncionEnTexto ignora texto normal", !pareceFuncionEnTexto("Sí, tenemos el TN-730 a $70.00 + ITBMS."));

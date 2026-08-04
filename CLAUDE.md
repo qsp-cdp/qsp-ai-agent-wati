@@ -20,6 +20,12 @@ con certeza, y calla/deriva cuando es mejor que responda un humano. Tienda:
 **quickservicepanama.com** (suministros de impresión y tecnología en Panamá).
 
 ## Estado actual (2026-08-04)
+- **EN EL REPO, LISTO PARA DESPLEGAR (junto con v61.3): v61.4 (`v61.4-stock-emoji`).** Pedido de Gerencia: que
+  la DISPONIBILIDAD se vea de un vistazo en WhatsApp (es el dato que decide la compra y se perdía dentro del
+  bloque de texto). El emoji va **en CÓDIGO** (`stockTexto`), no en el prompt, para que salga siempre igual y
+  el modelo no lo olvide ni improvise otro: **✅** N unidades disponibles · **⚠️** stock bajo · **🔎** por
+  verificar · **❌** sin stock. La regla STOCK del prompt ahora manda CONSERVAR el emoji. Verificado que no
+  rompe el detector de tickets de promesa (busca "sin stock" en la respuesta). 486 golden tests. Sin migración.
 - **EN EL REPO, LISTO PARA DESPLEGAR: v61.3 (`v61.3-datos-local`).** Auditoría de la conv 50766740669: la
   clienta (piso 2 del mismo edificio) preguntó *"Q oficina es"* y el bot dijo **"oficina 4008"** y la
   **RECONFIRMÓ** al dudar ella — la real es la **454** (`store_facts.direccion`) y su esposo iba subiendo.
