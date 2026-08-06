@@ -84,6 +84,7 @@ const tipoPedido = extraerFuncion("tipoPedido");
 const tituloDeTipo = extraerFuncion("tituloDeTipo");
 const cortarSesionVieja = extraerFuncion("cortarSesionVieja");
 const perfilUcpAgente = extraerFuncion("perfilUcpAgente");
+const extraerFolletoPdf = extraerFuncion("extraerFolletoPdf");
 const rerankearCombos = extraerFuncion("rerankearCombos");
 const SYSTEM_PROMPT = extraerSystemPrompt();
 
@@ -975,6 +976,33 @@ caso("v62: la ruta del perfil va ANTES del selftest y del healthcheck", (() => {
 caso("v62: buscarCatalogoMCP manda meta.ucp-agent.profile SIEMPRE (flip = solo config)", /\{ meta: \{ "ucp-agent": \{ profile: UCP_PROFILE_URL \} \} \}/.test(src));
 caso("v62: UCP_PROFILE_URL derivada de SUPABASE_URL con override por env", /UCP_AGENT_PROFILE_URL/.test(src) && /\.replace\("\.supabase\.co", "\.functions\.supabase\.co"\)/.test(src));
 caso("v62: healthcheck expone catalog_mcp_url y ucp_profile_url", /catalog_mcp_url: CATALOG_MCP_URL/.test(src) && /ucp_profile_url: UCP_PROFILE_URL/.test(src));
+
+// --- v63: folleto PDF de equipos (consultar_folleto, bajo demanda) --------------------------------
+console.log("v63 folleto PDF");
+// El folleto vive como <a href> en el body_html de la ficha (verificado: HP_SMART_TANK_750.pdf en el
+// repositorio de archivos de Shopify). El MCP entrega la descripción SIN tags → el link se resuelve bajo
+// demanda desde la ficha pública /products/{handle}.json, nunca en la búsqueda.
+caso("v63: extrae el href .pdf del body_html", extraerFolletoPdf('<p>Ver <a href="https://cdn.shopify.com/s/files/1/00/HP_SMART_TANK_750.pdf">folleto</a></p>') === "https://cdn.shopify.com/s/files/1/00/HP_SMART_TANK_750.pdf");
+caso("v63: tolera comillas simples y querystring", extraerFolletoPdf("<a href='https://cdn.shopify.com/s/files/x.pdf?v=123'>f</a>") === "https://cdn.shopify.com/s/files/x.pdf?v=123");
+caso("v63: URL protocol-relative se normaliza a https", extraerFolletoPdf('<a href="//cdn.shopify.com/s/files/y.pdf">f</a>') === "https://cdn.shopify.com/s/files/y.pdf");
+// 🔒 anti-SSRF: SOLO cdn.shopify.com por https
+caso("v63: rechaza dominios ajenos", extraerFolletoPdf('<a href="https://evil.com/x.pdf">f</a>') === null && extraerFolletoPdf('<a href="https://cdn.shopify.com.evil.com/x.pdf">f</a>') === null);
+caso("v63: rechaza http sin TLS", extraerFolletoPdf('<a href="http://cdn.shopify.com/x.pdf">f</a>') === null);
+caso("v63: sin .pdf o sin href → null", extraerFolletoPdf('<a href="https://cdn.shopify.com/x.jpg">f</a>') === null && extraerFolletoPdf("texto plano") === null && extraerFolletoPdf(null) === null);
+// wiring
+caso("v63: tool consultar_folleto definida (producto_url + pregunta)", /name: "consultar_folleto"/.test(src) && /required: \["producto_url", "pregunta"\]/.test(src));
+caso("v63: dispatch cableado", /await consultarFolleto\(\(block\.input as any\)\.producto_url \?\? "", \(block\.input as any\)\.pregunta \?\? ""\)/.test(src));
+caso("v63: disponible en MODO ASISTENCIA (read-only, como especificaciones)", /"calcular_cotizacion", "consultar_folleto"\]/.test(src));
+caso("v63: el handle se sanea y la URL de la ficha la construimos NOSOTROS (anti-SSRF)", /\/\^\[a-z0-9_-\]\+\$\/i\.test\(handle\)/.test(src) && /\$\{STORE_APEX\}\/products\/\$\{handle\}\.json/.test(src));
+caso("v63: tope de tamaño del PDF y timeouts", /buf\.byteLength > 4_500_000/.test(src) && /AbortSignal\.timeout\(12000\)/.test(src));
+caso("v63: la sub-llamada adjunta el PDF como document y prohíbe precios", /media_type: "application\/pdf"/.test(src) && /PROHIBIDO mencionar precios, promociones o disponibilidad/.test(src));
+caso("v63: camino honesto cuando el dato no está (NO_ESTA_EN_FOLLETO)", /NO_ESTA_EN_FOLLETO/.test(src) && /el folleto no menciona ese dato/.test(src));
+caso("v63: telemetría folleto_consultado", /"folleto_consultado"/.test(src));
+// prompt
+caso("v63: SYSTEM_PROMPT tiene la regla FOLLETO PDF DE EQUIPOS", /FOLLETO PDF DE EQUIPOS/.test(SYSTEM_PROMPT));
+caso("v63: la URL debe ser la devuelta EN ESTA conversación (grounded)", /EN ESTA conversación — nunca otra/.test(SYSTEM_PROMPT));
+caso("v63: REGLA DURA — del folleto jamás salen precios/promos/stock", /del folleto JAMÁS salen precios/.test(SYSTEM_PROMPT) && /precios de referencia de otros mercados/.test(SYSTEM_PROMPT));
+caso("v63: honestidad si no hay dato (no completar por lógica)", /NUNCA completes la especificación por lógica/.test(SYSTEM_PROMPT));
 
 // --- resumen --------------------------------------------------------------------------------------
 console.log(`\n${ok} OK, ${mal} FALLA${mal === 1 ? "" : "S"}`);

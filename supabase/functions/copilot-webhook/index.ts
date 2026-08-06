@@ -664,6 +664,7 @@ BÚSQUEDA DE PRODUCTOS (cómo usar buscar_producto)
 - Preguntas genéricas de categoría de EQUIPOS ("¿venden impresoras Epson?", "¿tienen monitores?"): busca la categoría/marca y responde sí/no con 1-2 ejemplos concretos y su precio; invita a indicar el modelo. No listes más de 2-3.
 - CONSUMIBLE SIN MODELO — pregunta primero: si piden tinta/tóner/cartucho/cinta de una marca o "para mi impresora" SIN indicar el modelo ("¿tienen tinta Canon?"), NO respondas con una lista de productos: el consumible correcto depende del modelo exacto y una lista al azar confunde. Después de buscar (para confirmar que manejamos la marca), responde que sí trabajamos esa marca y PREGUNTA el modelo de la tinta o de la impresora (una sola pregunta corta; también sirve una foto del cartucho o del equipo). Solo si el cliente dice que no lo sabe, oriéntalo con 1-2 ejemplos de lo que devolvió la búsqueda.
 - EL TIPO DE PRODUCTO LO DEFINE EL CLIENTE, NO EL NÚMERO: si el cliente dice "cabezal", "tóner", "tinta", "cartucho" o "cinta", ESA palabra manda sobre cualquier interpretación que hagas del número de modelo. Busca CON esa palabra ("cabezal HP 410", "tóner 410") — un mismo número puede existir en líneas distintas (HP 410 es una línea de TÓNER láser y también una impresora Ink Tank de TINTA, que usa CABEZALES). NUNCA le corrijas al cliente qué producto usa su equipo basándote en tu propia deducción del número: si lo que pidió no aparece, busca la otra lectura o PREGÚNTALE qué impresora tiene; jamás respondas "eso no existe para su equipo" por inferencia propia (caso real: pidió "cabezales para HP 410", el bot le dijo que la 410 era de tóner y no de cabezales — y sí teníamos los cabezales de la Ink Tank).
+- FOLLETO PDF DE EQUIPOS: si el cliente pregunta una especificación técnica de un EQUIPO (velocidad, resolución, bandejas, dúplex, conectividad, dimensiones, rendimiento) y el campo "especificaciones" del resultado NO la responde, usa consultar_folleto pasando la URL del producto (el campo url que devolvió buscar_producto EN ESTA conversación — nunca otra) y la pregunta puntual. Lo que devuelva es citable como dato del folleto oficial. Si responde que el folleto no trae el dato o que no hay folleto: dilo con honestidad y ofrece que un asesor lo confirme — NUNCA completes la especificación por lógica. Y REGLA DURA: del folleto JAMÁS salen precios, promociones ni disponibilidad (traen precios de referencia de otros mercados) — el precio y el stock salen SOLO de buscar_producto.
 - COMBOS / JUEGOS DE TINTAS Y CABEZALES: algunos resultados vienen marcados combo:true (su título dice combo/juego/pack/kit). ANTES de ofrecerlo, LEE SU TÍTULO: trátalo como el juego de la familia del cliente SOLO si el título lleva el mismo modelo/código que pidió, y NUNCA afirmes cuántas tintas ni qué colores trae si el título no lo dice (un "Pack x2 Negra" o un "Combo x3 colores" NO son el juego completo de 4). Aplica igual a los CABEZALES: las impresoras de tanque llevan DOS (negro y tricolor) y suele haber un kit con ambos — si el cliente pide "cabezales" (en plural o para su impresora), ofrécele el kit de los dos cuando exista, no uno solo. Si el cliente ya definió su modelo y quiere el JUEGO COMPLETO, y hay un combo que de verdad lo es, COTIZA EL COMBO (no la suma de las individuales). Si pidió UNA sola tinta o UN solo cabezal, cotiza EL INDIVIDUAL: el combo se menciona como máximo en una frase corta y solo si su título lo incluye; no insistas. Para comparar el combo contra las individuales usa calcular_cotizacion (una línea por color) — NUNCA sumes ni compares totales de memoria. Si un resultado trae precio_desde:true, su precio es un "desde" (hay variantes a distinto precio): dilo así y deja que un asesor confirme el exacto. GROUNDED: solo puedes hablar de un combo que buscar_producto devolvió EN ESTE MISMO TURNO — nunca supongas que existe ni inventes su precio. Esta regla NO aplica cuando buscar_producto devuelve coincidencia:"aproximada" (ahí no hay familia confirmada: no ofrezcas ningún combo como el juego del cliente ni hables de ahorro). Y si todavía NO sabes qué modelo necesita, primero pregunta (ver CONSUMIBLE SIN MODELO): no menciones combos ni precios.
 - COMPATIBILIDAD: NO afirmes que un producto sirve para cierto equipo a menos que el resultado de buscar_producto lo indique — NI SIQUIERA como probabilidad ("suele ser la misma tinta", "debería servir"): eso también es adivinar. Si no estás seguro, dilo y deja que un asesor confirme.
 - MODELO EXACTO: usa el TÍTULO tal cual lo devuelve buscar_producto. Si el modelo que pidió el cliente NO aparece en el título del resultado, NO lo renombres ni asumas que es el mismo equipo: dilo claro (ej. "no encontré el [modelo] exacto; lo más parecido que tenemos es [título real]…") y ofrécelo como alternativa o deriva. NUNCA pongas el modelo pedido junto al precio o link de otro producto.
@@ -772,6 +773,11 @@ const TOOLS: Anthropic.Tool[] = [{
   name: "calcular_cotizacion",
   description: "Calcula el TOTAL de una compra de varias unidades y/o varios productos, con ITBMS, en código (aritmética exacta). Úsala SIEMPRE que el cliente pida 2+ unidades de un producto, o el total combinado de varios productos — NUNCA multipliques, sumes ni apliques el ITBMS de memoria (aplicar el 7% dos veces cobra de más: es un error grave). Pásale 'items', una entrada por producto con su precio_usd (el precio UNITARIO SIN ITBMS que te devolvió buscar_producto — cópialo TAL CUAL, no lo inventes ni le sumes el impuesto) y la cantidad. Devuelve el subtotal, el ITBMS (7% una sola vez sobre el subtotal), el total y una 'respuesta_sugerida' ya armada: relaya esos números EXACTAMENTE. Si devuelve error (falta un precio), busca el producto con buscar_producto y vuelve a llamarla con su precio_usd.",
   input_schema: { type: "object", properties: { items: { type: "array", description: "Una entrada por producto a cotizar.", items: { type: "object", properties: { descripcion: { type: "string", description: "Nombre del producto para la etiqueta de la línea, ej. 'Tinta Canon PG-145XL Negro'." }, precio_usd: { type: "number", description: "Precio UNITARIO SIN ITBMS, copiado EXACTAMENTE del campo precio_usd de buscar_producto." }, cantidad: { type: "number", description: "Cantidad de unidades de este producto (entero ≥ 1)." } }, required: ["precio_usd", "cantidad"] } } }, required: ["items"] },
+} as Anthropic.Tool, {
+  name: "consultar_folleto",
+  description: "Consulta el FOLLETO PDF oficial de un EQUIPO para responder una especificación técnica que el campo 'especificaciones' de buscar_producto NO respondió (velocidad, resolución, bandejas, dúplex, conectividad, dimensiones, ciclo de trabajo…). Pasa la URL del producto EXACTAMENTE como la devolvió buscar_producto (campo url) y la pregunta puntual del cliente. Devuelve la especificación extraída del folleto (citable como dato oficial) o indica que el folleto no trae ese dato / no existe folleto. NO sirve para precio, stock ni promociones (eso sale SOLO de buscar_producto — los folletos traen precios de otros mercados que NO aplican). Úsala solo cuando haga falta (es una consulta costosa): primero intenta con 'especificaciones'.",
+  strict: true,
+  input_schema: { type: "object", properties: { producto_url: { type: "string", description: "La URL del producto tal cual la devolvió buscar_producto en esta conversación (campo url)." }, pregunta: { type: "string", description: "La especificación puntual que busca el cliente, ej: '¿imprime doble cara automática?' o '¿cuál es la capacidad de la bandeja?'" } }, required: ["producto_url", "pregunta"], additionalProperties: false },
 } as Anthropic.Tool];
 
 // v45: "garantía/devolución" GENERAL ("¿qué garantía tienen?") ya NO va a handoff permanente — era
@@ -1183,6 +1189,21 @@ function generarRefCode(): string {
 function handleDeUrl(u: string): string | null {
   const m = String(u ?? "").match(/\/products\/([^/?#]+)/);
   return m ? m[1] : null;
+}
+
+// v63 — extrae el link del FOLLETO PDF del body_html de un producto (los folletos viven como <a href> al
+// repositorio de archivos de Shopify). SOLO acepta https://cdn.shopify.com (anti-SSRF: la URL del PDF nace
+// aquí, de la ficha real — el modelo nunca elige qué URL se descarga). Pura y auto-contenida (golden).
+function extraerFolletoPdf(html: any): string | null {
+  const m = String(html ?? "").match(/href=["']([^"']+\.pdf(?:\?[^"']*)?)["']/i);
+  if (!m) return null;
+  let u = m[1];
+  if (u.startsWith("//")) u = "https:" + u;
+  try {
+    const p = new URL(u);
+    if (p.protocol !== "https:" || p.hostname !== "cdn.shopify.com") return null;
+    return p.href;
+  } catch { return null; }
 }
 function apexize(u: string): string {
   return String(u ?? "").replace(/^https?:\/\/(www\.)?quickservicepanama\.com/i, STORE_APEX);
@@ -1843,7 +1864,7 @@ async function responderLLM(history: { role: string; content: string; model?: st
   // cliente con un humano a cargo) y tarifa_entrega (cotizar método+precio de envío COMPROMETE una entrega
   // —v47—; si en asistencia preguntan el costo, cae a info_tienda genérico, no comprometido). ASSIST_SUFFIX
   // gobierna qué NO cerrar/coordinar; INTERRUPT_RE ya bloqueó pago/fiscal/coordinar entrega antes de llegar.
-  const toolsActivas = modoAsistencia ? TOOLS.filter((t) => ["buscar_producto", "info_tienda", "sucursales_interior", "estado_pedido", "calcular_cotizacion"].includes(t.name)) : TOOLS;
+  const toolsActivas = modoAsistencia ? TOOLS.filter((t) => ["buscar_producto", "info_tienda", "sucursales_interior", "estado_pedido", "calcular_cotizacion", "consultar_folleto"].includes(t.name)) : TOOLS;
   // Los mensajes de un asesor humano se marcan para que el agente sepa que los dijo una persona.
   // v32: cada mensaje ANTERIOR (no el último/actual) se prefija con [hoy/ayer/fecha] para que el bot
   // ubique el historial en el tiempo. El último (el que se responde ahora) va limpio (es "ahora", y así
@@ -1919,6 +1940,8 @@ async function responderLLM(history: { role: string; content: string; model?: st
           ? await estadoPedido(waId)
           : block.name === "calcular_cotizacion"
           ? calcularCotizacion((block.input as any).items)
+          : block.name === "consultar_folleto"
+          ? await consultarFolleto((block.input as any).producto_url ?? "", (block.input as any).pregunta ?? "")
           : JSON.stringify({ error: "tool desconocida" });
         // v59 — SHADOW: compara search_catalog vs suggest.json en BACKGROUND (no cambia la respuesta ni
         // agrega latencia al cliente). Solo buscar_producto, y solo si BUSQUEDA_SHADOW=1.
@@ -2046,6 +2069,65 @@ async function textoDeRafagaSinResponder(convId: string, texto: string): Promise
   } catch { return texto; }                        // ante fallo, el comportamiento de siempre
 }
 
+// v63 — FOLLETO PDF bajo demanda (roadmap #9). Cuando `especificaciones` (la ficha, v52) no responde la
+// pregunta técnica del cliente sobre un EQUIPO, el modelo llama consultar_folleto con la URL del producto.
+// La función: (1) deriva el handle y lee la ficha PÚBLICA /products/{handle}.json — la fuente donde el
+// <a href> del folleto SÍ sobrevive (el MCP entrega la descripción sin tags → el link no viaja por ahí);
+// (2) extrae el PDF con extraerFolletoPdf (allowlist cdn.shopify.com); (3) SUB-LLAMADA a Claude con el PDF
+// adjunto + la pregunta puntual (patrón sub-agente, como la visión v19) y devuelve la respuesta grounded.
+// GUARDRAILS: handle saneado (la URL de la ficha la construimos NOSOTROS — anti-SSRF), tope 4.5MB, timeouts,
+// y del folleto NUNCA salen precios/promos (traen MSRP de otros mercados; prohibido en la sub-llamada Y en
+// el prompt principal). Best-effort: cualquier fallo → JSON de error que deriva a un asesor; nunca rompe.
+async function consultarFolleto(productoUrl: string, pregunta: string): Promise<string> {
+  const t0 = Date.now();
+  try {
+    if (!anthropic) return JSON.stringify({ error: "sin_llm" });
+    const crudo = String(productoUrl ?? "").trim();
+    const handle = /^[a-z0-9_-]+$/i.test(crudo) ? crudo : handleDeUrl(crudo);
+    if (!handle || !/^[a-z0-9_-]+$/i.test(handle)) {
+      return JSON.stringify({ error: "url_invalida", nota: "Pasa la URL del producto tal cual la devolvió buscar_producto (campo url)." });
+    }
+    const pq = String(pregunta ?? "").slice(0, 300).trim();
+    if (!pq) return JSON.stringify({ error: "sin_pregunta", nota: "Indica la especificación puntual que busca el cliente." });
+    // 1) ficha pública del producto (body_html CON los links, a diferencia del MCP)
+    const rFicha = await fetch(`${STORE_APEX}/products/${handle}.json`, { signal: AbortSignal.timeout(8000) });
+    if (!rFicha.ok) throw new Error(`ficha_http_${rFicha.status}`);
+    const ficha = await rFicha.json();
+    const pdfUrl = extraerFolletoPdf(ficha?.product?.body_html);
+    if (!pdfUrl) {
+      await log("folleto_consultado", true, { handle, hallo: false, motivo: "sin_folleto", ms: Date.now() - t0 });
+      return JSON.stringify({ resultado: "este producto no tiene folleto PDF", nota: "Responde con el campo 'especificaciones' de buscar_producto si alcanza; si no, deriva a un asesor. NO inventes el dato." });
+    }
+    // 2) el PDF (allowlist ya validada por extraerFolletoPdf)
+    const rPdf = await fetch(pdfUrl, { signal: AbortSignal.timeout(12000) });
+    if (!rPdf.ok) throw new Error(`pdf_http_${rPdf.status}`);
+    const buf = new Uint8Array(await rPdf.arrayBuffer());
+    if (!buf.byteLength || buf.byteLength > 4_500_000) throw new Error(`pdf_tamano_${buf.byteLength}`);
+    let bin = "";
+    const CH = 0x8000;
+    for (let i = 0; i < buf.length; i += CH) bin += String.fromCharCode(...buf.subarray(i, i + CH));
+    // 3) sub-llamada: el folleto + la pregunta puntual (respuesta corta, grounded, sin precios)
+    const sub = await anthropic.messages.create({
+      model: MODEL, max_tokens: 600, thinking: { type: "disabled" },
+      system: "Eres un extractor de especificaciones técnicas de folletos de equipos. Responde SOLO con lo que el documento adjunto diga sobre la pregunta, breve y en español (2-4 oraciones o una lista corta), citando los valores TAL CUAL aparecen. Si el documento no contiene el dato, responde exactamente: NO_ESTA_EN_FOLLETO. PROHIBIDO mencionar precios, promociones o disponibilidad que aparezcan en el documento (son referenciales de otros mercados y NO aplican).",
+      messages: [{ role: "user", content: [
+        { type: "document", source: { type: "base64", media_type: "application/pdf", data: btoa(bin) } },
+        { type: "text", text: `Pregunta del cliente sobre este equipo: ${pq}` },
+      ] as any }],
+    });
+    const texto = sub.content.filter((b) => b.type === "text").map((b: any) => b.text).join("\n").trim();
+    const hallo = !!texto && !/NO_ESTA_EN_FOLLETO/.test(texto);
+    await log("folleto_consultado", true, { handle, hallo, ms: Date.now() - t0, tokens_in: sub.usage.input_tokens, tokens_out: sub.usage.output_tokens });
+    if (!hallo) {
+      return JSON.stringify({ resultado: "el folleto no menciona ese dato", nota: "Dilo con honestidad y ofrece que un asesor lo confirme. NO inventes la especificación." });
+    }
+    return JSON.stringify({ ok: true, fuente: "folleto_pdf_oficial", respuesta: texto, nota: "Puedes citar esto como especificación del folleto oficial del equipo. NUNCA tomes precios del folleto: el precio sale SOLO de buscar_producto." });
+  } catch (e) {
+    await log("folleto_consultado", false, { error: String(e).slice(0, 120), ms: Date.now() - t0 });
+    return JSON.stringify({ error: "folleto_no_disponible", nota: "No se pudo leer el folleto en este momento; responde con 'especificaciones' si alcanza o deriva a un asesor." });
+  }
+}
+
 // v19 — descarga una imagen enviada por el cliente desde WATI (el campo `data` del webhook es
 // un link de live-mt-server.wati.io que requiere el token) y la devuelve en base64 para pasarla
 // a Claude vision. Devuelve null si falla, no es imagen soportada o pesa demasiado.
@@ -2125,7 +2207,7 @@ Deno.serve(async (req) => {
       const diag = await inventarioSelfTest(pid);
       return Response.json({ selftest: "inventario", ...diag, ts: new Date().toISOString() });
     }
-    return Response.json({ status: "ok", function: "copilot-webhook", version: "v62-ucp-endpoint", mode: MODE, mode_raw: MODE_RAW, model: MODEL, llm_configured: !!anthropic, wati_send_configured: !!(WATI_API_TOKEN && WATI_API_BASE), inventario_configurado: !!(SHOPIFY_ADMIN_TOKEN && SHOPIFY_ADMIN_API_BASE), resolve_configured: !!RESOLVE_SECRET, webhook_key_es_default: WEBHOOK_KEY_ES_DEFAULT, handoff_assist_min: HANDOFF_ASSIST_MIN, handoff_cold_hours: HANDOFF_COLD_HOURS, debounce_ms: DEBOUNCE_MS, sesion_gap_dias: SESION_GAP_DIAS, busqueda_shadow: BUSQUEDA_SHADOW, busqueda_mcp: BUSQUEDA_MCP, busqueda_mcp_limit: BUSQUEDA_MCP_LIMIT, catalog_mcp_url: CATALOG_MCP_URL, ucp_profile_url: UCP_PROFILE_URL, live_targets: MODE === "live" ? (LIVE_ALL ? "all" : LIVE_ALLOWLIST.length) : 0, ts: new Date().toISOString() });
+    return Response.json({ status: "ok", function: "copilot-webhook", version: "v63-folleto-pdf", mode: MODE, mode_raw: MODE_RAW, model: MODEL, llm_configured: !!anthropic, wati_send_configured: !!(WATI_API_TOKEN && WATI_API_BASE), inventario_configurado: !!(SHOPIFY_ADMIN_TOKEN && SHOPIFY_ADMIN_API_BASE), resolve_configured: !!RESOLVE_SECRET, webhook_key_es_default: WEBHOOK_KEY_ES_DEFAULT, handoff_assist_min: HANDOFF_ASSIST_MIN, handoff_cold_hours: HANDOFF_COLD_HOURS, debounce_ms: DEBOUNCE_MS, sesion_gap_dias: SESION_GAP_DIAS, busqueda_shadow: BUSQUEDA_SHADOW, busqueda_mcp: BUSQUEDA_MCP, busqueda_mcp_limit: BUSQUEDA_MCP_LIMIT, catalog_mcp_url: CATALOG_MCP_URL, ucp_profile_url: UCP_PROFILE_URL, live_targets: MODE === "live" ? (LIVE_ALL ? "all" : LIVE_ALLOWLIST.length) : 0, ts: new Date().toISOString() });
   }
   if (req.method !== "POST") return Response.json({ error: "method_not_allowed" }, { status: 405 });
   if (url.searchParams.get("key") !== WEBHOOK_KEY) return Response.json({ error: "forbidden" }, { status: 403 });

@@ -20,6 +20,23 @@ con certeza, y calla/deriva cuando es mejor que responda un humano. Tienda:
 **quickservicepanama.com** (suministros de impresión y tecnología en Panamá).
 
 ## Estado actual (2026-08-06)
+- **EN EL REPO, LISTO PARA DESPLEGAR: v63 (`v63-folleto-pdf`).** Roadmap #9 (folletos de EQUIPOS), diseño
+  acordado 06-ago tras verificar la ficha real (HP Smart Tank 750: el folleto vive como `<a href>` a
+  `cdn.shopify.com/...pdf` dentro del `body_html`). Nueva tool **`consultar_folleto(producto_url, pregunta)`**
+  BAJO DEMANDA: cuando `especificaciones` (v52) no responde la pregunta técnica, el modelo la llama con la URL
+  del producto (grounded, de ESA conversación) → la función deriva el handle, lee la ficha PÚBLICA
+  `/products/{handle}.json` (**ahí el link SÍ sobrevive; el MCP entrega la descripción sin tags** → por eso NO
+  se extrae en la búsqueda), `extraerFolletoPdf` saca el href (**allowlist dura `https://cdn.shopify.com`**,
+  anti-SSRF: la URL del PDF nunca la elige el modelo), descarga (tope 4.5MB, timeouts) y hace una
+  **SUB-LLAMADA** a Claude con el PDF adjunto + la pregunta (patrón sub-agente v19, `max_tokens` 600) →
+  respuesta citable como "folleto oficial". Caminos honestos: `sin_folleto` / `NO_ESTA_EN_FOLLETO` → el bot lo
+  dice y deriva (nunca completa por lógica). **REGLA DURA:** del folleto JAMÁS salen precios/promos/stock
+  (traen MSRP de otros mercados) — prohibido en la sub-llamada Y en el prompt principal; precio SOLO de
+  `buscar_producto`. Disponible en MODO ASISTENCIA (read-only). Telemetría `job_log` `folleto_consultado`
+  (`hallo`/`sin_folleto`/error, ms, tokens — para medir la demanda real del roadmap #9). Costo solo cuando se
+  consulta (~2-6s + el PDF en tokens de la sub-llamada). 529 golden + 21 node tests. Sin migración.
+  Deploy: `.\deploy.ps1 copilot-webhook`. Tarea de CONTENIDO tuya (gradual): seguir enlazando el PDF en la
+  descripción de cada equipo (patrón Smart Tank 750) — donde no haya link, la tool responde "sin folleto".
 - **🚀 EN VIVO (desplegado y FLIPEADO 06-ago; healthcheck `catalog_mcp_url:…/api/ucp/mcp` + `ucp_profile_url` sirviendo; discovery verificado con curl real: perfil fetcheado por Shopify → `status:success` + TN-830XL #1; el endpoint UCP además expone `variants[].sku` — útil para QBO): v62 (`v62-ucp-endpoint`).** Migración del endpoint del catálogo ANTES
   del sunset: el legacy `/api/mcp` que usa v60 **muere ~31-ago-2026**; el nuevo `/api/ucp/mcp` exige un
   **perfil de agente hosteado** que Shopify FETCHEA en el discovery (`meta.ucp-agent.profile`; probado contra
@@ -1191,11 +1208,11 @@ Eventos WATI suscritos (necesarios): **Message Received**, **Session Message Sen
 7. **Reseñas por WhatsApp** (generar volumen; tie-in con Klaviyo/CDP).
 8. Omnichannel / cruce con identidad del CDP por `wa_id`. (Orquestador multi-modelo:
    evaluado y descartado por ahora — prematuro; un router por reglas solo si hace falta.)
-9. **Folletos/fichas de equipos** (solo equipos, NO consumibles): specs/compatibilidad como
-   descripción/metafield en Shopify (ya hay token Admin) → tool `ficha_producto`. **Medir primero**
-   la demanda (cuántas veces el bot deriva por specs/compatibilidad) antes de construir. (Discutido
-   2026-06-24: el usuario tiene PDFs de equipos; EN PAUSA hasta decidir descripción vs metafield y
-   cómo cargar el contenido.)
+9. **Folletos/fichas de equipos: ✅ HECHO en v63** (`consultar_folleto`, lector de PDF bajo demanda con
+   sub-llamada; la demanda quedó probada por las auditorías — specs es de lo más preguntado). Pendiente
+   de CONTENIDO (gradual): enlazar el PDF en la descripción de cada equipo (patrón Smart Tank 750); la
+   telemetría `folleto_consultado` mide uso real. La idea original de volcar specs a la descripción sigue
+   valiendo como optimización (alimenta el vector de search_catalog y evita la sub-llamada).
 10. **Captura de lead** (correo/nombre/apellido/empresa) en atributos de WATI → ✅ **HECHA en v25/v27**
     (pasiva, dentro del agente actual, sin pedir datos fiscales; `guardar_lead`). Pendiente: el puente
     **WATI→CDP** (evaluando **Make**) para que el dato capturado enriquezca el CDP automáticamente.
