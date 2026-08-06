@@ -20,7 +20,14 @@ con certeza, y calla/deriva cuando es mejor que responda un humano. Tienda:
 **quickservicepanama.com** (suministros de impresión y tecnología en Panamá).
 
 ## Estado actual (2026-08-06)
-- **🚀 EN VIVO (desplegado 06-ago, healthcheck `version:v63-folleto-pdf`; smoke test del folleto PENDIENTE): v63 (`v63-folleto-pdf`).** Roadmap #9 (folletos de EQUIPOS), diseño
+- **EN EL REPO, LISTO PARA DESPLEGAR: v63.1 (`v63.1-folleto-primero`).** El smoke test real de v63 destapó
+  que la tool NUNCA se llamó: ante "¿escanea a doble cara?" (dato ausente de la ficha) el bot derivó al
+  asesor SIN consultar el folleto — la regla era tímida y la descripción de la tool decía "es una consulta
+  costosa" (el modelo le hizo caso). Fix de PROMPT: consultar_folleto es ahora el paso OBLIGATORIO antes de
+  derivar una pregunta de especificaciones de un EQUIPO ("NUNCA derives… sin haber consultado el folleto
+  primero"; se quitó el desincentivo de la descripción). 531 golden tests. Re-probar: "¿escanea a doble
+  cara la Smart Tank 750?" → debe aparecer fila en `folleto_consultado`.
+- **🚀 EN VIVO (desplegado 06-ago; superseded por v63.1 en repo): v63 (`v63-folleto-pdf`).** Roadmap #9 (folletos de EQUIPOS), diseño
   acordado 06-ago tras verificar la ficha real (HP Smart Tank 750: el folleto vive como `<a href>` a
   `cdn.shopify.com/...pdf` dentro del `body_html`). Nueva tool **`consultar_folleto(producto_url, pregunta)`**
   BAJO DEMANDA: cuando `especificaciones` (v52) no responde la pregunta técnica, el modelo la llama con la URL
