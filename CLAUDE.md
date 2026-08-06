@@ -20,7 +20,17 @@ con certeza, y calla/deriva cuando es mejor que responda un humano. Tienda:
 **quickservicepanama.com** (suministros de impresión y tecnología en Panamá).
 
 ## Estado actual (2026-08-06)
-- **EN EL REPO, LISTO PARA DESPLEGAR: v63.1 (`v63.1-folleto-primero`).** El smoke test real de v63 destapó
+- **EN EL REPO, LISTO PARA DESPLEGAR: v63.2 (`v63.2-folleto-url-turno`).** La telemetría del re-test
+  destapó el último hueco: el turno 1 (dúplex) funcionó completo (`ok:true`, `tokens_in:10542` — la
+  sub-llamada LEYÓ el folleto y respondió honesto `hallo:false`), pero el turno 2 (tipos de papel, que SÍ
+  están en el folleto) dio `ficha_http_404` en 164ms: **el modelo escribió la URL de memoria** (los
+  resultados de tools de turnos anteriores no viajan en el historial) → handle inventado → 404. Dos fixes:
+  (1) el 404 de la ficha devuelve ahora un error **AUTO-CORREGIBLE** (`url_no_corresponde`: "llama PRIMERO a
+  buscar_producto y reintenta con el url exacto" — el loop de tools de 4 iteraciones le permite corregirse
+  en el MISMO turno); (2) la regla del prompt exige la URL de un buscar_producto DE ESTE MISMO TURNO y
+  prohíbe reconstruirla de memoria. 532 golden tests. Re-test: "¿qué tipos de papel soporta la Smart Tank
+  750?" → debe salir `hallo:true` citando "60 a 105 g/m²…".
+- **EN EL REPO (incluido arriba): v63.1 (`v63.1-folleto-primero`).** El smoke test real de v63 destapó
   que la tool NUNCA se llamó: ante "¿escanea a doble cara?" (dato ausente de la ficha) el bot derivó al
   asesor SIN consultar el folleto — la regla era tímida y la descripción de la tool decía "es una consulta
   costosa" (el modelo le hizo caso). Fix de PROMPT: consultar_folleto es ahora el paso OBLIGATORIO antes de

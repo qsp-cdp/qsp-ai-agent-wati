@@ -1005,7 +1005,10 @@ caso("v63: SYSTEM_PROMPT tiene la regla FOLLETO PDF DE EQUIPOS", /FOLLETO PDF DE
 // de derivar una pregunta de especificaciones de un equipo.
 caso("v63.1: el folleto es paso OBLIGATORIO antes de derivar", /SIGUIENTE paso OBLIGATORIO es consultar_folleto/.test(SYSTEM_PROMPT) && /NUNCA derives a un asesor una pregunta de especificaciones sin haber consultado el folleto/.test(SYSTEM_PROMPT));
 caso("v63.1: la descripción de la tool ya no desincentiva (sin 'consulta costosa')", !/es una consulta costosa/.test(src) && /ANTES de derivar a un asesor — nunca respondas 'no está especificado' sin haberla intentado/.test(src));
-caso("v63: la URL debe ser la devuelta EN ESTA conversación (grounded)", /EN ESTA conversación — nunca otra/.test(SYSTEM_PROMPT));
+caso("v63.2: la URL debe venir de buscar_producto DE ESTE MISMO TURNO (no de memoria)", /DE ESTE MISMO TURNO/.test(SYSTEM_PROMPT) && /NUNCA escribas la URL de memoria/.test(SYSTEM_PROMPT));
+// v63.2 (telemetría real): el modelo escribió la URL de memoria en el 2º turno → handle inventado → 404.
+// El error ahora es AUTO-CORREGIBLE: pide re-buscar y reintentar dentro del mismo turno (loop de tools).
+caso("v63.2: 404 de la ficha → error auto-corregible (re-buscar y reintentar)", /url_no_corresponde/.test(src) && /ficha_http_404_url_inventada/.test(src) && /reintenta consultar_folleto/.test(src));
 caso("v63: REGLA DURA — del folleto jamás salen precios/promos/stock", /del folleto JAMÁS salen precios/.test(SYSTEM_PROMPT) && /precios de referencia de otros mercados/.test(SYSTEM_PROMPT));
 caso("v63: honestidad si no hay dato (no completar por lógica)", /NUNCA completes la especificación por lógica/.test(SYSTEM_PROMPT));
 
