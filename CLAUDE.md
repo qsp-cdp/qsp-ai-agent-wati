@@ -20,7 +20,7 @@ con certeza, y calla/deriva cuando es mejor que responda un humano. Tienda:
 **quickservicepanama.com** (suministros de impresión y tecnología en Panamá).
 
 ## Estado actual (2026-08-06)
-- **EN EL REPO, LISTO PARA DESPLEGAR: v63 (`v63-folleto-pdf`).** Roadmap #9 (folletos de EQUIPOS), diseño
+- **🚀 EN VIVO (desplegado 06-ago, healthcheck `version:v63-folleto-pdf`; smoke test del folleto PENDIENTE): v63 (`v63-folleto-pdf`).** Roadmap #9 (folletos de EQUIPOS), diseño
   acordado 06-ago tras verificar la ficha real (HP Smart Tank 750: el folleto vive como `<a href>` a
   `cdn.shopify.com/...pdf` dentro del `body_html`). Nueva tool **`consultar_folleto(producto_url, pregunta)`**
   BAJO DEMANDA: cuando `especificaciones` (v52) no responde la pregunta técnica, el modelo la llama con la URL
