@@ -83,6 +83,7 @@ const clavesFamilia = extraerFuncion("clavesFamilia");
 const tipoPedido = extraerFuncion("tipoPedido");
 const tituloDeTipo = extraerFuncion("tituloDeTipo");
 const cortarSesionVieja = extraerFuncion("cortarSesionVieja");
+const perfilUcpAgente = extraerFuncion("perfilUcpAgente");
 const rerankearCombos = extraerFuncion("rerankearCombos");
 const SYSTEM_PROMPT = extraerSystemPrompt();
 
@@ -952,6 +953,28 @@ caso("v61.5: nota de cliente que REGRESA (tema cerrado, no adivinar)", /Cliente 
 caso("v61.5: el que regresa NO recibe bienvenida de nuevo", /No repitas la bienvenida de contacto nuevo/.test(src) && /hist\.length <= 1 && !corte\.huboAnterior/.test(src));
 caso("v61.5: env COPILOT_SESION_GAP_DIAS (default 7, clamp 0-90)", /COPILOT_SESION_GAP_DIAS/.test(src) && /Math\.max\(0, Math\.min\(n, 90\)\) : 7/.test(src));
 caso("v61.5: healthcheck expone sesion_gap_dias", /sesion_gap_dias: SESION_GAP_DIAS/.test(src));
+
+// --- v62: migración del endpoint UCP (perfil de agente hosteado) ----------------------------------
+console.log("v62 perfil UCP + endpoint");
+// El legacy /api/mcp muere ~31-ago; /api/ucp/mcp exige que el agente hostee un PERFIL y lo declare en
+// meta.ucp-agent.profile (Shopify lo FETCHEA en el discovery). Forma del perfil = spec oficial
+// (Universal-Commerce-Protocol: profile.json → { ucp: { version, capabilities, services, payment_handlers } }).
+const PERFIL = perfilUcpAgente();
+caso("v62: el perfil tiene ucp.version en formato fecha", /^\d{4}-\d{2}-\d{2}$/.test(PERFIL.ucp?.version ?? ""));
+caso("v62: la versión es la que declara la TIENDA (2026-04-08)", PERFIL.ucp?.version === "2026-04-08");
+caso("v62: declara la capacidad del catálogo con su versión", Array.isArray(PERFIL.ucp?.capabilities?.["dev.ucp.shopping.catalog.search"]) && PERFIL.ucp.capabilities["dev.ucp.shopping.catalog.search"][0]?.version === "2026-04-08");
+caso("v62: incluye services y payment_handlers (requeridos por platform_schema)", typeof PERFIL.ucp?.services === "object" && typeof PERFIL.ucp?.payment_handlers === "object");
+caso("v62: el perfil es JSON-serializable y sin secretos", (() => { const s = JSON.stringify(PERFIL); return s.length > 0 && !/key|token|secret/i.test(s); })());
+// wiring
+caso("v62: ruta GET ?ucp_profile=1 pública (sin key) con Content-Type json", /url\.searchParams\.get\("ucp_profile"\) === "1"/.test(src) && /"Content-Type": "application\/json", "Cache-Control"/.test(src));
+caso("v62: la ruta del perfil va ANTES del selftest y del healthcheck", (() => {
+  const iPerfil = src.indexOf('url.searchParams.get("ucp_profile")');
+  const iSelf = src.indexOf('url.searchParams.get("selftest")');
+  return iPerfil > -1 && iSelf > -1 && iPerfil < iSelf;
+})());
+caso("v62: buscarCatalogoMCP manda meta.ucp-agent.profile SIEMPRE (flip = solo config)", /\{ meta: \{ "ucp-agent": \{ profile: UCP_PROFILE_URL \} \} \}/.test(src));
+caso("v62: UCP_PROFILE_URL derivada de SUPABASE_URL con override por env", /UCP_AGENT_PROFILE_URL/.test(src) && /\.replace\("\.supabase\.co", "\.functions\.supabase\.co"\)/.test(src));
+caso("v62: healthcheck expone catalog_mcp_url y ucp_profile_url", /catalog_mcp_url: CATALOG_MCP_URL/.test(src) && /ucp_profile_url: UCP_PROFILE_URL/.test(src));
 
 // --- resumen --------------------------------------------------------------------------------------
 console.log(`\n${ok} OK, ${mal} FALLA${mal === 1 ? "" : "S"}`);

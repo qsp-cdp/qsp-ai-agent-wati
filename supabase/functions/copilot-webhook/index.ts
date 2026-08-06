@@ -456,6 +456,31 @@ const STORE_APEX = "https://quickservicepanama.com";          // apex (sin www; 
 // configurable: default el legacy /api/mcp (público, stateless, funciona hoy); el catálogo UCP en
 // /api/ucp/mcp exige un perfil de agente hosteado -> se migra antes del flip (v60).
 const CATALOG_MCP_URL = (Deno.env.get("SHOPIFY_CATALOG_MCP_URL") ?? `${STORE_APEX}/api/mcp`).trim();
+// v62 — PERFIL DE AGENTE UCP (hosteado por el propio copiloto). El endpoint nuevo del catálogo
+// (/api/ucp/mcp — el legacy /api/mcp muere ~31-ago-2026) hace "discovery": FETCHEA la URL que el agente
+// declara en meta.ucp-agent.profile y valida el documento (probado contra la tienda: sin perfil → 422;
+// URL inalcanzable → profile_unreachable; sin token). El perfil se sirve en GET ?ucp_profile=1 (público:
+// es un documento de identidad, sin secretos) y su forma sigue el spec oficial (profile.json/ucp.json del
+// repo Universal-Commerce-Protocol): { ucp: { version, capabilities, services, payment_handlers } }.
+// La versión y la capacidad son las que la PROPIA tienda declara en sus respuestas (2026-04-08 /
+// dev.ucp.shopping.catalog.search). El flip de endpoint = setear SHOPIFY_CATALOG_MCP_URL (sin deploy).
+const UCP_PROFILE_URL = (() => {
+  const propio = (Deno.env.get("UCP_AGENT_PROFILE_URL") ?? "").trim();
+  if (propio) return propio;
+  const su = (Deno.env.get("SUPABASE_URL") ?? "").trim().replace(/\/$/, "");
+  return su ? `${su.replace(".supabase.co", ".functions.supabase.co")}/copilot-webhook?ucp_profile=1` : "";
+})();
+// Pura y auto-contenida (golden la extrae y valida su forma contra el spec).
+function perfilUcpAgente(): Record<string, unknown> {
+  return {
+    ucp: {
+      version: "2026-04-08",
+      capabilities: { "dev.ucp.shopping.catalog.search": [{ version: "2026-04-08" }] },
+      services: {},
+      payment_handlers: {},
+    },
+  };
+}
 const BUSQUEDA_SHADOW = (Deno.env.get("BUSQUEDA_SHADOW") ?? "").trim() === "1";
 // v60 — FLIP: motor de búsqueda primario = search_catalog (Catalog MCP) en vez de suggest.json. Default OFF
 // (deploy = no-op hasta flipear). suggest.json queda de fallback de confiabilidad + verificador de código.
@@ -1332,7 +1357,12 @@ function parseCatalogoMCP(j: any): any[] {
 
 // Llama al endpoint MCP (search_catalog). Best-effort: timeout corto; lanza si falla (el caller loguea).
 async function buscarCatalogoMCP(consulta: string): Promise<any[]> {
-  const body = { jsonrpc: "2.0", id: 1, method: "tools/call", params: { name: "search_catalog", arguments: { catalog: { query: consulta, pagination: { limit: BUSQUEDA_MCP_LIMIT } } } } };
+  // v62 — meta.ucp-agent.profile SIEMPRE (el legacy lo acepta y el UCP lo EXIGE): así cambiar de endpoint
+  // es solo flipear SHOPIFY_CATALOG_MCP_URL, sin tocar código.
+  const body = { jsonrpc: "2.0", id: 1, method: "tools/call", params: { name: "search_catalog", arguments: {
+    ...(UCP_PROFILE_URL ? { meta: { "ucp-agent": { profile: UCP_PROFILE_URL } } } : {}),
+    catalog: { query: consulta, pagination: { limit: BUSQUEDA_MCP_LIMIT } },
+  } } };
   const res = await fetch(CATALOG_MCP_URL, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body), signal: AbortSignal.timeout(6000) });
   if (!res.ok) throw new Error(`mcp_http_${res.status}`);
   return parseCatalogoMCP(await res.json());
@@ -2075,6 +2105,13 @@ Deno.serve(async (req) => {
       if (!data) return Response.json({ error: "not_found" }, { status: 404 });
       return Response.json({ wa_id: data.wa_id, producto_handle: data.producto_handle, ts: data.created_at });
     }
+    // v62 — perfil de agente UCP (público, SIN key: Shopify lo fetchea anónimamente en el discovery de
+    // /api/ucp/mcp; es un documento de identidad estático, sin secretos ni datos).
+    if (url.searchParams.get("ucp_profile") === "1") {
+      return new Response(JSON.stringify(perfilUcpAgente()), {
+        headers: { "Content-Type": "application/json", "Cache-Control": "public, max-age=3600" },
+      });
+    }
     // v44 — autotest de inventario (diagnóstico), gated por ?key= (NO expone el token). Uso:
     //   GET ?key=<WEBHOOK_KEY>&selftest=inventario[&pid=<product_id>]
     // Corre la consulta Admin totalInventory desde ADENTRO y reporta status/errores/nodos, para ver por qué
@@ -2088,7 +2125,7 @@ Deno.serve(async (req) => {
       const diag = await inventarioSelfTest(pid);
       return Response.json({ selftest: "inventario", ...diag, ts: new Date().toISOString() });
     }
-    return Response.json({ status: "ok", function: "copilot-webhook", version: "v61.5-corte-sesion", mode: MODE, mode_raw: MODE_RAW, model: MODEL, llm_configured: !!anthropic, wati_send_configured: !!(WATI_API_TOKEN && WATI_API_BASE), inventario_configurado: !!(SHOPIFY_ADMIN_TOKEN && SHOPIFY_ADMIN_API_BASE), resolve_configured: !!RESOLVE_SECRET, webhook_key_es_default: WEBHOOK_KEY_ES_DEFAULT, handoff_assist_min: HANDOFF_ASSIST_MIN, handoff_cold_hours: HANDOFF_COLD_HOURS, debounce_ms: DEBOUNCE_MS, sesion_gap_dias: SESION_GAP_DIAS, busqueda_shadow: BUSQUEDA_SHADOW, busqueda_mcp: BUSQUEDA_MCP, busqueda_mcp_limit: BUSQUEDA_MCP_LIMIT, live_targets: MODE === "live" ? (LIVE_ALL ? "all" : LIVE_ALLOWLIST.length) : 0, ts: new Date().toISOString() });
+    return Response.json({ status: "ok", function: "copilot-webhook", version: "v62-ucp-endpoint", mode: MODE, mode_raw: MODE_RAW, model: MODEL, llm_configured: !!anthropic, wati_send_configured: !!(WATI_API_TOKEN && WATI_API_BASE), inventario_configurado: !!(SHOPIFY_ADMIN_TOKEN && SHOPIFY_ADMIN_API_BASE), resolve_configured: !!RESOLVE_SECRET, webhook_key_es_default: WEBHOOK_KEY_ES_DEFAULT, handoff_assist_min: HANDOFF_ASSIST_MIN, handoff_cold_hours: HANDOFF_COLD_HOURS, debounce_ms: DEBOUNCE_MS, sesion_gap_dias: SESION_GAP_DIAS, busqueda_shadow: BUSQUEDA_SHADOW, busqueda_mcp: BUSQUEDA_MCP, busqueda_mcp_limit: BUSQUEDA_MCP_LIMIT, catalog_mcp_url: CATALOG_MCP_URL, ucp_profile_url: UCP_PROFILE_URL, live_targets: MODE === "live" ? (LIVE_ALL ? "all" : LIVE_ALLOWLIST.length) : 0, ts: new Date().toISOString() });
   }
   if (req.method !== "POST") return Response.json({ error: "method_not_allowed" }, { status: 405 });
   if (url.searchParams.get("key") !== WEBHOOK_KEY) return Response.json({ error: "forbidden" }, { status: 403 });

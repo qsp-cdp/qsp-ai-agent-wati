@@ -20,6 +20,20 @@ con certeza, y calla/deriva cuando es mejor que responda un humano. Tienda:
 **quickservicepanama.com** (suministros de impresión y tecnología en Panamá).
 
 ## Estado actual (2026-08-06)
+- **EN EL REPO, LISTO PARA DESPLEGAR: v62 (`v62-ucp-endpoint`).** Migración del endpoint del catálogo ANTES
+  del sunset: el legacy `/api/mcp` que usa v60 **muere ~31-ago-2026**; el nuevo `/api/ucp/mcp` exige un
+  **perfil de agente hosteado** que Shopify FETCHEA en el discovery (`meta.ucp-agent.profile`; probado contra
+  la tienda: sin perfil → 422, URL inalcanzable → `profile_unreachable`, sin token). Tres piezas: (1) el
+  copiloto SIRVE su perfil en **GET `?ucp_profile=1`** (público, sin key — documento de identidad estático,
+  cache 1h), con la forma del **spec oficial** (repo Universal-Commerce-Protocol, `profile.json`/`ucp.json`:
+  `{ucp:{version,capabilities,services,payment_handlers}}`) y la versión/capacidad que la PROPIA tienda
+  declara (`2026-04-08` / `dev.ucp.shopping.catalog.search`); (2) `buscarCatalogoMCP` manda
+  `meta.ucp-agent.profile` **SIEMPRE** (el legacy lo acepta, el UCP lo exige) → **el flip = setear
+  `SHOPIFY_CATALOG_MCP_URL=https://quickservicepanama.com/api/ucp/mcp`, sin deploy**; (3) `UCP_PROFILE_URL`
+  derivada de `SUPABASE_URL` (override `UCP_AGENT_PROFILE_URL`); healthcheck expone `catalog_mcp_url` +
+  `ucp_profile_url`. Rollback: volver el secreto al legacy (vive hasta ~31-ago). 511 golden + 21 node tests.
+  **Secuencia:** deploy → curl del perfil (JSON) → curl `/api/ucp/mcp` con el perfil real (products = discovery
+  OK) → flip del secreto + redeploy → smoke test del bot → confirmar `busqueda_mcp_fallo` en 0.
 - **EN EL REPO, LISTO PARA DESPLEGAR: v61.5 (`v61.5-corte-sesion`).** Reporte real: el bot leía un chat de
   hace un MES (el fetch trae "los últimos 10" sin importar la edad) y lo trataba como parte de la
   conversación de HOY — las marcas de fecha de v32 no bastaban (confiar en que el modelo ignore texto que
