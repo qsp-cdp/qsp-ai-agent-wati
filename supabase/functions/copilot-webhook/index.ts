@@ -467,6 +467,13 @@ const BUSQUEDA_MCP_LIMIT = (() => {
   const n = parseInt((Deno.env.get("BUSQUEDA_MCP_LIMIT") ?? "").trim(), 10);
   return Number.isFinite(n) && n >= 1 ? Math.min(n, 50) : 10;
 })();
+// v61.5 — CORTE DE SESIÓN del historial: si entre el mensaje de hoy y los anteriores hay un hueco mayor a
+// N días, la conversación vieja NO entra al contexto (el modelo la leía y la trataba como parte de la de
+// hoy, aunque v32 la marcara con fecha). Default 7 días; 0 = apagado. Ayer/anteayer se conservan (v32).
+const SESION_GAP_DIAS = (() => {
+  const n = parseInt((Deno.env.get("COPILOT_SESION_GAP_DIAS") ?? "").trim(), 10);
+  return Number.isFinite(n) ? Math.max(0, Math.min(n, 90)) : 7;
+})();
 
 // Piloto gradual: en live, SOLO se envía a estos wa_id. Vacío = no se envía a nadie (sigue
 // registrando en sombra); "all"/"*" = todos. Evita ir a live total por accidente.
@@ -538,6 +545,34 @@ function etiquetaTiempo(iso: string, ahoraMs: number): string {
   if (dias === 1) return `ayer ${hora}`;
   if (dias < 7) return `hace ${dias} días, ${hora}`;
   return `${m.getUTCDate()}/${m.getUTCMonth() + 1} ${hora}`;
+}
+
+// v61.5 — CORTE DE SESIÓN: recorta del historial la conversación ANTERIOR cuando hay un hueco de más de
+// maxGapDias entre mensajes (caso real: un chat del mes pasado entraba al contexto y el bot lo trataba
+// como parte de la conversación de hoy, pese a las marcas de fecha de v32). Camina del mensaje más nuevo
+// hacia atrás encadenando por cercanía: el primer salto mayor al umbral corta la sesión. Un chat continuo
+// que cruza varios días (mensajes diarios) NO se corta — el hueco se mide entre mensajes consecutivos.
+// Conservador: mensajes sin fecha no rompen la cadena; ante corte total conserva al menos el último; con
+// maxGapDias<=0 queda apagado. Pura y auto-contenida (golden la extrae).
+function cortarSesionVieja(hist: any[], ahoraMs: number, maxGapDias: number): { hist: any[]; huboAnterior: boolean; diasDesde: number | null } {
+  const lista = Array.isArray(hist) ? hist : [];
+  if (!maxGapDias || maxGapDias <= 0 || lista.length <= 1) return { hist: lista, huboAnterior: false, diasDesde: null };
+  const gapMs = maxGapDias * 86400000;
+  const ts = lista.map((m) => { const t = (m && m.created_at) ? new Date(m.created_at).getTime() : NaN; return isFinite(t) ? t : null; });
+  let corte = 0;        // índice del primer mensaje de la sesión ACTIVA
+  let prev = ahoraMs;   // se compara del más nuevo hacia atrás, arrancando en "ahora"
+  for (let i = lista.length - 1; i >= 0; i--) {
+    const t = ts[i];
+    if (t === null) continue;                       // sin fecha → no rompe la cadena (conservador)
+    if (prev - t > gapMs) { corte = i + 1; break; }
+    prev = t;
+  }
+  if (corte === 0) return { hist: lista, huboAnterior: false, diasDesde: null };
+  if (corte >= lista.length) corte = lista.length - 1;  // defensa: nunca dejar el historial vacío (bot mudo)
+  let ultViejo = null;
+  for (let i = corte - 1; i >= 0; i--) { if (ts[i] !== null) { ultViejo = ts[i]; break; } }
+  const diasDesde = ultViejo === null ? null : Math.max(1, Math.round((ahoraMs - ultViejo) / 86400000));
+  return { hist: lista.slice(corte), huboAnterior: true, diasDesde };
 }
 
 // v36 — el "próximo horario hábil" se calcula en CÓDIGO (no lo deduce el LLM). Caso real: a la 1am del
@@ -1723,15 +1758,22 @@ async function responderLLM(history: { role: string; content: string; model?: st
   if (!anthropic) return { text: null, toolCalls: [], tokensIn: 0, tokensOut: 0, cacheRead: 0, cacheWrite: 0 };
   // La API exige que el primer mensaje sea del usuario: descarta "assistant" al inicio
   // (puede pasar si un asesor escribió primero).
-  const hist = [...history];
+  let hist = [...history];
   while (hist.length && hist[0].role === "assistant") hist.shift();
-  const esNuevo = hist.length <= 1;
-  const ctx = esNuevo
+  const ahoraMs = Date.now();
+  // v61.5 — corte de sesión: la conversación ANTERIOR (hueco > SESION_GAP_DIAS) no entra al contexto; en su
+  // lugar va una nota. Antes el modelo leía el chat del mes pasado y lo trataba como parte del de hoy.
+  const corte = cortarSesionVieja(hist, ahoraMs, SESION_GAP_DIAS);
+  hist = corte.hist;
+  while (hist.length && hist[0].role === "assistant") hist.shift();  // el corte puede dejar un assistant primero
+  const esNuevo = hist.length <= 1 && !corte.huboAnterior;
+  const ctx = corte.huboAnterior
+    ? `\n\nCONTEXTO INTERNO: Cliente CONOCIDO que REGRESA — su conversación anterior terminó hace ${corte.diasDesde ?? "varios"} días y NO está incluida aquí (es un tema CERRADO). Trata el mensaje de hoy como una consulta NUEVA: no retomes ni supongas temas, productos ni acuerdos de aquella vez. Si el cliente menciona algo de esa conversación que no puedes ver, pídele el dato con naturalidad (el modelo, el número de pedido) o deriva a un asesor — NUNCA adivines a qué se refiere. No repitas la bienvenida de contacto nuevo (ya nos conoce).`
+    : esNuevo
     ? "\n\nCONTEXTO INTERNO: Es la PRIMERA interacción registrada de este contacto (aplica bienvenida + presentación una sola vez)."
     : "\n\nCONTEXTO INTERNO: Contacto con conversación ya en curso (NO repitas bienvenida ni presentación; ve al grano).";
   // v22 — conciencia de horario: si estamos fuera del horario de atención, el bot sigue ayudando
   // con lo automático pero aclara cuándo responde un asesor (sin prometer respuesta humana inmediata).
-  const ahoraMs = Date.now();
   const hh = horarioPanama();
   // v36 — el próximo horario hábil va CALCULADO (no lo deduce el LLM): a la 1am del martes decía
   // "miércoles 1 de julio" en vez de "hoy a las 9am". Se inyecta TAL CUAL para que no lo recalcule.
@@ -2046,7 +2088,7 @@ Deno.serve(async (req) => {
       const diag = await inventarioSelfTest(pid);
       return Response.json({ selftest: "inventario", ...diag, ts: new Date().toISOString() });
     }
-    return Response.json({ status: "ok", function: "copilot-webhook", version: "v61.4-stock-emoji", mode: MODE, mode_raw: MODE_RAW, model: MODEL, llm_configured: !!anthropic, wati_send_configured: !!(WATI_API_TOKEN && WATI_API_BASE), inventario_configurado: !!(SHOPIFY_ADMIN_TOKEN && SHOPIFY_ADMIN_API_BASE), resolve_configured: !!RESOLVE_SECRET, webhook_key_es_default: WEBHOOK_KEY_ES_DEFAULT, handoff_assist_min: HANDOFF_ASSIST_MIN, handoff_cold_hours: HANDOFF_COLD_HOURS, debounce_ms: DEBOUNCE_MS, busqueda_shadow: BUSQUEDA_SHADOW, busqueda_mcp: BUSQUEDA_MCP, busqueda_mcp_limit: BUSQUEDA_MCP_LIMIT, live_targets: MODE === "live" ? (LIVE_ALL ? "all" : LIVE_ALLOWLIST.length) : 0, ts: new Date().toISOString() });
+    return Response.json({ status: "ok", function: "copilot-webhook", version: "v61.5-corte-sesion", mode: MODE, mode_raw: MODE_RAW, model: MODEL, llm_configured: !!anthropic, wati_send_configured: !!(WATI_API_TOKEN && WATI_API_BASE), inventario_configurado: !!(SHOPIFY_ADMIN_TOKEN && SHOPIFY_ADMIN_API_BASE), resolve_configured: !!RESOLVE_SECRET, webhook_key_es_default: WEBHOOK_KEY_ES_DEFAULT, handoff_assist_min: HANDOFF_ASSIST_MIN, handoff_cold_hours: HANDOFF_COLD_HOURS, debounce_ms: DEBOUNCE_MS, sesion_gap_dias: SESION_GAP_DIAS, busqueda_shadow: BUSQUEDA_SHADOW, busqueda_mcp: BUSQUEDA_MCP, busqueda_mcp_limit: BUSQUEDA_MCP_LIMIT, live_targets: MODE === "live" ? (LIVE_ALL ? "all" : LIVE_ALLOWLIST.length) : 0, ts: new Date().toISOString() });
   }
   if (req.method !== "POST") return Response.json({ error: "method_not_allowed" }, { status: 405 });
   if (url.searchParams.get("key") !== WEBHOOK_KEY) return Response.json({ error: "forbidden" }, { status: 403 });

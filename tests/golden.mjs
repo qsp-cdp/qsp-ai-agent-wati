@@ -82,6 +82,7 @@ const esComboTitulo = extraerFuncion("esComboTitulo");
 const clavesFamilia = extraerFuncion("clavesFamilia");
 const tipoPedido = extraerFuncion("tipoPedido");
 const tituloDeTipo = extraerFuncion("tituloDeTipo");
+const cortarSesionVieja = extraerFuncion("cortarSesionVieja");
 const rerankearCombos = extraerFuncion("rerankearCombos");
 const SYSTEM_PROMPT = extraerSystemPrompt();
 
@@ -914,6 +915,43 @@ caso("v61.3: la ráfaga concatenada SÍ lo dispara", INTERRUPT_RE.test("Rreyes@r
 caso("v61.3: anti-interrupción cableada sobre la ráfaga", /const rafaga = await textoDeRafagaSinResponder\(conv\.id, texto\)/.test(src) && /if \(INTERRUPT_RE\.test\(rafaga\)\)/.test(src));
 caso("v61.3: la ráfaga corta en la última respuesta y por tiempo (no deja al bot mudo)", /if \(m\.role !== "user"\) break;/.test(src) && /3 \* 60 \* 1000/.test(src));
 caso("v61.3: telemetría distingue si lo cazó la ráfaga", /por_rafaga: !INTERRUPT_RE\.test\(texto\)/.test(src));
+
+// --- v61.5: corte de sesión (la conversación del mes pasado no entra al contexto) -----------------
+console.log("v61.5 corte de sesión");
+// Reporte real: el bot leía un chat de hace un mes y lo trataba como parte de la conversación de HOY
+// (las marcas de fecha de v32 no bastaban). El corte es determinista: hueco > N días = sesión anterior.
+const AHORA = Date.UTC(2026, 7, 5, 16, 0, 0); // referencia fija (no Date.now(): el test debe ser estable)
+const msDia = 86400000;
+const msg = (diasAtras, role = "user", content = "…") =>
+  ({ role, content, created_at: new Date(AHORA - diasAtras * msDia).toISOString() });
+
+// mes pasado (9 msgs) + hoy (1) → solo hoy entra; se reporta hace ~30 días
+const cMes = cortarSesionVieja([...Array.from({ length: 9 }, (_, i) => msg(30 + i * 0.01)), msg(0)], AHORA, 7);
+caso("v61.5: chat del mes pasado se recorta (queda solo el de hoy)", cMes.hist.length === 1 && cMes.huboAnterior === true);
+caso("v61.5: reporta hace ~30 días para la nota", cMes.diasDesde >= 29 && cMes.diasDesde <= 31);
+// ayer + hoy → se conserva (la continuidad de v32 sigue intacta)
+const cAyer = cortarSesionVieja([msg(1.2), msg(1.1, "assistant"), msg(0)], AHORA, 7);
+caso("v61.5: ayer + hoy NO se corta (continuidad v32)", cAyer.hist.length === 3 && cAyer.huboAnterior === false);
+// cadena CONTINUA que cruza 10 días (mensajes diarios) → no se corta (el hueco es entre consecutivos)
+const cCadena = cortarSesionVieja(Array.from({ length: 10 }, (_, i) => msg(9 - i)), AHORA, 7);
+caso("v61.5: negociación continua de 10 días NO se corta", cCadena.hist.length === 10 && !cCadena.huboAnterior);
+// borde del umbral: hueco de 8 días corta; de 6 no
+caso("v61.5: hueco de 8 días corta", cortarSesionVieja([msg(8.5), msg(0)], AHORA, 7).huboAnterior === true);
+caso("v61.5: hueco de 6 días no corta", cortarSesionVieja([msg(6), msg(0)], AHORA, 7).huboAnterior === false);
+// defensas
+caso("v61.5: umbral 0 = apagado", cortarSesionVieja([msg(60), msg(0)], AHORA, 0).huboAnterior === false);
+caso("v61.5: nunca deja el historial vacío", cortarSesionVieja([msg(40), msg(39.9)], AHORA, 7).hist.length >= 1);
+caso("v61.5: created_at null no rompe la cadena", (() => {
+  const r = cortarSesionVieja([msg(0.2), { role: "user", content: "x", created_at: null }, msg(0)], AHORA, 7);
+  return r.hist.length === 3 && !r.huboAnterior;
+})());
+caso("v61.5: historial vacío/1 mensaje pasa tal cual", cortarSesionVieja([], AHORA, 7).hist.length === 0 && cortarSesionVieja([msg(0)], AHORA, 7).huboAnterior === false);
+// wiring en el source real
+caso("v61.5: cableado en responderLLM (cubre flujo normal y asistencia)", /const corte = cortarSesionVieja\(hist, ahoraMs, SESION_GAP_DIAS\)/.test(src) && /hist = corte\.hist;/.test(src));
+caso("v61.5: nota de cliente que REGRESA (tema cerrado, no adivinar)", /Cliente CONOCIDO que REGRESA/.test(src) && /NUNCA adivines a qué se refiere/.test(src));
+caso("v61.5: el que regresa NO recibe bienvenida de nuevo", /No repitas la bienvenida de contacto nuevo/.test(src) && /hist\.length <= 1 && !corte\.huboAnterior/.test(src));
+caso("v61.5: env COPILOT_SESION_GAP_DIAS (default 7, clamp 0-90)", /COPILOT_SESION_GAP_DIAS/.test(src) && /Math\.max\(0, Math\.min\(n, 90\)\) : 7/.test(src));
+caso("v61.5: healthcheck expone sesion_gap_dias", /sesion_gap_dias: SESION_GAP_DIAS/.test(src));
 
 // --- resumen --------------------------------------------------------------------------------------
 console.log(`\n${ok} OK, ${mal} FALLA${mal === 1 ? "" : "S"}`);

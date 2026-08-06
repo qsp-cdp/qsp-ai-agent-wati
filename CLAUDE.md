@@ -19,7 +19,22 @@ equipo humano: contesta preguntas generales, indica disponibilidad/stock y da pr
 con certeza, y calla/deriva cuando es mejor que responda un humano. Tienda:
 **quickservicepanama.com** (suministros de impresión y tecnología en Panamá).
 
-## Estado actual (2026-08-04)
+## Estado actual (2026-08-06)
+- **EN EL REPO, LISTO PARA DESPLEGAR: v61.5 (`v61.5-corte-sesion`).** Reporte real: el bot leía un chat de
+  hace un MES (el fetch trae "los últimos 10" sin importar la edad) y lo trataba como parte de la
+  conversación de HOY — las marcas de fecha de v32 no bastaban (confiar en que el modelo ignore texto que
+  tiene delante es frágil). Fix determinista en CÓDIGO: **`cortarSesionVieja`** (pura) — camina del mensaje
+  más nuevo hacia atrás encadenando por cercanía; el primer hueco mayor a **`COPILOT_SESION_GAP_DIAS`**
+  (default **7**, 0=off, clamp 0-90, healthcheck `sesion_gap_dias`) corta la sesión: la conversación
+  anterior NO entra al contexto. En su lugar va una nota de CONTEXTO INTERNO: "cliente CONOCIDO que REGRESA,
+  su conversación anterior terminó hace N días y NO está incluida (tema CERRADO) — consulta NUEVA, no
+  retomes ni supongas temas/productos de aquella vez; si menciona algo que no ves, pide el dato o deriva;
+  NO repitas la bienvenida de contacto nuevo". Cableado DENTRO de `responderLLM` (cubre flujo normal y
+  asistencia). Lo que se CONSERVA: ayer/anteayer (continuidad v32) y una negociación CONTINUA que cruza
+  semanas (el hueco se mide entre mensajes consecutivos, no contra hoy). Defensas: nunca deja el historial
+  vacío (bot mudo), `created_at` null no rompe la cadena, `esNuevo` no se dispara para el que regresa.
+  Sin migración; NO toca SYSTEM_PROMPT (la nota es volátil → no re-escribe el caché v35). 501 golden +
+  21 node tests. Deploy: `.\deploy.ps1 copilot-webhook`.
 - **EN EL REPO, LISTO PARA DESPLEGAR (junto con v61.3): v61.4 (`v61.4-stock-emoji`).** Pedido de Gerencia: que
   la DISPONIBILIDAD se vea de un vistazo en WhatsApp (es el dato que decide la compra y se perdía dentro del
   bloque de texto). El emoji va **en CÓDIGO** (`stockTexto`), no en el prompt, para que salga siempre igual y
