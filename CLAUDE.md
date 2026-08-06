@@ -20,7 +20,7 @@ con certeza, y calla/deriva cuando es mejor que responda un humano. Tienda:
 **quickservicepanama.com** (suministros de impresión y tecnología en Panamá).
 
 ## Estado actual (2026-08-06)
-- **EN EL REPO, LISTO PARA DESPLEGAR: v62 (`v62-ucp-endpoint`).** Migración del endpoint del catálogo ANTES
+- **🚀 EN VIVO (desplegado y FLIPEADO 06-ago; healthcheck `catalog_mcp_url:…/api/ucp/mcp` + `ucp_profile_url` sirviendo; discovery verificado con curl real: perfil fetcheado por Shopify → `status:success` + TN-830XL #1; el endpoint UCP además expone `variants[].sku` — útil para QBO): v62 (`v62-ucp-endpoint`).** Migración del endpoint del catálogo ANTES
   del sunset: el legacy `/api/mcp` que usa v60 **muere ~31-ago-2026**; el nuevo `/api/ucp/mcp` exige un
   **perfil de agente hosteado** que Shopify FETCHEA en el discovery (`meta.ucp-agent.profile`; probado contra
   la tienda: sin perfil → 422, URL inalcanzable → `profile_unreachable`, sin token). Tres piezas: (1) el
@@ -34,7 +34,7 @@ con certeza, y calla/deriva cuando es mejor que responda un humano. Tienda:
   `ucp_profile_url`. Rollback: volver el secreto al legacy (vive hasta ~31-ago). 511 golden + 21 node tests.
   **Secuencia:** deploy → curl del perfil (JSON) → curl `/api/ucp/mcp` con el perfil real (products = discovery
   OK) → flip del secreto + redeploy → smoke test del bot → confirmar `busqueda_mcp_fallo` en 0.
-- **EN EL REPO, LISTO PARA DESPLEGAR: v61.5 (`v61.5-corte-sesion`).** Reporte real: el bot leía un chat de
+- **🚀 EN VIVO (desplegado 06-ago junto con v62; healthcheck `sesion_gap_dias:7`): v61.5 (`v61.5-corte-sesion`).** Reporte real: el bot leía un chat de
   hace un MES (el fetch trae "los últimos 10" sin importar la edad) y lo trataba como parte de la
   conversación de HOY — las marcas de fecha de v32 no bastaban (confiar en que el modelo ignore texto que
   tiene delante es frágil). Fix determinista en CÓDIGO: **`cortarSesionVieja`** (pura) — camina del mensaje
