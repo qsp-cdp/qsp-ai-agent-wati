@@ -20,7 +20,7 @@ con certeza, y calla/deriva cuando es mejor que responda un humano. Tienda:
 **quickservicepanama.com** (suministros de impresión y tecnología en Panamá).
 
 ## Estado actual (2026-08-06)
-- **EN EL REPO, LISTO PARA DESPLEGAR: v63.2 (`v63.2-folleto-url-turno`).** La telemetría del re-test
+- **🚀 EN VIVO (desplegado 07-ago, healthcheck `version:v63.2-folleto-url-turno`; falta el re-test de "tipos de papel" → `hallo:true`): v63.2 (`v63.2-folleto-url-turno`).** La telemetría del re-test
   destapó el último hueco: el turno 1 (dúplex) funcionó completo (`ok:true`, `tokens_in:10542` — la
   sub-llamada LEYÓ el folleto y respondió honesto `hallo:false`), pero el turno 2 (tipos de papel, que SÍ
   están en el folleto) dio `ficha_http_404` en 164ms: **el modelo escribió la URL de memoria** (los
