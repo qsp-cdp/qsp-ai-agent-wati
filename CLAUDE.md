@@ -20,7 +20,7 @@ con certeza, y calla/deriva cuando es mejor que responda un humano. Tienda:
 **quickservicepanama.com** (suministros de impresión y tecnología en Panamá).
 
 ## Estado actual (2026-08-06)
-- **🚀 EN VIVO (desplegado 07-ago, healthcheck `version:v63.2-folleto-url-turno`; falta el re-test de "tipos de papel" → `hallo:true`): v63.2 (`v63.2-folleto-url-turno`).** La telemetría del re-test
+- **🚀 EN VIVO Y VERIFICADO CON TRÁFICO REAL (desplegado 07-ago): v63.2 (`v63.2-folleto-url-turno`).** Los 3 caminos probados en producción: (a) **dato hallado** — consulta real por el plotter HP DesignJet T850 → `hallo:true`, 9,2s, 8.743 tokens in / 119 out (respuesta sustanciosa del folleto); (b) **dato ausente → honesto** — Smart Tank 750 escaneo dúplex → `hallo:false` tras LEER el folleto (10.542 tokens), el bot lo dijo y derivó sin inventar; (c) **URL inventada** → el `ficha_http_404` del 06-ago, cerrado por el fix auto-corregible. Costo medido: ~4-9s y ~9-10k tokens por consulta (~$0.03), solo cuando alguien pregunta specs. La telemetría del re-test
   destapó el último hueco: el turno 1 (dúplex) funcionó completo (`ok:true`, `tokens_in:10542` — la
   sub-llamada LEYÓ el folleto y respondió honesto `hallo:false`), pero el turno 2 (tipos de papel, que SÍ
   están en el folleto) dio `ficha_http_404` en 164ms: **el modelo escribió la URL de memoria** (los
