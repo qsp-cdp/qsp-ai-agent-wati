@@ -38,11 +38,19 @@ con certeza, y calla/deriva cuando es mejor que responda un humano. Tienda:
   llega marcado **`[nota de voz] …`**, se trata como mensaje normal PERO puede errar en CÓDIGOS DE MODELO
   → buscar igual, y si no calza CONFIRMAR el modelo antes de cotizar, nunca inventarlo; si menciona
   pago/RUC/factura, la anti-interrupción aplica igual. Costo real ~$0.20/semana (44 audios). 607 golden +
-  21 node tests. **Secuencia:** `.\deploy.ps1 copilot-webhook` (no-op) → `npx supabase secrets set
-  OPENAI_API_KEY=… COPILOT_STT=shadow --project-ref jbigmlcalcwiphqeudxd` → **una semana midiendo**
-  (`select detail->>'texto', detail->>'ms' from job_log where action='audio_transcrito'` vs. el audio real
-  en WATI: ¿entiende español panameño, ruido de local, códigos?) → si la calidad convence,
-  `COPILOT_STT=live`. Rollback: `COPILOT_STT=off` (vuelve al puente).
+  21 node tests. **✅ CALIDAD VALIDADA CON AUDIOS REALES (13-ago) — el shadow de una semana quedó
+  SUPERSEDED:** el autotest **`?key=…&selftest=stt&url=<audio *.wati.io>`** (gated por key, patrón v44)
+  transcribe audios YA recibidos (sus URLs quedan en `job_log evento_sin_texto` / `messages.media_url`) →
+  medición en minutos en vez de una semana. **5/5 perfectas**, 2,0-4,5 s: *"Tienen tinta HP 668"* (CÓDIGO
+  de modelo correcto — la duda principal) · *"…yo soy de Aguadulce, no puedo retirar en tienda, tiene que
+  ser enviado"* (lugar del interior) · *"deben pasar mañana a retirarlo"* · un ack (*"mil gracias,
+  perfecto…"*) · y un audio de 2 min con un **lead B2B completo** (Canon láser color + tóner 125 + cables
+  + teléfonos) que se había quedado SIN RESPUESTA — ese solo justifica la feature. **Secuencia:**
+  `.\deploy.ps1 copilot-webhook` (no-op) → setear `OPENAI_API_KEY` (⚠️ por dashboard o con el par ENTRE
+  COMILLAS y `--project-ref` PRIMERO: PowerShell parte la línea y el CLI toma el project-ref como
+  secreto) → probar 3-5 audios con el autotest → `COPILOT_STT=live`. Rollback: `COPILOT_STT=off` (vuelve
+  al puente). **Seguridad (hallazgo de la prueba real):** OpenAI ECHOA la API key en el mensaje de error
+  de un 401 → el cuerpo se enmascara antes de ir a `job_log`.
 - **EN EL REPO, LISTO PARA DESPLEGAR: v67 (`v67-audio-puente`) — el "v64a" del backlog, GO de Gerencia
   13-ago.** Del análisis ML del 13-ago: **44 notas de voz/semana quedaban en SILENCIO total** (caían a
   `evento_sin_texto` y nadie acusaba recibo — la peor UX). Quick win SIN transcripción ni dependencias:
