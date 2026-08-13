@@ -20,7 +20,7 @@ con certeza, y calla/deriva cuando es mejor que responda un humano. Tienda:
 **quickservicepanama.com** (suministros de impresión y tecnología en Panamá).
 
 ## Estado actual (2026-08-13)
-- **EN EL REPO, LISTO PARA DESPLEGAR: v64 (`v64-precio-oferta`).** Pedido de Gerencia (13-ago): destacar
+- **🚀 EN VIVO Y VERIFICADO (desplegado 13-ago; caso real: Canon Pixma G4170 → "en oferta 🏷️: antes $209.95, ahora $174.95 + ITBMS = $187.20 (ahorra $35.00)"): v64 (`v64-precio-oferta`).** Pedido de Gerencia (13-ago): destacar
   cuando el artículo está en PRECIO DE OFERTA (comparativo). El dato ya viajaba: `compare_at_price_min` en
   suggest.json y `list_price_range` en el UCP (minor units, 0 = sin lista). Detección EN CÓDIGO
   (`datosOferta`, pura): hay oferta SOLO si lista > precio ESTRICTO — **guardia de dato sucio** (el catálogo
