@@ -20,6 +20,25 @@ con certeza, y calla/deriva cuando es mejor que responda un humano. Tienda:
 **quickservicepanama.com** (suministros de impresión y tecnología en Panamá).
 
 ## Estado actual (2026-08-13)
+- **EN EL REPO, LISTO PARA DESPLEGAR: v66 (`v66-burbujas`).** Pedido de Gerencia (13-ago, diseño aprobado
+  "Está bien el orden"): la cotización de UN producto sale en **2-3 BURBUJAS encadenadas** como chatea un
+  humano — (1) frase corta + TÍTULO + link pelado (el preview de WhatsApp pone la FOTO solo: sin API de
+  media), (2) precio con ITBMS u OFERTA 🏷️, (3) stock con su emoji + pregunta de cierre. El modelo marca
+  los cortes con **`[[---]]`** (regla RESPUESTA EN PARTES: SOLO un producto específico; NUNCA en listas,
+  calcular_cotizacion, info de tienda/tarifas, estado de pedido ni ASISTENCIA); el CÓDIGO parte
+  (**`partirMensaje`**, pura: sin marcador → 1 parte, vacíos fuera, cola FUSIONADA al pasar el tope de 3)
+  y envía. **Invariante anti-eco intacto (el riesgo serio del diseño):** una fila POR burbuja insertada
+  ANTES de cada envío — 3 burbujas contra 1 fila = 3 ecos huérfanos = handoff falso; tokens/latencia/
+  tool_calls en la 1ª fila; envío secuencial con 400ms; fallo a mitad ABORTA el resto (mejor título sin
+  precio que burbuja sin fila) con `envio_fallido` + resumen `respuesta_burbujas`. **Env-gated
+  `COPILOT_BURBUJAS`** (default OFF → deploy no-op: el marcador se RE-UNE y sale UN mensaje idéntico al de
+  hoy; también se re-une siempre en sombra y asistencia — `[[---]]` jamás llega al cliente). Healthcheck
+  `burbujas`. Reescribe el caché v35 (regla nueva → re-warm). 581 golden + 21 node tests. **Deploy:**
+  `.\deploy.ps1 copilot-webhook` (no-op con flag OFF) → smoke → setear `COPILOT_BURBUJAS=1` (secretos;
+  reinicia solo) → cotizar un producto real → verificar 3 filas en `messages`, `respuesta_burbujas` en
+  job_log y CERO `mensaje_humano` fantasma (anti-eco). Rollback: borrar el secreto (sin redeploy).
+  **Decisiones de Gerencia (13-ago):** canales de pago por el bot **NO** (el humano debe verificar antes
+  de que el cliente pague); audios (v64a) = LO PRÓXIMO tras v66; regla internacional (v64b) POSPUESTA.
 - **🚀 PARTE 2 EN VIVO (13-ago): puente redesplegado (`shipday-status`/`wati-address`/`wati-order`/
   `shopify-webhook`) — DERIVA repo↔prod CERRADA.** Desde hoy prod corre EXACTAMENTE lo del repo (rama de
   trabajo): el parche F4/v31/v32 + es_correccion CONSERVADOS, más los supersets del repo que prod había

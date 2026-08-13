@@ -1098,6 +1098,29 @@ caso("v65: pareceFuncionEnTexto conoce las 8 tools", pareceFuncionEnTexto('llamo
 // #13 — sin voseo residual
 caso("v65: sin voseo residual (sabés)", !/sabés/.test(SYSTEM_PROMPT));
 
+// --- v66: respuesta en partes (burbujas) ----------------------------------------------------------
+console.log("v66 burbujas");
+const partirMensaje = extraerFuncion("partirMensaje");
+caso("v66: 3 partes con el marcador (título+link / precio / stock)", (() => {
+  const p = partirMensaje("Claro 👍 *Tóner Brother TN-830XL*\nhttps://quickservicepanama.com/products/x\n[[---]]\n*$116.00 + ITBMS (7%) = $124.12*\n[[---]]\n✅ 7 unidades disponibles. ¿Se lo cotizo?");
+  return p.length === 3 && p[0].includes("TN-830XL") && p[1].includes("124.12") && p[2].startsWith("✅");
+})());
+caso("v66: sin marcador → 1 parte intacta", (() => { const p = partirMensaje("Hola, ¿en qué le ayudo?"); return p.length === 1 && p[0] === "Hola, ¿en qué le ayudo?"; })());
+caso("v66: segmentos vacíos fuera (marcador al inicio/fin/duplicado)", (() => { const p = partirMensaje("[[---]]\nuno\n[[---]][[---]]\ndos\n[[---]]"); return p.length === 2 && p[0] === "uno" && p[1] === "dos"; })());
+caso("v66: más partes que el tope → la COLA se fusiona en la última (no se pierde texto)", (() => { const p = partirMensaje("a[[---]]b[[---]]c[[---]]d"); return p.length === 3 && p[0] === "a" && p[1] === "b" && p[2] === "c\n\nd"; })());
+caso("v66: re-unión = texto limpio sin marcadores (camino flag OFF / sombra / asistencia)", (() => { const p = partirMensaje("a[[---]]b").join("\n\n"); return p === "a\n\nb" && !p.includes("[[---]]"); })());
+caso("v66: marcador con espacios alrededor también corta", partirMensaje("a  [[---]]  b").length === 2);
+// prompt
+caso("v66: SYSTEM_PROMPT tiene la regla RESPUESTA EN PARTES (solo UN producto)", /RESPUESTA EN PARTES \(BURBUJAS\)/.test(SYSTEM_PROMPT) && /SOLO al cotizar UN producto específico/.test(SYSTEM_PROMPT));
+caso("v66: el marcador documentado EXACTO y con tope de partes", SYSTEM_PROMPT.includes("[[---]]") && /máximo 2 veces \(3 partes\)/.test(SYSTEM_PROMPT));
+caso("v66: prohíbe el marcador en listas/cotizaciones múltiples/asistencia", /NUNCA uses el marcador en/.test(SYSTEM_PROMPT) && /ni en MODO ASISTENCIA/.test(SYSTEM_PROMPT));
+// wiring
+caso("v66: gateado por COPILOT_BURBUJAS (default OFF)", /const BURBUJAS = \(Deno\.env\.get\("COPILOT_BURBUJAS"\) \?\? ""\)\.trim\(\) === "1"/.test(src));
+caso("v66: una fila POR burbuja, insertada ANTES de enviar (anti-eco v13/v21)", /fase: "burbuja_insert"/.test(src) && /content: partes\[bi\]/.test(src) && (() => { const iIns = src.indexOf("content: partes[bi]"); const iSend = src.indexOf("const ok = await enviarWati(waId, partes[bi])"); return iIns > -1 && iSend > -1 && iIns < iSend; })());
+caso("v66: el marcador se re-une en flujo normal Y asistencia (jamás llega al cliente)", /salida = partes\.join\("\\n\\n"\)/.test(src) && /salida = partirMensaje\(salida\)\.join\("\\n\\n"\)/.test(src));
+caso("v66: fallo a mitad ABORTA el resto + telemetría respuesta_burbujas", /sinEnviar = partes\.length - bi; break;/.test(src) && /"respuesta_burbujas"/.test(src));
+caso("v66: healthcheck expone burbujas", /burbujas: BURBUJAS/.test(src));
+
 // --- resumen --------------------------------------------------------------------------------------
 console.log(`\n${ok} OK, ${mal} FALLA${mal === 1 ? "" : "S"}`);
 if (mal > 0) process.exit(1);

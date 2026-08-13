@@ -500,6 +500,13 @@ const SESION_GAP_DIAS = (() => {
   return Number.isFinite(n) ? Math.max(0, Math.min(n, 90)) : 7;
 })();
 
+// v66 — BURBUJAS: la cotización de UN producto sale en 2-3 mensajes cortos encadenados (como chatea un
+// humano): título+link (el preview de WhatsApp pone la foto sola), precio/oferta, stock+cierre. El modelo
+// marca los cortes con [[---]] (regla RESPUESTA EN PARTES del prompt); el CÓDIGO parte y envía
+// (partirMensaje). Default OFF: sin el flag los marcadores se re-unen y sale UN mensaje idéntico al de
+// siempre → deploy no-op, flip por secreto, rollback instantáneo (el ADN de COPILOT_MODE).
+const BURBUJAS = (Deno.env.get("COPILOT_BURBUJAS") ?? "").trim() === "1";
+
 // Piloto gradual: en live, SOLO se envía a estos wa_id. Vacío = no se envía a nadie (sigue
 // registrando en sombra); "all"/"*" = todos. Evita ir a live total por accidente.
 const LIVE_RAW = (Deno.env.get("COPILOT_LIVE_ALLOWLIST") ?? "").trim().toLowerCase();
@@ -654,6 +661,7 @@ REGLA DE ORO — precio, stock y promociones
 - STOCK / CANTIDAD: indica la disponibilidad usando el campo "stock" que devuelve la tool, TAL CUAL — CONSERVANDO el emoji con el que viene (✅ disponible, ⚠️ stock bajo, ❌ sin stock, 🔎 por verificar): ese emoji hace que la disponibilidad se vea de un vistazo en el chat. No lo cambies por otro ni lo quites. Si dice "X unidades", dilo; si dice "stock bajo — un asesor verifica…", dilo así. NUNCA inventes ni adivines una cantidad: di solo lo que aparezca en ese campo "stock".
 - OFERTA / PRECIO REBAJADO: si el resultado trae oferta:true, el artículo está en PRECIO DE OFERTA — destácalo al cotizarlo usando SOLO los valores de la tool: "está en OFERTA 🏷️: antes B/.[precio_antes_usd], ahora B/.[precio_usd] + ITBMS (7%) = B/.[total_con_itbms] (ahorra B/.[ahorro_usd])". Si el resultado NO trae oferta:true, NUNCA digas que está en oferta ni insinúes descuentos; NUNCA calcules el ahorro ni el porcentaje de memoria; y NUNCA prometas hasta cuándo dura la oferta (no lo sabemos — si preguntan, un asesor confirma).
 - SIN STOCK — AVISO AUTOMÁTICO: si el campo "stock" dice "sin stock", además de indicar que un asesor puede confirmar el reingreso, comparte el link del producto y dile al cliente que EN ESA PÁGINA puede activar el botón de aviso de disponibilidad ("Avísame cuando esté disponible") para recibir una notificación automática apenas el producto reingrese. No prometas fechas de reingreso (eso lo confirma un asesor).
+- RESPUESTA EN PARTES (BURBUJAS) — SOLO al cotizar UN producto específico: cuando presentes UN solo producto con datos de buscar_producto, estructura la respuesta en 2-3 partes separadas por el marcador [[---]] en su propia línea: (1) una frase corta de contexto + el TÍTULO del producto y su link pelado — nada más en esa parte, así WhatsApp muestra la tarjeta con la foto; [[---]] (2) el precio con ITBMS (o el bloque de OFERTA 🏷️ si aplica), con los valores exactos de la tool; [[---]] (3) el stock (conservando su emoji) y una pregunta corta de cierre. El marcador va EXACTO como [[---]] y máximo 2 veces (3 partes). NUNCA uses el marcador en: listas o comparaciones de VARIOS productos, respuestas de categoría, cotizaciones con calcular_cotizacion, info de tienda/envíos/tarifas, estado de pedidos, ni en MODO ASISTENCIA — todas esas van en UN solo mensaje, como siempre.
 - Si la tool no encuentra el producto, o piden algo fuera de catálogo: discúlpate breve e indica que un asesor confirmará disponibilidad y opciones.
 
 BÚSQUEDA DE PRODUCTOS (cómo usar buscar_producto)
@@ -2000,6 +2008,23 @@ function limpiarWhatsApp(t: string): string {
     .replace(new RegExp("\\*\\*([^*\\n]+)\\*\\*", "g"), "*$1*");
 }
 
+// v66 — parte una respuesta en burbujas por el marcador [[---]] (con o sin espacios/saltos alrededor).
+// Pura y defensiva: sin marcador → 1 parte; segmentos vacíos se descartan; más de maxPartes → la COLA se
+// FUSIONA en la última parte (nunca se pierde texto); todo vacío → el texto original en 1 parte. El
+// marcador JAMÁS debe llegar al cliente: todos los caminos de envío pasan por aquí (partir o re-unir).
+function partirMensaje(texto: string, maxPartes = 3): string[] {
+  const crudas = String(texto ?? "").split(/\s*\[\[-{3}\]\]\s*/g);
+  const partes = [];
+  for (const c of crudas) { const t = String(c).trim(); if (t) partes.push(t); }
+  if (!partes.length) return [String(texto ?? "").trim()];
+  if (partes.length > maxPartes) {
+    const cabeza = partes.slice(0, maxPartes - 1);
+    cabeza.push(partes.slice(maxPartes - 1).join("\n\n"));
+    return cabeza;
+  }
+  return partes;
+}
+
 // v44 — detecta cuando el modelo ESCRIBE la llamada a una herramienta como TEXTO (en vez de invocarla de
 // forma nativa) y se filtraría al cliente como XML crudo. Visto en Sonnet 5 (raro): <invoke
 // name="buscar_producto"><parameter name="consulta">…</parameter></invoke>. Cubre las variantes con y sin
@@ -2258,7 +2283,7 @@ Deno.serve(async (req) => {
       const diag = await inventarioSelfTest(pid);
       return Response.json({ selftest: "inventario", ...diag, ts: new Date().toISOString() });
     }
-    return Response.json({ status: "ok", function: "copilot-webhook", version: "v65-endurecimiento", mode: MODE, mode_raw: MODE_RAW, model: MODEL, llm_configured: !!anthropic, wati_send_configured: !!(WATI_API_TOKEN && WATI_API_BASE), inventario_configurado: !!(SHOPIFY_ADMIN_TOKEN && SHOPIFY_ADMIN_API_BASE), resolve_configured: !!RESOLVE_SECRET, webhook_key_es_default: WEBHOOK_KEY_ES_DEFAULT, handoff_assist_min: HANDOFF_ASSIST_MIN, handoff_cold_hours: HANDOFF_COLD_HOURS, debounce_ms: DEBOUNCE_MS, sesion_gap_dias: SESION_GAP_DIAS, busqueda_shadow: BUSQUEDA_SHADOW, busqueda_mcp: BUSQUEDA_MCP, busqueda_mcp_limit: BUSQUEDA_MCP_LIMIT, catalog_mcp_url: CATALOG_MCP_URL, ucp_profile_url: UCP_PROFILE_URL, live_targets: MODE === "live" ? (LIVE_ALL ? "all" : LIVE_ALLOWLIST.length) : 0, ts: new Date().toISOString() });
+    return Response.json({ status: "ok", function: "copilot-webhook", version: "v66-burbujas", mode: MODE, mode_raw: MODE_RAW, model: MODEL, llm_configured: !!anthropic, wati_send_configured: !!(WATI_API_TOKEN && WATI_API_BASE), inventario_configurado: !!(SHOPIFY_ADMIN_TOKEN && SHOPIFY_ADMIN_API_BASE), resolve_configured: !!RESOLVE_SECRET, webhook_key_es_default: WEBHOOK_KEY_ES_DEFAULT, handoff_assist_min: HANDOFF_ASSIST_MIN, handoff_cold_hours: HANDOFF_COLD_HOURS, debounce_ms: DEBOUNCE_MS, sesion_gap_dias: SESION_GAP_DIAS, burbujas: BURBUJAS, busqueda_shadow: BUSQUEDA_SHADOW, busqueda_mcp: BUSQUEDA_MCP, busqueda_mcp_limit: BUSQUEDA_MCP_LIMIT, catalog_mcp_url: CATALOG_MCP_URL, ucp_profile_url: UCP_PROFILE_URL, live_targets: MODE === "live" ? (LIVE_ALL ? "all" : LIVE_ALLOWLIST.length) : 0, ts: new Date().toISOString() });
   }
   if (req.method !== "POST") return Response.json({ error: "method_not_allowed" }, { status: 405 });
   if (url.searchParams.get("key") !== WEBHOOK_KEY) return Response.json({ error: "forbidden" }, { status: 403 });
@@ -2442,6 +2467,9 @@ Deno.serve(async (req) => {
             const linksTracked: Record<string, string> = {};
             const r = await responderLLM(history as any, false, null, false, waId, {}, linksTracked, true);
             let salida = r.text ? reaplicarTracking(limpiarWhatsApp(r.text), linksTracked) : null;
+            // v66 — en ASISTENCIA no hay burbujas (la regla lo prohíbe, pero si el modelo igual marcara
+            // cortes, el marcador se re-une aquí: JAMÁS debe llegar [[---]] al cliente).
+            if (salida) salida = partirMensaje(salida).join("\n\n");
             // v44 guard anti-fuga: si la tool-call se filtró como texto, no la enviamos (aquí un humano ya
             // tiene el caso → basta con no responder). Loggea para telemetría.
             if (salida && pareceFuncionEnTexto(salida)) { await log("fuga_tool_texto", false, { waId, fase: "asistencia", muestra: (r.text ?? "").slice(0, 200) }); salida = null; }
@@ -2584,22 +2612,55 @@ Deno.serve(async (req) => {
         // v21 (anti-eco duro): insertar la respuesta ANTES de enviarla por WATI. Así, cuando WATI
         // rebota el eco (owner=true), el anti-eco encuentra esta fila y NO lo guarda como mensaje de
         // asesor → se evita el handoff falso. El modo se registra optimista y se corrige si falla.
+        // v66 — BURBUJAS: el marcador [[---]] SIEMPRE se procesa aquí (jamás debe llegar al cliente).
+        // Sin flag, en sombra o con 1 sola parte → se re-une y sale UN mensaje idéntico al de siempre.
+        // Con flag + live + 2-3 partes → cada parte va como mensaje propio EN ORDEN, con SU PROPIA fila
+        // insertada ANTES de enviar: el anti-eco matchea por fila — 3 burbujas contra 1 sola fila serían
+        // 3 ecos huérfanos = handoff falso. Los detectores de abajo (ticket de promesa) ven el texto COMPLETO.
+        const partes = salida ? partirMensaje(salida) : [];
+        if (salida) salida = partes.join("\n\n");
         const quiereEnviar = !!(salida && liveAllowed(waId));
+        const enBurbujas = BURBUJAS && quiereEnviar && partes.length > 1;
         let modoFinal = quiereEnviar ? "live" : "shadow";
-        const insAsst = await sb.from("messages").insert({ conversation_id: conv.id, role: "assistant", content: salida, tool_calls: r.toolCalls.length ? r.toolCalls : null, mode: modoFinal, model: anthropic ? MODEL : null, tokens_in: r.tokensIn || null, tokens_out: r.tokensOut || null, cache_read_input_tokens: r.cacheRead || null, cache_creation_input_tokens: r.cacheWrite || null, latency_ms: Date.now() - t0 }).select("id");
-        // v65 — el invariante insert-antes-de-enviar (v21) solo vale si el insert LANDÓ: sin la fila, el eco
-        // del envío se guardaría como asesor fantasma y dispararía handoff falso. Insert fallido → NO enviar.
-        if (insAsst.error) { await log("error", false, { waId, fase: "respuesta_insert", error: String(insAsst.error.message ?? "").slice(0, 150) }); return; }
         let enviado = false;
-        if (quiereEnviar) {
-          enviado = await enviarWati(waId, salida);
-          if (!enviado) {
-            modoFinal = "shadow";
-            await sb.from("messages").update({ mode: "shadow" }).eq("id", insAsst.data?.[0]?.id);
-            // v65 — telemetría del envío fallido (clase de fallo silencioso v54: sin esto, un WATI caído se
-            // descubre días tarde mirando conversaciones a mano).
-            await log("envio_fallido", false, { waId, largo: salida ? salida.length : 0 });
+        if (!enBurbujas) {
+          const insAsst = await sb.from("messages").insert({ conversation_id: conv.id, role: "assistant", content: salida, tool_calls: r.toolCalls.length ? r.toolCalls : null, mode: modoFinal, model: anthropic ? MODEL : null, tokens_in: r.tokensIn || null, tokens_out: r.tokensOut || null, cache_read_input_tokens: r.cacheRead || null, cache_creation_input_tokens: r.cacheWrite || null, latency_ms: Date.now() - t0 }).select("id");
+          // v65 — el invariante insert-antes-de-enviar (v21) solo vale si el insert LANDÓ: sin la fila, el eco
+          // del envío se guardaría como asesor fantasma y dispararía handoff falso. Insert fallido → NO enviar.
+          if (insAsst.error) { await log("error", false, { waId, fase: "respuesta_insert", error: String(insAsst.error.message ?? "").slice(0, 150) }); return; }
+          if (quiereEnviar) {
+            enviado = await enviarWati(waId, salida);
+            if (!enviado) {
+              modoFinal = "shadow";
+              await sb.from("messages").update({ mode: "shadow" }).eq("id", insAsst.data?.[0]?.id);
+              // v65 — telemetría del envío fallido (clase de fallo silencioso v54: sin esto, un WATI caído se
+              // descubre días tarde mirando conversaciones a mano).
+              await log("envio_fallido", false, { waId, largo: salida ? salida.length : 0 });
+            }
           }
+        } else {
+          // v66 — una fila POR burbuja + envío secuencial con pausa corta (orden visual estable en
+          // WhatsApp). tokens/latencia/tool_calls van en la PRIMERA fila (fue UNA sola llamada al LLM).
+          // Si un insert o un envío falla se ABORTA el resto: mejor título sin precio que una burbuja
+          // sin fila (eco huérfano → handoff falso). Telemetría respuesta_burbujas con lo no enviado.
+          let sinEnviar = 0;
+          for (let bi = 0; bi < partes.length; bi++) {
+            const fila = await sb.from("messages").insert({ conversation_id: conv.id, role: "assistant", content: partes[bi], tool_calls: bi === 0 && r.toolCalls.length ? r.toolCalls : null, mode: "live", model: anthropic ? MODEL : null, tokens_in: bi === 0 ? (r.tokensIn || null) : null, tokens_out: bi === 0 ? (r.tokensOut || null) : null, cache_read_input_tokens: bi === 0 ? (r.cacheRead || null) : null, cache_creation_input_tokens: bi === 0 ? (r.cacheWrite || null) : null, latency_ms: bi === 0 ? (Date.now() - t0) : null }).select("id");
+            if (fila.error) {
+              await log("error", false, { waId, fase: "burbuja_insert", burbuja: bi + 1, error: String(fila.error.message ?? "").slice(0, 150) });
+              if (bi === 0) return; // como el camino normal: sin la primera fila no se envía nada
+              sinEnviar = partes.length - bi; break;
+            }
+            const ok = await enviarWati(waId, partes[bi]);
+            if (!ok) {
+              await sb.from("messages").update({ mode: "shadow" }).eq("id", fila.data?.[0]?.id);
+              await log("envio_fallido", false, { waId, largo: partes[bi].length, burbuja: bi + 1, de: partes.length });
+              sinEnviar = partes.length - bi; break;
+            }
+            enviado = true;
+            if (bi < partes.length - 1) await new Promise((res) => setTimeout(res, 400));
+          }
+          await log("respuesta_burbujas", sinEnviar === 0, { waId, partes: partes.length, sin_enviar: sinEnviar });
         }
         respondido = true; // v23: ya insertamos/enviamos la respuesta del bot
         // v52 — TICKET DE PROMESA: si la respuesta dejó algo sin resolver Y prometió seguimiento de un
