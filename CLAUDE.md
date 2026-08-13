@@ -43,7 +43,9 @@ con certeza, y calla/deriva cuando es mejor que responda un humano. Tienda:
   **❌ DESCARTADO CON EVIDENCIA (13-ago): WATI NO manda la transcripción por webhook.** La sonda
   `audio_shape` sobre una nota de voz REAL devolvió `text_len:0` y `claves_transcripcion:[]`; las 29
   claves del payload son fijas (`text`,`data`,`sourceUrl`,`mimeType`…) y ninguna trae texto transcrito —
-  la transcripción que se ve en el INBOX de WATI es de su panel, no del webhook. **No re-investigar**
+  la transcripción que se ve en el INBOX de WATI es de su panel, no del webhook. **Y es MANUAL: el asesor
+  tiene que hacer CLIC en un botón** (confirmado por Isaac) → no existe en el instante en que llega el
+  audio, no es automatizable y consume el tiempo humano que se quería ahorrar. **No re-investigar**
   (queda la sonda por si WATI cambia el shape). **Futuro (evaluación aparte):** transcripción real con STT
   externo (~$1/mes por 44 audios; Whisper) — el `media_url` ya se guarda para eso; el plan sería
   shadow-first (transcribir y loguear una semana SIN responder, para medir calidad con español panameño
