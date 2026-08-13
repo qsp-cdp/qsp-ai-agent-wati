@@ -1121,7 +1121,7 @@ caso("v66: el marcador se re-une en flujo normal Y asistencia (jamás llega al c
 caso("v66: fallo a mitad ABORTA el resto + telemetría respuesta_burbujas", /sinEnviar = partes\.length - bi; break;/.test(src) && /"respuesta_burbujas"/.test(src));
 caso("v66: healthcheck expone burbujas", /burbujas: BURBUJAS/.test(src) && /burbuja_ms: BURBUJA_MS/.test(src));
 // v66.1 — la pausa entre burbujas es tuneable por secreto (default 1000 ms, tope 5 s, 0 = sin pausa).
-caso("v66.1: pausa entre burbujas por COPILOT_BURBUJA_MS (default 1000)", /Deno\.env\.get\("COPILOT_BURBUJA_MS"\)/.test(src) && /Math\.min\(n, 5000\) : 1000/.test(src) && /BURBUJA_MS > 0\) await new Promise/.test(src));
+caso("v66.1: pausa entre burbujas por COPILOT_BURBUJA_MS (default 3000, elegido en vivo)", /Deno\.env\.get\("COPILOT_BURBUJA_MS"\)/.test(src) && /Math\.min\(n, 5000\) : 3000/.test(src) && /BURBUJA_MS > 0\) await new Promise/.test(src));
 
 // --- resumen --------------------------------------------------------------------------------------
 console.log(`\n${ok} OK, ${mal} FALLA${mal === 1 ? "" : "S"}`);

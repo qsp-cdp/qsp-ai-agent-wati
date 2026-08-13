@@ -506,12 +506,14 @@ const SESION_GAP_DIAS = (() => {
 // (partirMensaje). Default OFF: sin el flag los marcadores se re-unen y sale UN mensaje idéntico al de
 // siempre → deploy no-op, flip por secreto, rollback instantáneo (el ADN de COPILOT_MODE).
 const BURBUJAS = (Deno.env.get("COPILOT_BURBUJAS") ?? "").trim() === "1";
-// Pausa ENTRE burbujas. 1000 ms por defecto (pedido de Gerencia 13-ago: a 400 ms las 3 llegaban casi
-// juntas y se perdía el efecto de "alguien escribiendo"); tuneable por secreto sin redeploy, tope 5 s
-// para no estirar la respuesta (2 pausas en una cotización de 3 partes). 0 = sin pausa.
+// Pausa ENTRE burbujas. 3000 ms por defecto: valor elegido POR GERENCIA probándolo en vivo el 13-ago
+// (400 ms las mandaba casi juntas; a 1 s todavía se sentía de máquina). Verificado en el teléfono: la
+// separación real coincide con lo configurado (el envío secuencial no agrega overhead propio). Tuneable
+// por secreto sin redeploy, tope 5 s. 0 = sin pausa. OJO: son 2 pausas en una cotización de 3 partes →
+// a 3 s la última burbuja llega ~6 s después de la primera (sobre los ~15 s de debounce + LLM).
 const BURBUJA_MS = (() => {
   const n = parseInt((Deno.env.get("COPILOT_BURBUJA_MS") ?? "").trim(), 10);
-  return Number.isFinite(n) && n >= 0 ? Math.min(n, 5000) : 1000;
+  return Number.isFinite(n) && n >= 0 ? Math.min(n, 5000) : 3000;
 })();
 
 // Piloto gradual: en live, SOLO se envía a estos wa_id. Vacío = no se envía a nadie (sigue

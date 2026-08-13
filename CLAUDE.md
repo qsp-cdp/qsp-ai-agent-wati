@@ -35,7 +35,10 @@ con certeza, y calla/deriva cuando es mejor que responda un humano. Tienda:
   tool_calls en la 1ª fila; envío secuencial con 400ms; fallo a mitad ABORTA el resto (mejor título sin
   precio que burbuja sin fila) con `envio_fallido` + resumen `respuesta_burbujas`. **v66.1 (pedido de
   Gerencia tras ver el caso real):** la pausa entre burbujas pasa de 400 ms fijos a **`COPILOT_BURBUJA_MS`
-  (default 1000, tope 5000, 0=off)** — tuneable por secreto sin redeploy; healthcheck `burbuja_ms`.
+  (tope 5000, 0=off)** — tuneable por secreto sin redeploy; healthcheck `burbuja_ms`. **Default 3000**,
+  valor que Gerencia eligió PROBÁNDOLO EN VIVO (400 ms casi juntas, 1 s aún de máquina); confirmado en el
+  teléfono que la separación real = la configurada (el envío secuencial no agrega overhead). Repo y prod
+  con el MISMO valor (disciplina repo-first: si se borra el secreto no debe cambiar el comportamiento).
   **Env-gated
   `COPILOT_BURBUJAS`** (default OFF → deploy no-op: el marcador se RE-UNE y sale UN mensaje idéntico al de
   hoy; también se re-une siempre en sombra y asistencia — `[[---]]` jamás llega al cliente). Healthcheck
