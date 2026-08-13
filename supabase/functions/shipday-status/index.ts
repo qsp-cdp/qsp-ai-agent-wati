@@ -9,9 +9,12 @@ import { upsertPedido } from '../_shared/db.ts';
 
 Deno.serve(async (req) => {
   if (req.method !== 'POST') return json({ error: 'Método no permitido' }, 405);
-  const expected = Deno.env.get('SHIPDAY_WEBHOOK_TOKEN');
+  // v65 — FAIL-CLOSED: sin SHIPDAY_WEBHOOK_TOKEN configurado, este webhook quedaba ABIERTO (cualquiera podía
+  // inyectar estados/tracking falsos que el copiloto relaya al cliente — vector de phishing). Igual que
+  // wati-*: sin token configurado, se rechaza todo. (.trim() defensivo, patrón v40.)
+  const expected = (Deno.env.get('SHIPDAY_WEBHOOK_TOKEN') ?? '').trim();
   const token = new URL(req.url).searchParams.get('token') ?? req.headers.get('x-shipday-token');
-  if (expected && token !== expected) return json({ error: 'Token inválido' }, 401);
+  if (!expected || token !== expected) return json({ error: 'Token inválido' }, 401);
 
   let payload: unknown = {};
   try {

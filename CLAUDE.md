@@ -20,6 +20,31 @@ con certeza, y calla/deriva cuando es mejor que responda un humano. Tienda:
 **quickservicepanama.com** (suministros de impresión y tecnología en Panamá).
 
 ## Estado actual (2026-08-13)
+- **EN EL REPO, LISTO PARA DESPLEGAR: v65 (`v65-endurecimiento`).** Paquete de la REVISIÓN PROFUNDA del
+  13-ago (workflow de 13 agentes: 5 lentes + verificación adversarial; 37 hallazgos → 7 CONFIRMADOS
+  mecánicamente + seguridad + prompt). Fixes: (1) 🔴 un asesor que responde SOLO con media (PDF/captura, ~350
+  docs/semana) ahora SÍ marca handoff + `human-agent` (antes bypasseaba la anti-interrupción y el bot podía
+  pisar la venta); (2) 🔴 loop de tools AGOTADO (4 iter) → respuesta de respaldo + `llm_agotado` (antes:
+  cliente MUDO con fila content NULL); el silencio deliberado de acks se conserva (`agotado:false`); (3) 🔴
+  errores JSON-RPC del MCP con HTTP 200 (`j.error`/`isError`, ej. profile_unreachable) ahora LANZAN →
+  `busqueda_mcp_fallo` los ve (la métrica del flip UCP estaba ciega); (4) 🔴 `upsertContactByPhone` ahora
+  actualiza lat/lng en el PATCH (cliente recurrente que cambia de dirección quedaba con el PIN VIEJO y el
+  driver navegaba a la dirección anterior; dirección nueva sin coords → limpia las viejas); (5) el guard de
+  ráfaga v61.3 aplica también en el bloque handoff/asistencia (`rafagaHandoff` para INTERRUPT y HANDOFF_RE);
+  (6) los inserts de respuesta chequean `.error` ANTES de enviar (normal + asistencia — sin fila no hay
+  anti-eco → no se envía) + telemetría `envio_fallido`; (7) el respaldo v23 ahora inserta ANTES de enviar (el
+  único camino que invertía el invariante); (8) `descargarMediaWati` con ALLOWLIST `*.wati.io` (el token
+  viajaba como Bearer a cualquier host del payload → exfiltrable; `media_host_rechazado`); (9)
+  `shipday-status` FAIL-CLOSED (sin token configurado quedaba ABIERTO a estados/tracking falsos que el bot
+  relaya); (10) `ASSIST_SUFFIX` lista las 6 tools reales (faltaban calcular_cotizacion y consultar_folleto →
+  riesgo de aritmética de memoria en asistencia); (11) descripción de `producto_url` alineada a "ESTE MISMO
+  TURNO" (v63.2); (12) `pareceFuncionEnTexto` conoce las 8 tools; (13) voseo residual ("sabés") eliminado.
+  555 golden + 21 node tests. **⚠️ SECUENCIA DE DEPLOY:** `copilot-webhook` puede salir YA; pero
+  `shipday-status`/`wati-address`/`wati-order` (llevan `_shared/db.ts`) SOLO tras resolver la deriva
+  **`pedido_flag`** (action en job_log que NO existe en el repo → hay una función de despacho parcheada a
+  mano en prod; identificar con `select function_name from job_log where action='pedido_flag'` + back-portear
+  ANTES, o el deploy la pisa — la lección v52). Quedan 17 hallazgos LOW documentados en el reporte del
+  workflow (no bloqueantes).
 - **🚀 EN VIVO Y VERIFICADO (desplegado 13-ago; caso real: Canon Pixma G4170 → "en oferta 🏷️: antes $209.95, ahora $174.95 + ITBMS = $187.20 (ahorra $35.00)"): v64 (`v64-precio-oferta`).** Pedido de Gerencia (13-ago): destacar
   cuando el artículo está en PRECIO DE OFERTA (comparativo). El dato ya viajaba: `compare_at_price_min` en
   suggest.json y `list_price_range` en el UCP (minor units, 0 = sin lista). Detección EN CÓDIGO

@@ -96,6 +96,17 @@ export async function upsertContactByPhone(contact: Contact): Promise<void> {
     if ((contact.address || '').trim()) patch.address = contact.address;
     if ((contact.referencia ?? '').toString().trim()) patch.referencia = contact.referencia;
     if ((contact.maps_url ?? '').toString().trim()) patch.maps_url = contact.maps_url;
+    // v65 — las coordenadas SOLO se escribían en el INSERT: un cliente recurrente que cambiaba de dirección
+    // quedaba con el pin VIEJO y el driver de Shipday navegaba a la dirección anterior. Ahora el PATCH las
+    // actualiza cuando vienen resueltas; si llega dirección nueva SIN coordenadas, se limpian las viejas
+    // (mejor sin pin que con el pin equivocado — Shipday geocodifica el texto).
+    if (contact.latitude != null && contact.longitude != null) {
+      patch.latitude = contact.latitude;
+      patch.longitude = contact.longitude;
+    } else if ((contact.address || '').trim()) {
+      patch.latitude = null;
+      patch.longitude = null;
+    }
     const digits = lastDigits(contact.phone);
     const res = await fetch(restUrl(`/contacts?phone_digits=eq.${digits}`), {
       method: 'PATCH',

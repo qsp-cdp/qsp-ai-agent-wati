@@ -372,7 +372,8 @@ console.log("v50 asistencia → preventa");
 caso("v50: trigger de asistencia ampliado a NEEDS_TOOL_RE", /\(BASIC_INFO_RE\.test\(texto\) \|\| NEEDS_TOOL_RE\.test\(texto\)\)/.test(src));
 // INTERRUPT_RE + HANDOFF_RE gatean la asistencia ANTES del OR (revisión adversarial v50): pago/fiscal/
 // coordinar entrega Y reclamo/devolución/garantía → el humano lleva el caso, el bot calla.
-caso("v50: INTERRUPT_RE + HANDOFF_RE gatean la asistencia antes del OR", /!interrumpe && !HANDOFF_RE\.test\(texto\)\s*&&\s*\(BASIC_INFO_RE\.test\(texto\) \|\| NEEDS_TOOL_RE\.test\(texto\)\)/.test(src));
+// v65: los gates de asistencia ahora evalúan la RÁFAGA completa (mismo guard que el flujo normal v61.3).
+caso("v50/v65: INTERRUPT_RE + HANDOFF_RE gatean la asistencia sobre la RÁFAGA", /!interrumpe && !HANDOFF_RE\.test\(rafagaHandoff\)\s*&&\s*\(BASIC_INFO_RE\.test\(texto\) \|\| NEEDS_TOOL_RE\.test\(texto\)\)/.test(src) && /const interrumpe = INTERRUPT_RE\.test\(rafagaHandoff\)/.test(src));
 // una pregunta de PRECIO habilita la asistencia (matchea NEEDS_TOOL_RE) — antes se callaba.
 caso('v50: "¿cuánto cuesta el tóner 105A?" habilitaría asistencia', NEEDS_TOOL_RE.test("¿cuánto cuesta el tóner 105A?"));
 // pero un PAGO EN CURSO que menciona un producto sigue bloqueado por INTERRUPT_RE (interrumpe=true).
@@ -1039,6 +1040,29 @@ caso("v64: enriquecer agrega los datos de oferta calculados en código", /\.\.\.
 caso("v64: SYSTEM_PROMPT tiene la regla OFERTA / PRECIO REBAJADO", /OFERTA \/ PRECIO REBAJADO/.test(SYSTEM_PROMPT) && /está en OFERTA 🏷️/.test(SYSTEM_PROMPT));
 caso("v64: prohíbe inventar ofertas o calcular el ahorro de memoria", /NUNCA digas que está en oferta ni insinúes descuentos/.test(SYSTEM_PROMPT) && /NUNCA calcules el ahorro ni el porcentaje de memoria/.test(SYSTEM_PROMPT));
 caso("v64: nunca promete duración de la oferta", /NUNCA prometas hasta cuándo dura la oferta/.test(SYSTEM_PROMPT));
+
+// --- v65: endurecimiento (revisión profunda 13-ago: 7 confirmados + seguridad + prompt) --------------
+console.log("v65 endurecimiento");
+// #1 — asesor que responde SOLO con media (PDF/imagen) también marca handoff + human-agent
+caso("v65: media del asesor marca handoff (no bypassea la anti-interrupción)", /negocio_atendiendo_media/.test(src) && /\["image", "document", "audio", "video", "file", "sticker"\]\.includes\(tipo\)/.test(src));
+// #2 — loop de tools agotado → respaldo, no mudo (y el silencio deliberado de acks se respeta)
+caso("v65: agotado:true en el return post-loop de responderLLM", /agotado: true/.test(src));
+caso("v65: agotado → respaldo consciente de horario + telemetría llm_agotado", /llm_agotado/.test(src) && /if \(!salida && r\.agotado\)/.test(src));
+// #3 — errores JSON-RPC del MCP (HTTP 200) ya lanzan → busqueda_mcp_fallo los ve
+caso("v65: j.error y result.isError del MCP lanzan (telemetría del flip UCP)", /mcp_rpc_/.test(src) && /mcp_iserror_/.test(src));
+// #6/#7 — insert-antes-de-enviar blindado en TODOS los caminos
+caso("v65: insert de respuesta chequea error antes de enviar (normal + asistencia)", /fase: "respuesta_insert"/.test(src) && /fase: "asistencia_insert"/.test(src));
+caso("v65: el respaldo v23 inserta ANTES de enviar (invariante anti-eco)", /fase: "fallback_insert"/.test(src) && (() => { const i1 = src.indexOf('fase: "fallback_insert"'); const i2 = src.indexOf("const okfb = await enviarWati"); return i1 > -1 && i2 > -1 && i1 < i2; })());
+caso("v65: envío fallido deja telemetría (envio_fallido)", /"envio_fallido"/.test(src));
+// #8 — allowlist del host de media (el token de WATI no viaja a hosts arbitrarios)
+caso("v65: descargarMediaWati solo baja de *.wati.io", /host === "wati\.io" \|\| host\.endsWith\("\.wati\.io"\)/.test(src) && /media_host_rechazado/.test(src));
+// #10 — ASSIST_SUFFIX lista las 6 tools reales de asistencia
+const ASSIST2 = (() => { const i = src.indexOf("const ASSIST_SUFFIX = `"); return src.slice(i, src.indexOf("`;", i)); })();
+caso("v65: ASSIST_SUFFIX menciona calcular_cotizacion y consultar_folleto", /calcular_cotizacion/.test(ASSIST2) && /consultar_folleto/.test(ASSIST2));
+// #12 — el guard anti-fuga conoce las 8 tools
+caso("v65: pareceFuncionEnTexto conoce las 8 tools", pareceFuncionEnTexto('llamo name="calcular_cotizacion" ya') && pareceFuncionEnTexto('name="consultar_folleto"') && pareceFuncionEnTexto('name="tarifa_entrega"'));
+// #13 — sin voseo residual
+caso("v65: sin voseo residual (sabés)", !/sabés/.test(SYSTEM_PROMPT));
 
 // --- resumen --------------------------------------------------------------------------------------
 console.log(`\n${ok} OK, ${mal} FALLA${mal === 1 ? "" : "S"}`);

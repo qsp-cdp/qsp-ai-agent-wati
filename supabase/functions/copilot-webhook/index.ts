@@ -669,7 +669,7 @@ BÚSQUEDA DE PRODUCTOS (cómo usar buscar_producto)
 - COMBOS / JUEGOS DE TINTAS Y CABEZALES: algunos resultados vienen marcados combo:true (su título dice combo/juego/pack/kit). ANTES de ofrecerlo, LEE SU TÍTULO: trátalo como el juego de la familia del cliente SOLO si el título lleva el mismo modelo/código que pidió, y NUNCA afirmes cuántas tintas ni qué colores trae si el título no lo dice (un "Pack x2 Negra" o un "Combo x3 colores" NO son el juego completo de 4). Aplica igual a los CABEZALES: las impresoras de tanque llevan DOS (negro y tricolor) y suele haber un kit con ambos — si el cliente pide "cabezales" (en plural o para su impresora), ofrécele el kit de los dos cuando exista, no uno solo. Si el cliente ya definió su modelo y quiere el JUEGO COMPLETO, y hay un combo que de verdad lo es, COTIZA EL COMBO (no la suma de las individuales). Si pidió UNA sola tinta o UN solo cabezal, cotiza EL INDIVIDUAL: el combo se menciona como máximo en una frase corta y solo si su título lo incluye; no insistas. Para comparar el combo contra las individuales usa calcular_cotizacion (una línea por color) — NUNCA sumes ni compares totales de memoria. Si un resultado trae precio_desde:true, su precio es un "desde" (hay variantes a distinto precio): dilo así y deja que un asesor confirme el exacto. GROUNDED: solo puedes hablar de un combo que buscar_producto devolvió EN ESTE MISMO TURNO — nunca supongas que existe ni inventes su precio. Esta regla NO aplica cuando buscar_producto devuelve coincidencia:"aproximada" (ahí no hay familia confirmada: no ofrezcas ningún combo como el juego del cliente ni hables de ahorro). Y si todavía NO sabes qué modelo necesita, primero pregunta (ver CONSUMIBLE SIN MODELO): no menciones combos ni precios.
 - COMPATIBILIDAD: NO afirmes que un producto sirve para cierto equipo a menos que el resultado de buscar_producto lo indique — NI SIQUIERA como probabilidad ("suele ser la misma tinta", "debería servir"): eso también es adivinar. Si no estás seguro, dilo y deja que un asesor confirme.
 - MODELO EXACTO: usa el TÍTULO tal cual lo devuelve buscar_producto. Si el modelo que pidió el cliente NO aparece en el título del resultado, NO lo renombres ni asumas que es el mismo equipo: dilo claro (ej. "no encontré el [modelo] exacto; lo más parecido que tenemos es [título real]…") y ofrécelo como alternativa o deriva. NUNCA pongas el modelo pedido junto al precio o link de otro producto.
-- COINCIDENCIA APROXIMADA / PEDIDO ESPECIAL: si buscar_producto devuelve un objeto con coincidencia:"aproximada" (en vez de una lista de productos), significa que NO tenemos el modelo exacto que pidió el cliente. Dile con honestidad que ese modelo exacto no está en el catálogo; ofrece las "alternativas" como opciones similares o compatibles SOLO si de verdad aplican (NUNCA como si fueran el modelo pedido); y aclara que un asesor puede confirmar si el modelo exacto se consigue por PEDIDO ESPECIAL. Sigue la regla de oro: no afirmes compatibilidad que no sabés.
+- COINCIDENCIA APROXIMADA / PEDIDO ESPECIAL: si buscar_producto devuelve un objeto con coincidencia:"aproximada" (en vez de una lista de productos), significa que NO tenemos el modelo exacto que pidió el cliente. Dile con honestidad que ese modelo exacto no está en el catálogo; ofrece las "alternativas" como opciones similares o compatibles SOLO si de verdad aplican (NUNCA como si fueran el modelo pedido); y aclara que un asesor puede confirmar si el modelo exacto se consigue por PEDIDO ESPECIAL. Sigue la regla de oro: no afirmes compatibilidad que no sabes.
 - ALTERNATIVAS CON CRITERIO: cuando el modelo pedido no esté (o solo tengamos sus consumibles) y vayas a ofrecer un sustituto, CONSERVA los atributos de lo que pidió: la misma marca si la manejamos, y las mismas características clave (color vs blanco y negro, multifuncional o no, láser o tinta, tamaño/formato). Haz una búsqueda NUEVA con esos atributos (ej. pidió una láser COLOR multifuncional Canon → busca "impresora láser color multifuncional Canon") ANTES de ofrecer otra marca u otra categoría. NUNCA ofrezcas una de blanco y negro como sustituto de una a color (ni al revés) sin aclarar la diferencia; si el sustituto cambia de marca o de tipo, dilo explícito.
 
 VENTA CONSULTIVA — ayuda a elegir bien (sin inventar)
@@ -740,7 +740,7 @@ const ASSIST_SUFFIX = `
 
 MODO ASISTENCIA — un asesor humano está atendiendo este chat
 Un compañero del equipo tiene esta conversación, pero lleva un rato sin responder y el cliente acaba de preguntar algo. Para no dejarlo esperando, adelántale una respuesta ÚTIL sin retomar la venta. Todo lo que digas debe salir de una herramienta (NUNCA de memoria):
-- SÍ puedes: dar precio/ITBMS/stock y el link de un producto (buscar_producto), datos de la tienda (info_tienda), puntos de recogida del interior (sucursales_interior) y el estado de un pedido ya hecho (estado_pedido). Responde breve (1-2 oraciones) con lo que devuelva la herramienta.
+- SÍ puedes: dar precio/ITBMS/stock y el link de un producto (buscar_producto), el total de cantidades o varios productos (calcular_cotizacion — NUNCA sumes ni apliques ITBMS de memoria), una especificación técnica desde el folleto oficial (consultar_folleto), datos de la tienda (info_tienda), puntos de recogida del interior (sucursales_interior) y el estado de un pedido ya hecho (estado_pedido). Responde breve (1-2 oraciones) con lo que devuelva la herramienta.
 - Sé deferente: deja claro que un asesor sigue con su caso. Ej.: "Mientras tanto le confirmo: [dato]. Un asesor continúa con su solicitud enseguida."
 - NO cierres ni confirmes la venta, NO confirmes ni coordines un pago, un pedido ni una entrega, NO pidas ni guardes datos del cliente, NO toques datos fiscales (RUC/factura), NO cotices el costo/método de envío de un sector concreto (eso compromete una entrega: la coordina el asesor), y NO contradigas ni renegocies algo que el asesor ya venía manejando (un precio especial, una cortesía).
 - Si la pregunta toca un pago en curso, una cotización/factura formal, coordinar una entrega, o el caso puntual que lleva el asesor, NO escribas nada (deja la respuesta vacía): que lo siga el humano.`;
@@ -778,7 +778,7 @@ const TOOLS: Anthropic.Tool[] = [{
   name: "consultar_folleto",
   description: "Consulta el FOLLETO PDF oficial de un EQUIPO para responder una especificación técnica que el campo 'especificaciones' de buscar_producto NO respondió (velocidad, resolución, bandejas, dúplex, conectividad, dimensiones, ciclo de trabajo…). Pasa la URL del producto EXACTAMENTE como la devolvió buscar_producto (campo url) y la pregunta puntual del cliente. Devuelve la especificación extraída del folleto (citable como dato oficial) o indica que el folleto no trae ese dato / no existe folleto. NO sirve para precio, stock ni promociones (eso sale SOLO de buscar_producto — los folletos traen precios de otros mercados que NO aplican). Orden correcto: primero revisa 'especificaciones'; si NO trae el dato explícito, llama esta herramienta ANTES de derivar a un asesor — nunca respondas 'no está especificado' sin haberla intentado.",
   strict: true,
-  input_schema: { type: "object", properties: { producto_url: { type: "string", description: "La URL del producto tal cual la devolvió buscar_producto en esta conversación (campo url)." }, pregunta: { type: "string", description: "La especificación puntual que busca el cliente, ej: '¿imprime doble cara automática?' o '¿cuál es la capacidad de la bandeja?'" } }, required: ["producto_url", "pregunta"], additionalProperties: false },
+  input_schema: { type: "object", properties: { producto_url: { type: "string", description: "La URL del producto tal cual la devolvió buscar_producto EN ESTE MISMO TURNO (campo url). Si la búsqueda fue en un turno anterior, llama primero a buscar_producto." }, pregunta: { type: "string", description: "La especificación puntual que busca el cliente, ej: '¿imprime doble cara automática?' o '¿cuál es la capacidad de la bandeja?'" } }, required: ["producto_url", "pregunta"], additionalProperties: false },
 } as Anthropic.Tool];
 
 // v45: "garantía/devolución" GENERAL ("¿qué garantía tienen?") ya NO va a handoff permanente — era
@@ -1403,7 +1403,17 @@ async function buscarCatalogoMCP(consulta: string): Promise<any[]> {
   } } };
   const res = await fetch(CATALOG_MCP_URL, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body), signal: AbortSignal.timeout(6000) });
   if (!res.ok) throw new Error(`mcp_http_${res.status}`);
-  return parseCatalogoMCP(await res.json());
+  const j = await res.json();
+  // v65 — los errores del MCP llegan con HTTP 200: JSON-RPC `error` (ej. profile_unreachable en el discovery
+  // UCP) o `result.isError`. Antes parseaban a [] y caían a suggest.json SIN loguear `busqueda_mcp_fallo`:
+  // la métrica de salud del flip UCP quedaba CIEGA (el patrón del token de inventario que tardó 6 días en
+  // verse). Lanzar → el catch del caller loguea y el fallback a la escalera sigue funcionando igual.
+  if (j && j.error) throw new Error(`mcp_rpc_${String(j.error?.data?.code ?? j.error?.message ?? j.error?.code ?? "error").slice(0, 80)}`);
+  if (j && j.result && j.result.isError) {
+    const t = (j.result.content ?? []).map((c: any) => String(c?.text ?? "")).join(" ").slice(0, 80);
+    throw new Error(`mcp_iserror_${t}`);
+  }
+  return parseCatalogoMCP(j);
 }
 
 // Compara el resultado REAL de buscarProducto (array de productos, o {resultado/error} si no encontró)
@@ -1825,7 +1835,7 @@ async function estadoPedido(waId: string = ""): Promise<string> {
   }
 }
 
-async function responderLLM(history: { role: string; content: string; model?: string | null; created_at?: string | null }[], forceTool: boolean, imagenes?: { b64: string; mediaType: string }[] | null, imagenFallo?: boolean, waId: string = "", atributos: Record<string, string> = {}, linksTracked: Record<string, string> = {}, modoAsistencia: boolean = false): Promise<{ text: string | null; toolCalls: unknown[]; tokensIn: number; tokensOut: number; cacheRead: number; cacheWrite: number }> {
+async function responderLLM(history: { role: string; content: string; model?: string | null; created_at?: string | null }[], forceTool: boolean, imagenes?: { b64: string; mediaType: string }[] | null, imagenFallo?: boolean, waId: string = "", atributos: Record<string, string> = {}, linksTracked: Record<string, string> = {}, modoAsistencia: boolean = false): Promise<{ text: string | null; toolCalls: unknown[]; tokensIn: number; tokensOut: number; cacheRead: number; cacheWrite: number; agotado?: boolean }> {
   if (!anthropic) return { text: null, toolCalls: [], tokensIn: 0, tokensOut: 0, cacheRead: 0, cacheWrite: 0 };
   // La API exige que el primer mensaje sea del usuario: descarta "assistant" al inicio
   // (puede pasar si un asesor escribió primero).
@@ -1975,7 +1985,11 @@ async function responderLLM(history: { role: string; content: string; model?: st
     }
     messages.push({ role: "user", content: results });
   }
-  return { text: null, toolCalls, tokensIn, tokensOut, cacheRead, cacheWrite };
+  // v65 — se agotaron las 4 iteraciones con el modelo aún pidiendo tools (alcanzable p.ej. con el flujo
+  // auto-corregible del folleto: buscar → 404 → re-buscar → folleto). `agotado:true` permite al caller
+  // mandar la respuesta de respaldo en vez de dejar al cliente MUDO — sin confundirlo con el silencio
+  // DELIBERADO (ack "gracias" → text null SIN agotado, que sigue callando por diseño).
+  return { text: null, toolCalls, tokensIn, tokensOut, cacheRead, cacheWrite, agotado: true };
 }
 
 // Limpia formato que WhatsApp NO renderiza (si no, se ve literal): links markdown [texto](url) → URL
@@ -1994,7 +2008,7 @@ function limpiarWhatsApp(t: string): string {
 function pareceFuncionEnTexto(t: string): boolean {
   if (!t) return false;
   return /<\s*\/?\s*(antml:)?(invoke|function_calls|parameter)\b/i.test(t)
-    || /\bname\s*=\s*"(buscar_producto|info_tienda|guardar_lead|sucursales_interior)"/i.test(t);
+    || /\bname\s*=\s*"(buscar_producto|info_tienda|guardar_lead|sucursales_interior|tarifa_entrega|estado_pedido|calcular_cotizacion|consultar_folleto)"/i.test(t);
 }
 
 // v29 — re-aplica el tracking a los links de producto que el modelo pudo "limpiar" (sacándole el
@@ -2160,6 +2174,16 @@ async function consultarFolleto(productoUrl: string, pregunta: string): Promise<
 // a Claude vision. Devuelve null si falla, no es imagen soportada o pesa demasiado.
 async function descargarMediaWati(dataUrl: string): Promise<{ b64: string; mediaType: string } | null> {
   if (!dataUrl || !/^https?:\/\//i.test(dataUrl)) return null;
+  // v65 — ALLOWLIST de host: el WATI_API_TOKEN viaja como Bearer en esta descarga; sin este chequeo, una URL
+  // de media atacante-controlable (el campo `data` del webhook) lo exfiltraría a un host arbitrario. Solo
+  // dominios de WATI. Si WATI cambiara de dominio de media, agregarlo aquí (y se vería en media_host_rechazado).
+  try {
+    const host = new URL(dataUrl).hostname.toLowerCase();
+    if (!(host === "wati.io" || host.endsWith(".wati.io"))) {
+      await log("media_host_rechazado", false, { host: host.slice(0, 80) });
+      return null;
+    }
+  } catch { return null; }
   try {
     const headers: Record<string, string> = WATI_API_TOKEN ? { Authorization: `Bearer ${WATI_API_TOKEN}` } : {};
     const r = await fetch(dataUrl, { headers, signal: AbortSignal.timeout(15000) });
@@ -2234,7 +2258,7 @@ Deno.serve(async (req) => {
       const diag = await inventarioSelfTest(pid);
       return Response.json({ selftest: "inventario", ...diag, ts: new Date().toISOString() });
     }
-    return Response.json({ status: "ok", function: "copilot-webhook", version: "v64-precio-oferta", mode: MODE, mode_raw: MODE_RAW, model: MODEL, llm_configured: !!anthropic, wati_send_configured: !!(WATI_API_TOKEN && WATI_API_BASE), inventario_configurado: !!(SHOPIFY_ADMIN_TOKEN && SHOPIFY_ADMIN_API_BASE), resolve_configured: !!RESOLVE_SECRET, webhook_key_es_default: WEBHOOK_KEY_ES_DEFAULT, handoff_assist_min: HANDOFF_ASSIST_MIN, handoff_cold_hours: HANDOFF_COLD_HOURS, debounce_ms: DEBOUNCE_MS, sesion_gap_dias: SESION_GAP_DIAS, busqueda_shadow: BUSQUEDA_SHADOW, busqueda_mcp: BUSQUEDA_MCP, busqueda_mcp_limit: BUSQUEDA_MCP_LIMIT, catalog_mcp_url: CATALOG_MCP_URL, ucp_profile_url: UCP_PROFILE_URL, live_targets: MODE === "live" ? (LIVE_ALL ? "all" : LIVE_ALLOWLIST.length) : 0, ts: new Date().toISOString() });
+    return Response.json({ status: "ok", function: "copilot-webhook", version: "v65-endurecimiento", mode: MODE, mode_raw: MODE_RAW, model: MODEL, llm_configured: !!anthropic, wati_send_configured: !!(WATI_API_TOKEN && WATI_API_BASE), inventario_configurado: !!(SHOPIFY_ADMIN_TOKEN && SHOPIFY_ADMIN_API_BASE), resolve_configured: !!RESOLVE_SECRET, webhook_key_es_default: WEBHOOK_KEY_ES_DEFAULT, handoff_assist_min: HANDOFF_ASSIST_MIN, handoff_cold_hours: HANDOFF_COLD_HOURS, debounce_ms: DEBOUNCE_MS, sesion_gap_dias: SESION_GAP_DIAS, busqueda_shadow: BUSQUEDA_SHADOW, busqueda_mcp: BUSQUEDA_MCP, busqueda_mcp_limit: BUSQUEDA_MCP_LIMIT, catalog_mcp_url: CATALOG_MCP_URL, ucp_profile_url: UCP_PROFILE_URL, live_targets: MODE === "live" ? (LIVE_ALL ? "all" : LIVE_ALLOWLIST.length) : 0, ts: new Date().toISOString() });
   }
   if (req.method !== "POST") return Response.json({ error: "method_not_allowed" }, { status: 405 });
   if (url.searchParams.get("key") !== WEBHOOK_KEY) return Response.json({ error: "forbidden" }, { status: 403 });
@@ -2305,6 +2329,22 @@ Deno.serve(async (req) => {
     return Response.json({ ok: true, skipped: "negocio_atendiendo" });
   }
 
+  // v65 — un asesor que responde SOLO con media (imagen/PDF/audio, con o sin caption) TAMBIÉN es un humano
+  // atendiendo: antes caía al skip de evento_sin_texto SIN marcar handoff ni registrar human-agent → el bot
+  // podía pisar la venta y el reloj v31 no arrancaba (práctica común: mandar la cotización como PDF/captura;
+  // ~350 documentos/semana). El bot nunca envía media → aquí no hay riesgo de eco propio.
+  if (esDelNegocio && waId && ["image", "document", "audio", "video", "file", "sticker"].includes(tipo)) {
+    const { data: convH } = await sb.from("conversations").select("id,status").eq("wa_id", waId).maybeSingle();
+    if (convH?.id) {
+      const marca = texto ? `${texto.slice(0, 3900)} [${tipo}]` : `[${tipo}]`;
+      const insH = await sb.from("messages").insert({ conversation_id: convH.id, role: "assistant", content: marca, mode: "live", model: "human-agent" });
+      if (insH.error) await log("error", false, { fase: "media_asesor_insert", waId, error: String(insH.error.message ?? "").slice(0, 120) });
+      if (convH.status !== "handoff") await sb.from("conversations").update({ status: "handoff" }).eq("id", convH.id);
+      await log("mensaje_humano", true, { waId, operador: operador || null, tipo });
+    }
+    return Response.json({ ok: true, skipped: "negocio_atendiendo_media" });
+  }
+
   // v19: una imagen de un CLIENTE (owner=false) SÍ se procesa (visión). El resto de mensajes
   // no-texto (documentos, audio, o imágenes del propio negocio) se registran y se saltan.
   const esImagenCliente = tipo === "image" && !esDelNegocio && !!waId;
@@ -2360,7 +2400,11 @@ Deno.serve(async (req) => {
         .order("created_at", { ascending: false }).limit(1);
       const ultHumano = (ha?.[0] as any)?.created_at as string | undefined;
       const minsSinHumano = ultHumano ? (Date.now() - new Date(ultHumano).getTime()) / 60000 : -1;
-      const interrumpe = INTERRUPT_RE.test(texto); // trámite/pago/fiscal en curso → nunca tocar
+      // v65 — el guard evalúa TODA la ráfaga sin responder, igual que el flujo normal (v61.3): con el
+      // debounce, un "adjunto el pago"/RUC seguido de un mensaje inocente evadía la anti-interrupción justo
+      // en handoff — donde un humano está coordinando ese pago.
+      const rafagaHandoff = await textoDeRafagaSinResponder(conv.id, texto);
+      const interrumpe = INTERRUPT_RE.test(rafagaHandoff); // trámite/pago/fiscal en curso → nunca tocar
       const frio = !!ultHumano && minsSinHumano > HANDOFF_COLD_HOURS * 60 && !interrumpe;
       // v50 — asistencia ampliada a PREVENTA: además de las preguntas básicas de tienda (BASIC_INFO_RE),
       // ahora también asiste ante catálogo/precio/stock/estado de pedido (NEEDS_TOOL_RE) → el bot da precios
@@ -2368,7 +2412,7 @@ Deno.serve(async (req) => {
       // INTERRUPT_RE (pago/fiscal/coordinar entrega en curso) y HANDOFF_RE (reclamo/devolución/garantía/
       // "quiero un asesor") bloquean la asistencia → esos casos los lleva el humano, el bot calla.
       const puedeAsistir = !!ultHumano && !frio && minsSinHumano >= HANDOFF_ASSIST_MIN
-        && conv.turns_today <= MAX_TURNS_DIA && !interrumpe && !HANDOFF_RE.test(texto)
+        && conv.turns_today <= MAX_TURNS_DIA && !interrumpe && !HANDOFF_RE.test(rafagaHandoff)
         && (BASIC_INFO_RE.test(texto) || NEEDS_TOOL_RE.test(texto));
 
       if (frio) {
@@ -2413,6 +2457,8 @@ Deno.serve(async (req) => {
             // envío propio y NO se guarda como asesor (no resetea el reloj ni dispara handoff falso).
             const quiereEnviar = liveAllowed(waId);
             const insA = await sb.from("messages").insert({ conversation_id: conv.id, role: "assistant", content: salida, tool_calls: r.toolCalls.length ? r.toolCalls : null, mode: quiereEnviar ? "live" : "shadow", model: "assist-handoff", tokens_in: r.tokensIn || null, tokens_out: r.tokensOut || null, cache_read_input_tokens: r.cacheRead || null, cache_creation_input_tokens: r.cacheWrite || null, latency_ms: Date.now() - t0 }).select("id");
+            // v65 — sin la fila no hay anti-eco: insert fallido → no enviar (mismo invariante que el flujo normal).
+            if (insA.error) { await log("error", false, { waId, fase: "asistencia_insert", error: String(insA.error.message ?? "").slice(0, 150) }); return; }
             let enviado = false;
             if (quiereEnviar) { enviado = await enviarWati(waId, salida); if (!enviado) await sb.from("messages").update({ mode: "shadow" }).eq("id", (insA.data?.[0] as any)?.id); }
             // v52 — mismo ticket de promesa que el flujo normal: la asistencia también puede dejar algo
@@ -2521,6 +2567,15 @@ Deno.serve(async (req) => {
             ? "Disculpe, tuve un inconveniente procesando su consulta 🙏. Un asesor le ayuda en breve."
             : "Disculpe, tuve un inconveniente procesando su consulta 🙏. Un asesor le ayuda apenas estemos en horario (Lun-Vie 9:00am–5:00pm).";
         }
+        // v65 — loop de tools AGOTADO sin texto: antes se insertaba una fila con content NULL y el cliente
+        // quedaba MUDO sin respaldo ni telemetría. Ahora va la respuesta de respaldo (como v23/v44). El
+        // silencio DELIBERADO (ack → text null SIN agotado) se respeta y sigue callando.
+        if (!salida && r.agotado) {
+          await log("llm_agotado", false, { waId, tools: r.toolCalls.length });
+          salida = horarioPanama().dentro
+            ? "Disculpe, su consulta me está tomando más de lo normal 🙏. Un asesor le ayuda en breve."
+            : "Disculpe, su consulta me está tomando más de lo normal 🙏. Un asesor le ayuda apenas estemos en horario (Lun-Vie 9:00am–5:00pm).";
+        }
         // v20 (anti-duplicado, post-LLM): durante los ~8s del LLM pudo llegar otro mensaje → no enviar el viejo.
         if (await hayMensajeClienteMasNuevo(conv.id, userCreatedAt)) { await log("descartado_superado", true, { waId, fase: "post-llm" }); return; }
         // v20 (anti-carrera): si el negocio tomó la conversación mientras pensábamos, no la pisamos.
@@ -2532,10 +2587,19 @@ Deno.serve(async (req) => {
         const quiereEnviar = !!(salida && liveAllowed(waId));
         let modoFinal = quiereEnviar ? "live" : "shadow";
         const insAsst = await sb.from("messages").insert({ conversation_id: conv.id, role: "assistant", content: salida, tool_calls: r.toolCalls.length ? r.toolCalls : null, mode: modoFinal, model: anthropic ? MODEL : null, tokens_in: r.tokensIn || null, tokens_out: r.tokensOut || null, cache_read_input_tokens: r.cacheRead || null, cache_creation_input_tokens: r.cacheWrite || null, latency_ms: Date.now() - t0 }).select("id");
+        // v65 — el invariante insert-antes-de-enviar (v21) solo vale si el insert LANDÓ: sin la fila, el eco
+        // del envío se guardaría como asesor fantasma y dispararía handoff falso. Insert fallido → NO enviar.
+        if (insAsst.error) { await log("error", false, { waId, fase: "respuesta_insert", error: String(insAsst.error.message ?? "").slice(0, 150) }); return; }
         let enviado = false;
         if (quiereEnviar) {
           enviado = await enviarWati(waId, salida);
-          if (!enviado) { modoFinal = "shadow"; await sb.from("messages").update({ mode: "shadow" }).eq("id", insAsst.data?.[0]?.id); }
+          if (!enviado) {
+            modoFinal = "shadow";
+            await sb.from("messages").update({ mode: "shadow" }).eq("id", insAsst.data?.[0]?.id);
+            // v65 — telemetría del envío fallido (clase de fallo silencioso v54: sin esto, un WATI caído se
+            // descubre días tarde mirando conversaciones a mano).
+            await log("envio_fallido", false, { waId, largo: salida ? salida.length : 0 });
+          }
         }
         respondido = true; // v23: ya insertamos/enviamos la respuesta del bot
         // v52 — TICKET DE PROMESA: si la respuesta dejó algo sin resolver Y prometió seguimiento de un
@@ -2560,8 +2624,13 @@ Deno.serve(async (req) => {
               const fb = horarioPanama().dentro
                 ? "Disculpe, estamos con alto volumen en este momento 🙏. Un asesor le ayuda en breve."
                 : "Disculpe, estamos con alto volumen en este momento 🙏. Un asesor le ayuda apenas estemos en horario (Lun-Vie 9:00am–5:00pm).";
+              // v65 — insertar ANTES de enviar (el invariante v21/v45): este era el ÚNICO camino que enviaba
+              // primero — si el eco de WATI llegaba antes que el insert, se guardaba como asesor fantasma
+              // justo después de un apagón de API. Insert fallido → no enviar (sin fila no hay anti-eco).
+              const insFb = await sb.from("messages").insert({ conversation_id: conv.id, role: "assistant", content: fb, mode: "live", model: "fallback", latency_ms: Date.now() - t0 }).select("id");
+              if (insFb.error) { await log("error", false, { waId, fase: "fallback_insert", error: String(insFb.error.message ?? "").slice(0, 150) }); return; }
               const okfb = await enviarWati(waId, fb);
-              await sb.from("messages").insert({ conversation_id: conv.id, role: "assistant", content: fb, mode: okfb ? "live" : "shadow", model: "fallback", latency_ms: Date.now() - t0 });
+              if (!okfb) await sb.from("messages").update({ mode: "shadow" }).eq("id", insFb.data?.[0]?.id);
               // v52 (revisión adversarial): un fallo de API (el escenario que v23 cubre — ej. el apagón
               // real de ~33 min de Anthropic) es POR DEFINICIÓN algo sin resolver: no hace falta pasarlo
               // por el regex, siempre genera ticket (si de verdad se envió).
