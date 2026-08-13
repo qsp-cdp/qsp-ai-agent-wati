@@ -44,11 +44,18 @@ con certeza, y calla/deriva cuando es mejor que responda un humano. Tienda:
   migración `20260813180000_resolver_tarifa_v2_fn.sql` (byte-exacta, **VALIDADA con data desechable: los 6
   caminos** — metro ok+ITBMS, interior ok con 2 opciones servientrega_sucursal $6/servientrega_domicilio $9
   con ITBMS y plazo heredado de la fila provincia, comarca→sin_servicio, ambiguo entre provincias,
-  sin_match, guardia fuera_del_area_metro). La v2 destapó DEPENDENCIAS DE DATA que el repo no tiene:
-  tabla **`lugares_interior`** (provincia/lugar/tipo/con_servicio/plazo/nota/alias), filas
-  **`INT Sucursal`/`INT Domicilio`** en `zonas_entrega`, y keys **`itbms_rate`/`envio_gratis_umbral_usd`**
-  en `store_facts`. 563 golden + 21 node tests. **FALTA (bloquea Parte 2 del deploy):** (a) capturar la
-  DATA real de prod → migración de fidelidad (schema+filas de `lugares_interior`, filas INT, las 2 keys);
+  sin_match, guardia fuera_del_area_metro). **La DATA del interior ya está CAPTURADA E INTEGRADA**
+  (migración `20260813175000_lugares_interior_int_zonas.sql`, se ordena ANTES de la fn): tabla
+  **`lugares_interior`** (63 filas de prod: 9 provincias + 3 comarcas sin servicio + ciudades con alias,
+  UNIQUE (provincia,lugar)), check de `zonas_entrega.metodo` ampliado (+`servientrega_sucursal`/
+  `servientrega_domicilio`), filas **`INT Sucursal` $6 / `INT Domicilio` $9**, y keys
+  **`itbms_rate` 0.07 / `envio_gratis_umbral_usd` 300** en `store_facts`. **VALIDADA con la data real
+  (28 migraciones limpias):** david→interior ok $6.42/$9.63 · changuinola hereda "3 a 5 días" de Bocas ·
+  la chorrera/santiago/torti→interior ok · san blas→sin_servicio · 'el valle'→Z6 metro (CORRECTO:
+  core-first, el barrio de San Miguelito gana) · el wrapper del copiloto intacto. 563 golden + 21 node
+  tests. **FALTA (bloquea Parte 2 del deploy):** (a) 2 queries de fidelidad de `zonas_entrega` (el
+  constraint real de `metodo` con pg_get_constraintdef + dump completo de las 10 filas — el frente
+  tarifario F1 del 06-ago pudo tocar tarifas/observaciones de las zonas METRO que el seed v47 no refleja);
   (b) el diff COMPLETO de `wati-address`/`wati-order` (el paginador lo cortó): **`wati-address` tiene
   DERIVA REAL** (parche a mano: `es_correccion`, set `NEGATIVAS`/`descartarNegativa`, e importa
   `isValidPhone`/`looksLikeLocation`/`looksUnresolved` que NO existen en el shipday.ts del repo → el
