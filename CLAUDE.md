@@ -19,7 +19,16 @@ equipo humano: contesta preguntas generales, indica disponibilidad/stock y da pr
 con certeza, y calla/deriva cuando es mejor que responda un humano. Tienda:
 **quickservicepanama.com** (suministros de impresión y tecnología en Panamá).
 
-## Estado actual (2026-08-06)
+## Estado actual (2026-08-13)
+- **EN EL REPO, LISTO PARA DESPLEGAR: v64 (`v64-precio-oferta`).** Pedido de Gerencia (13-ago): destacar
+  cuando el artículo está en PRECIO DE OFERTA (comparativo). El dato ya viajaba: `compare_at_price_min` en
+  suggest.json y `list_price_range` en el UCP (minor units, 0 = sin lista). Detección EN CÓDIGO
+  (`datosOferta`, pura): hay oferta SOLO si lista > precio ESTRICTO — **guardia de dato sucio** (el catálogo
+  real tiene al menos un comparativo AL REVÉS: T544320 compare $10 vs precio $11 → NO es oferta, se ignora).
+  `enriquecer` expone `oferta:true` + `precio_antes_usd` + `ahorro_usd` (calculados en código, nunca el LLM);
+  regla de prompt OFERTA / PRECIO REBAJADO — destacar con esos valores exactos ("antes B/.X, ahora B/.Y +
+  ITBMS = B/.Z, ahorra B/.W"), NUNCA inventar ofertas/descuentos, NUNCA calcular el ahorro de memoria, NUNCA
+  prometer hasta cuándo dura. 544 golden + 21 node tests. Sin migración. Deploy: `.\deploy.ps1 copilot-webhook`.
 - **🚀 EN VIVO Y VERIFICADO CON TRÁFICO REAL (desplegado 07-ago): v63.2 (`v63.2-folleto-url-turno`).** Los 3 caminos probados en producción: (a) **dato hallado** — consulta real por el plotter HP DesignJet T850 → `hallo:true`, 9,2s, 8.743 tokens in / 119 out (respuesta sustanciosa del folleto); (b) **dato ausente → honesto** — Smart Tank 750 escaneo dúplex → `hallo:false` tras LEER el folleto (10.542 tokens), el bot lo dijo y derivó sin inventar; (c) **URL inventada** → el `ficha_http_404` del 06-ago, cerrado por el fix auto-corregible. Costo medido: ~4-9s y ~9-10k tokens por consulta (~$0.03), solo cuando alguien pregunta specs. La telemetría del re-test
   destapó el último hueco: el turno 1 (dúplex) funcionó completo (`ok:true`, `tokens_in:10542` — la
   sub-llamada LEYÓ el folleto y respondió honesto `hallo:false`), pero el turno 2 (tipos de papel, que SÍ

@@ -652,6 +652,7 @@ REGLA DE ORO — precio, stock y promociones
 - PRECIO + ITBMS: los precios son SIN ITBMS. Muestra SIEMPRE el precio, el ITBMS (7%) y el total usando EXACTAMENTE los valores que devuelve la tool (precio_usd, itbms_7pct, total_con_itbms). Formato: "*$116.00 + ITBMS (7%) = $124.12*". NUNCA calcules el impuesto de memoria.
 - CANTIDADES / VARIOS PRODUCTOS: si el cliente pide 2+ unidades de algo, o el total combinado de varios productos, NUNCA multipliques, sumes ni apliques el ITBMS de memoria (aplicar el 7% dos veces cobra de más — es un error grave de plata). Llama a calcular_cotizacion pasándole cada producto con su precio_usd (el UNITARIO SIN ITBMS que te dio buscar_producto) y su cantidad; toma el subtotal, el ITBMS y el total EXACTAMENTE de lo que devuelva (relaya respuesta_sugerida). El ITBMS va UNA sola vez, sobre el subtotal — jamás sobre precios que ya lo incluyen.
 - STOCK / CANTIDAD: indica la disponibilidad usando el campo "stock" que devuelve la tool, TAL CUAL — CONSERVANDO el emoji con el que viene (✅ disponible, ⚠️ stock bajo, ❌ sin stock, 🔎 por verificar): ese emoji hace que la disponibilidad se vea de un vistazo en el chat. No lo cambies por otro ni lo quites. Si dice "X unidades", dilo; si dice "stock bajo — un asesor verifica…", dilo así. NUNCA inventes ni adivines una cantidad: di solo lo que aparezca en ese campo "stock".
+- OFERTA / PRECIO REBAJADO: si el resultado trae oferta:true, el artículo está en PRECIO DE OFERTA — destácalo al cotizarlo usando SOLO los valores de la tool: "está en OFERTA 🏷️: antes B/.[precio_antes_usd], ahora B/.[precio_usd] + ITBMS (7%) = B/.[total_con_itbms] (ahorra B/.[ahorro_usd])". Si el resultado NO trae oferta:true, NUNCA digas que está en oferta ni insinúes descuentos; NUNCA calcules el ahorro ni el porcentaje de memoria; y NUNCA prometas hasta cuándo dura la oferta (no lo sabemos — si preguntan, un asesor confirma).
 - SIN STOCK — AVISO AUTOMÁTICO: si el campo "stock" dice "sin stock", además de indicar que un asesor puede confirmar el reingreso, comparte el link del producto y dile al cliente que EN ESA PÁGINA puede activar el botón de aviso de disponibilidad ("Avísame cuando esté disponible") para recibir una notificación automática apenas el producto reingrese. No prometas fechas de reingreso (eso lo confirma un asesor).
 - Si la tool no encuentra el producto, o piden algo fuera de catálogo: discúlpate breve e indica que un asesor confirmará disponibilidad y opciones.
 
@@ -746,7 +747,7 @@ Un compañero del equipo tiene esta conversación, pero lleva un rato sin respon
 
 const TOOLS: Anthropic.Tool[] = [{
   name: "buscar_producto",
-  description: "Busca productos en el catálogo de Quick Service Panamá (Shopify). Llámala SIEMPRE que el cliente pregunte precio, disponibilidad/stock, compatibilidad, características (bandeja de papel, dúplex, conectividad, etc.), o mencione/insinúe un producto, marca o categoría (tinta, toner, impresora Epson/Canon/HP, etc.). Pasa términos CONCISOS: marca + MODELO (el número de modelo es la mejor señal); para 'tinta para [impresora]' busca por el modelo de la impresora; para una CARACTERÍSTICA (ej. 'bandeja legal y carta') pasa la característica en los términos, no solo la marca. Puedes llamarla varias veces reformulando si no encuentras. Devuelve título, precio (precio_usd SIN ITBMS + itbms_7pct + total_con_itbms), stock (disponibilidad ya resuelta: muestra el número si hay >3, si no deriva a un asesor), marca, tipo, link y especificaciones (texto real de la ficha del producto, cuando la tienda lo tenga — pertenece SOLO a ese resultado, nunca la mezcles con otro producto de la lista; úsala solo para características físicas/técnicas, NUNCA para precio/promo; si especificaciones_truncada=true puede haber más datos que no viste). Devuelve hasta 6 resultados; algunos pueden venir marcados combo:true (presentación combo/juego/pack/kit — LEE su título antes de presentarlo como el juego de la familia pedida) y precio_desde:true (el precio es un 'desde' porque hay variantes a distinto precio).",
+  description: "Busca productos en el catálogo de Quick Service Panamá (Shopify). Llámala SIEMPRE que el cliente pregunte precio, disponibilidad/stock, compatibilidad, características (bandeja de papel, dúplex, conectividad, etc.), o mencione/insinúe un producto, marca o categoría (tinta, toner, impresora Epson/Canon/HP, etc.). Pasa términos CONCISOS: marca + MODELO (el número de modelo es la mejor señal); para 'tinta para [impresora]' busca por el modelo de la impresora; para una CARACTERÍSTICA (ej. 'bandeja legal y carta') pasa la característica en los términos, no solo la marca. Puedes llamarla varias veces reformulando si no encuentras. Devuelve título, precio (precio_usd SIN ITBMS + itbms_7pct + total_con_itbms), stock (disponibilidad ya resuelta: muestra el número si hay >3, si no deriva a un asesor), marca, tipo, link y especificaciones (texto real de la ficha del producto, cuando la tienda lo tenga — pertenece SOLO a ese resultado, nunca la mezcles con otro producto de la lista; úsala solo para características físicas/técnicas, NUNCA para precio/promo; si especificaciones_truncada=true puede haber más datos que no viste). Devuelve hasta 6 resultados; algunos pueden venir marcados combo:true (presentación combo/juego/pack/kit — LEE su título antes de presentarlo como el juego de la familia pedida) y precio_desde:true (el precio es un 'desde' porque hay variantes a distinto precio). Si un resultado trae oferta:true con precio_antes_usd/ahorro_usd, está en PRECIO DE OFERTA: destácalo con esos valores exactos.",
   strict: true,
   input_schema: { type: "object", properties: { consulta: { type: "string", description: "Términos de búsqueda, ej: 'tinta hp 954 negra'" } }, required: ["consulta"], additionalProperties: false },
 } as Anthropic.Tool, {
@@ -996,6 +997,7 @@ async function suggestShopify(q: string): Promise<any[]> {
     id: p.id,
     titulo: p.title,
     precio_usd: p.price,
+    precio_lista: p.compare_at_price_min || undefined,  // v64: el "antes" (compare-at) para detectar oferta
     disponible: p.available === true,
     marca: p.vendor || undefined,
     tipo: p.product_type || p.type || undefined,
@@ -1048,6 +1050,18 @@ function conItbms(precio: any): { precio_usd: string; itbms_7pct: string; total_
   const n = parseFloat(String(precio ?? "").replace(/[^0-9.]/g, ""));
   if (!isFinite(n) || n <= 0) return { precio_usd: String(precio ?? ""), itbms_7pct: "", total_con_itbms: "" };
   return { precio_usd: n.toFixed(2), itbms_7pct: (n * 0.07).toFixed(2), total_con_itbms: (n * 1.07).toFixed(2) };
+}
+
+// v64 — OFERTA detectada en CÓDIGO (pedido de Gerencia: destacar cuando el artículo está rebajado).
+// Shopify trae el "precio de antes" (compare_at en suggest.json / list_price_range en el MCP): hay oferta
+// SOLO si lista > precio actual, estrictamente. Guardia de dato sucio: en el catálogo real existe al menos
+// un producto con el comparativo AL REVÉS (compare $10 vs precio $11) — eso NO es oferta y se ignora.
+// Pura y auto-contenida (golden la extrae). El ahorro se calcula aquí, nunca lo hace el LLM de memoria.
+function datosOferta(precio: any, precioLista: any): Record<string, unknown> {
+  const p = parseFloat(String(precio ?? "").replace(/[^0-9.]/g, ""));
+  const l = parseFloat(String(precioLista ?? "").replace(/[^0-9.]/g, ""));
+  if (!isFinite(p) || !isFinite(l) || p <= 0 || l <= p) return {};
+  return { oferta: true, precio_antes_usd: l.toFixed(2), ahorro_usd: (l - p).toFixed(2) };
 }
 
 // v57 — cotización de VARIAS unidades / varios productos en CÓDIGO. buscarProducto ya calcula el ITBMS por
@@ -1362,6 +1376,9 @@ function parseCatalogoMCP(j: any): any[] {
       titulo: String((p && p.title) ?? ""),
       precio_usd: (p && p.price_range && p.price_range.min && p.price_range.min.amount != null)
         ? (Number(p.price_range.min.amount) / 100).toFixed(2) : null,
+      // v64: el "precio de antes" del UCP (list_price_range, minor units; 0 = sin lista) → detección de oferta
+      precio_lista: (p && p.list_price_range && p.list_price_range.min && p.list_price_range.min.amount != null && Number(p.list_price_range.min.amount) > 0)
+        ? (Number(p.list_price_range.min.amount) / 100).toFixed(2) : undefined,
       disponible: (p && p.variants && p.variants[0] && p.variants[0].availability)
         ? (p.variants[0].availability.available ?? null) : null,
       // v61: precio_usd sale de price_range.MIN → si el max difiere, hay variantes a distinto precio y el
@@ -1443,7 +1460,7 @@ async function buscarProducto(consulta: string, waId: string = "", linksTracked?
         // (antes el top-5 se llenaba con las individuales). Se entregan hasta 6 (5 + el combo promovido);
         // el costo extra es 1 fila de ref_codes y ~200 tokens por búsqueda con combo.
         const top = rerankearCombos(mcp, codigos, 6).map((p: any) => ({
-          id: p.id, titulo: p.titulo, precio_usd: p.precio_usd, disponible: p.disponible, precio_desde: p.precio_desde,
+          id: p.id, titulo: p.titulo, precio_usd: p.precio_usd, precio_lista: p.precio_lista, disponible: p.disponible, precio_desde: p.precio_desde,
           marca: undefined, tipo: undefined, url: p.url, descripcion_html: p.descripcion_html,
         }));
         // El guard v60.1 se evalúa sobre el TOP-5 ORIGINAL del MCP (no sobre los 10 ni sobre el set
@@ -1587,6 +1604,9 @@ async function buscarProducto(consulta: string, waId: string = "", linksTracked?
         combo: (exacto && (p.combo_disponible === true || esComboTitulo(p.titulo))) || undefined,
         // v61: el precio del MCP es price_range.min → si las variantes tienen precios distintos, es un "desde".
         precio_desde: p.precio_desde || undefined,
+        // v64: oferta calculada en código (lista > precio, con guardia de dato sucio). Aporta oferta:true,
+        // precio_antes_usd y ahorro_usd — el prompt manda destacarla usando SOLO estos valores.
+        ...datosOferta(p.precio_usd, p.precio_lista),
       };
     });
     if (exacto) return JSON.stringify(enriquecidos);
@@ -2214,7 +2234,7 @@ Deno.serve(async (req) => {
       const diag = await inventarioSelfTest(pid);
       return Response.json({ selftest: "inventario", ...diag, ts: new Date().toISOString() });
     }
-    return Response.json({ status: "ok", function: "copilot-webhook", version: "v63.2-folleto-url-turno", mode: MODE, mode_raw: MODE_RAW, model: MODEL, llm_configured: !!anthropic, wati_send_configured: !!(WATI_API_TOKEN && WATI_API_BASE), inventario_configurado: !!(SHOPIFY_ADMIN_TOKEN && SHOPIFY_ADMIN_API_BASE), resolve_configured: !!RESOLVE_SECRET, webhook_key_es_default: WEBHOOK_KEY_ES_DEFAULT, handoff_assist_min: HANDOFF_ASSIST_MIN, handoff_cold_hours: HANDOFF_COLD_HOURS, debounce_ms: DEBOUNCE_MS, sesion_gap_dias: SESION_GAP_DIAS, busqueda_shadow: BUSQUEDA_SHADOW, busqueda_mcp: BUSQUEDA_MCP, busqueda_mcp_limit: BUSQUEDA_MCP_LIMIT, catalog_mcp_url: CATALOG_MCP_URL, ucp_profile_url: UCP_PROFILE_URL, live_targets: MODE === "live" ? (LIVE_ALL ? "all" : LIVE_ALLOWLIST.length) : 0, ts: new Date().toISOString() });
+    return Response.json({ status: "ok", function: "copilot-webhook", version: "v64-precio-oferta", mode: MODE, mode_raw: MODE_RAW, model: MODEL, llm_configured: !!anthropic, wati_send_configured: !!(WATI_API_TOKEN && WATI_API_BASE), inventario_configurado: !!(SHOPIFY_ADMIN_TOKEN && SHOPIFY_ADMIN_API_BASE), resolve_configured: !!RESOLVE_SECRET, webhook_key_es_default: WEBHOOK_KEY_ES_DEFAULT, handoff_assist_min: HANDOFF_ASSIST_MIN, handoff_cold_hours: HANDOFF_COLD_HOURS, debounce_ms: DEBOUNCE_MS, sesion_gap_dias: SESION_GAP_DIAS, busqueda_shadow: BUSQUEDA_SHADOW, busqueda_mcp: BUSQUEDA_MCP, busqueda_mcp_limit: BUSQUEDA_MCP_LIMIT, catalog_mcp_url: CATALOG_MCP_URL, ucp_profile_url: UCP_PROFILE_URL, live_targets: MODE === "live" ? (LIVE_ALL ? "all" : LIVE_ALLOWLIST.length) : 0, ts: new Date().toISOString() });
   }
   if (req.method !== "POST") return Response.json({ error: "method_not_allowed" }, { status: 405 });
   if (url.searchParams.get("key") !== WEBHOOK_KEY) return Response.json({ error: "forbidden" }, { status: 403 });

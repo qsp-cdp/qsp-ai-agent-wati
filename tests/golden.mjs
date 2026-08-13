@@ -85,6 +85,7 @@ const tituloDeTipo = extraerFuncion("tituloDeTipo");
 const cortarSesionVieja = extraerFuncion("cortarSesionVieja");
 const perfilUcpAgente = extraerFuncion("perfilUcpAgente");
 const extraerFolletoPdf = extraerFuncion("extraerFolletoPdf");
+const datosOferta = extraerFuncion("datosOferta");
 const rerankearCombos = extraerFuncion("rerankearCombos");
 const SYSTEM_PROMPT = extraerSystemPrompt();
 
@@ -1011,6 +1012,33 @@ caso("v63.2: la URL debe venir de buscar_producto DE ESTE MISMO TURNO (no de mem
 caso("v63.2: 404 de la ficha → error auto-corregible (re-buscar y reintentar)", /url_no_corresponde/.test(src) && /ficha_http_404_url_inventada/.test(src) && /reintenta consultar_folleto/.test(src));
 caso("v63: REGLA DURA — del folleto jamás salen precios/promos/stock", /del folleto JAMÁS salen precios/.test(SYSTEM_PROMPT) && /precios de referencia de otros mercados/.test(SYSTEM_PROMPT));
 caso("v63: honestidad si no hay dato (no completar por lógica)", /NUNCA completes la especificación por lógica/.test(SYSTEM_PROMPT));
+
+// --- v64: precio de OFERTA (compare-at / list_price) ----------------------------------------------
+console.log("v64 precio de oferta");
+// Hay oferta SOLO si lista > precio, estrictamente; el ahorro se calcula en código.
+const OF = datosOferta("10.00", "12.00");
+caso("v64: lista 12 > precio 10 → oferta con antes y ahorro", OF.oferta === true && OF.precio_antes_usd === "12.00" && OF.ahorro_usd === "2.00");
+caso("v64: acepta formatos con símbolo", datosOferta("$10.00", "$12.50").ahorro_usd === "2.50");
+// 🔒 guardia de dato sucio: el catálogo REAL tiene un comparativo al revés (T544320: compare $10, precio $11).
+caso("v64: comparativo AL REVÉS (10 vs 11) NO es oferta", Object.keys(datosOferta("11.00", "10.00")).length === 0);
+caso("v64: lista igual al precio NO es oferta", Object.keys(datosOferta("10.00", "10.00")).length === 0);
+caso("v64: sin lista / cero / basura → {}", Object.keys(datosOferta("10.00", undefined)).length === 0 && Object.keys(datosOferta("10.00", "0.00")).length === 0 && Object.keys(datosOferta("abc", "12")).length === 0);
+// parser MCP: list_price_range (minor units; 0 = sin lista)
+caso("v64: parseCatalogoMCP extrae precio_lista de list_price_range", (() => {
+  const r = parseCatalogoMCP({ result: { content: [{ type: "text", text: JSON.stringify({ products: [
+    { title: "X", price_range: { min: { amount: 10000 } }, list_price_range: { min: { amount: 12900 } } },
+    { title: "Y", price_range: { min: { amount: 10000 } }, list_price_range: { min: { amount: 0 } } },
+  ] }) }] } });
+  return r[0].precio_lista === "129.00" && r[1].precio_lista === undefined;
+})());
+// wiring
+caso("v64: suggestShopify trae compare_at_price_min como precio_lista", /precio_lista: p\.compare_at_price_min \|\| undefined/.test(src));
+caso("v64: el mapa del MCP conserva precio_lista", /precio_usd: p\.precio_usd, precio_lista: p\.precio_lista/.test(src));
+caso("v64: enriquecer agrega los datos de oferta calculados en código", /\.\.\.datosOferta\(p\.precio_usd, p\.precio_lista\)/.test(src));
+// prompt
+caso("v64: SYSTEM_PROMPT tiene la regla OFERTA / PRECIO REBAJADO", /OFERTA \/ PRECIO REBAJADO/.test(SYSTEM_PROMPT) && /está en OFERTA 🏷️/.test(SYSTEM_PROMPT));
+caso("v64: prohíbe inventar ofertas o calcular el ahorro de memoria", /NUNCA digas que está en oferta ni insinúes descuentos/.test(SYSTEM_PROMPT) && /NUNCA calcules el ahorro ni el porcentaje de memoria/.test(SYSTEM_PROMPT));
+caso("v64: nunca promete duración de la oferta", /NUNCA prometas hasta cuándo dura la oferta/.test(SYSTEM_PROMPT));
 
 // --- resumen --------------------------------------------------------------------------------------
 console.log(`\n${ok} OK, ${mal} FALLA${mal === 1 ? "" : "S"}`);
