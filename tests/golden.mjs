@@ -1168,6 +1168,12 @@ caso("v68: fallo de STT → puente v67 (nunca silencio)", (() => {
 caso("v68: la nota transcrita conserva la URL del audio original", /\(esImagenCliente \|\| esAudioTranscrito\)/.test(src));
 caso("v68: SYSTEM_PROMPT — la transcripción puede errar en códigos: confirmar, no inventar", /\[nota de voz\] …" = lo que el cliente DIJO/.test(SYSTEM_PROMPT) && /confirma en una línea el modelo con el cliente ANTES de cotizar/.test(SYSTEM_PROMPT) && /aplica la regla anti-interrupción igual que si lo hubiera escrito/.test(SYSTEM_PROMPT));
 caso("v68: healthcheck expone stt/stt_configurado y versión v68", /stt: STT_MODE/.test(src) && /stt_configurado: !!OPENAI_API_KEY/.test(src) && /version: "v68-transcripcion"/.test(src));
+// autotest ?selftest=stt — permite medir calidad con audios REALES ya recibidos, sin esperar el shadow.
+caso("v68: autotest ?selftest=stt gated por key (patrón v44/v45)", /url\.searchParams\.get\("selftest"\) === "stt"/.test(src) && (() => {
+  const i = src.indexOf('url.searchParams.get("selftest") === "stt"');
+  const cuerpo = src.slice(i, i + 900);
+  return /k !== WEBHOOK_KEY && !\(DIAG_KEY && k === DIAG_KEY\)/.test(cuerpo) && /falta_openai_api_key/.test(cuerpo);
+})());
 
 // --- resumen --------------------------------------------------------------------------------------
 console.log(`\n${ok} OK, ${mal} FALLA${mal === 1 ? "" : "S"}`);

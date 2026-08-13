@@ -2380,6 +2380,25 @@ Deno.serve(async (req) => {
       const diag = await inventarioSelfTest(pid);
       return Response.json({ selftest: "inventario", ...diag, ts: new Date().toISOString() });
     }
+    // v68 — autotest de TRANSCRIPCIÓN, gated por ?key= (mismo patrón que el de inventario). Permite medir
+    // la calidad del STT con audios REALES ya recibidos (las URLs quedan en job_log evento_sin_texto /
+    // messages.media_url) SIN esperar una semana de shadow y sin manejar tokens a mano. Uso:
+    //   GET ?key=<WEBHOOK_KEY|DIAG_KEY>&selftest=stt&url=<url del audio en *.wati.io>
+    // La allowlist de descargarMediaBytes sigue aplicando: solo baja de dominios de WATI.
+    if (url.searchParams.get("selftest") === "stt") {
+      const k = url.searchParams.get("key");
+      if (k !== WEBHOOK_KEY && !(DIAG_KEY && k === DIAG_KEY)) return Response.json({ error: "forbidden" }, { status: 403 });
+      if (!OPENAI_API_KEY) return Response.json({ selftest: "stt", diagnostico: "falta_openai_api_key" });
+      const audioUrl = url.searchParams.get("url") ?? "";
+      if (!audioUrl) return Response.json({ selftest: "stt", diagnostico: "falta_parametro_url" });
+      const tr = await transcribirAudio(audioUrl);
+      return Response.json({
+        selftest: "stt", modelo: STT_MODEL, modo_actual: STT_MODE,
+        diagnostico: tr ? "ok" : "fallo_ver_job_log_audio_stt_fallo",
+        ms: tr?.ms ?? null, bytes: tr?.bytes ?? null, texto: tr?.texto ?? null,
+        ts: new Date().toISOString(),
+      });
+    }
     return Response.json({ status: "ok", function: "copilot-webhook", version: "v68-transcripcion", mode: MODE, mode_raw: MODE_RAW, model: MODEL, llm_configured: !!anthropic, wati_send_configured: !!(WATI_API_TOKEN && WATI_API_BASE), inventario_configurado: !!(SHOPIFY_ADMIN_TOKEN && SHOPIFY_ADMIN_API_BASE), resolve_configured: !!RESOLVE_SECRET, webhook_key_es_default: WEBHOOK_KEY_ES_DEFAULT, handoff_assist_min: HANDOFF_ASSIST_MIN, handoff_cold_hours: HANDOFF_COLD_HOURS, debounce_ms: DEBOUNCE_MS, sesion_gap_dias: SESION_GAP_DIAS, burbujas: BURBUJAS, burbuja_ms: BURBUJA_MS, audio_puente: AUDIO_PUENTE, stt: STT_MODE, stt_raw: STT_RAW, stt_configurado: !!OPENAI_API_KEY, stt_model: STT_MODEL, busqueda_shadow: BUSQUEDA_SHADOW, busqueda_mcp: BUSQUEDA_MCP, busqueda_mcp_limit: BUSQUEDA_MCP_LIMIT, catalog_mcp_url: CATALOG_MCP_URL, ucp_profile_url: UCP_PROFILE_URL, live_targets: MODE === "live" ? (LIVE_ALL ? "all" : LIVE_ALLOWLIST.length) : 0, ts: new Date().toISOString() });
   }
   if (req.method !== "POST") return Response.json({ error: "method_not_allowed" }, { status: 405 });
