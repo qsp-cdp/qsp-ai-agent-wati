@@ -40,14 +40,21 @@ con certeza, y calla/deriva cuando es mejor que responda un humano. Tienda:
   `fuera_del_area_metro`) — ambos capturados y en la migración de fidelidad
   `20260813170000_resolver_tarifa_core_wrapper.sql` (**VALIDADA end-to-end en PG16 local**: 26 migraciones
   limpias, betania ok + telemetría, david/chorrera→fuera_del_area_metro, la boca sigue ok, transistmica
-  ambiguo×5) — y **`resolver_tarifa_v2`** (metro+interior, la llama el puente) cuyo functiondef AÚN FALTA.
-  563 golden + 21 node tests. **FALTA (bloquea Parte 2 del deploy):** (a)
-  `select pg_get_functiondef('public.resolver_tarifa_v2(text)'::regprocedure);` → su migración de fidelidad;
-  (b) re-descargar `shipday-status`/`wati-order`/`wati-address` DESDE la carpeta del repo (el intento cayó
-  en `C:\WINDOWS\system32\supabase\` — el CLI extrae relativo al cwd) y diffear sus index.ts (descartar más
-  parches a mano — la lección v52; en shipday-status es NORMAL ver las líneas v65 fail-closed como
-  eliminadas). El working tree de Isaac tiene los archivos de PROD descargados SIN commitear: NO hacer
-  `git checkout`/`git pull` hasta cerrar (b); después: `git checkout -- .` + `git pull` + Parte 2
+  ambiguo×5) — y **`resolver_tarifa_v2`** (metro+interior, la llama el puente): functiondef CAPTURADO →
+  migración `20260813180000_resolver_tarifa_v2_fn.sql` (byte-exacta, **VALIDADA con data desechable: los 6
+  caminos** — metro ok+ITBMS, interior ok con 2 opciones servientrega_sucursal $6/servientrega_domicilio $9
+  con ITBMS y plazo heredado de la fila provincia, comarca→sin_servicio, ambiguo entre provincias,
+  sin_match, guardia fuera_del_area_metro). La v2 destapó DEPENDENCIAS DE DATA que el repo no tiene:
+  tabla **`lugares_interior`** (provincia/lugar/tipo/con_servicio/plazo/nota/alias), filas
+  **`INT Sucursal`/`INT Domicilio`** en `zonas_entrega`, y keys **`itbms_rate`/`envio_gratis_umbral_usd`**
+  en `store_facts`. 563 golden + 21 node tests. **FALTA (bloquea Parte 2 del deploy):** (a) capturar la
+  DATA real de prod → migración de fidelidad (schema+filas de `lugares_interior`, filas INT, las 2 keys);
+  (b) el diff COMPLETO de `wati-address`/`wati-order` (el paginador lo cortó): **`wati-address` tiene
+  DERIVA REAL** (parche a mano: `es_correccion`, set `NEGATIVAS`/`descartarNegativa`, e importa
+  `isValidPhone`/`looksLikeLocation`/`looksUnresolved` que NO existen en el shipday.ts del repo → el
+  `_shared/` del bundle de wati-address también trae más cambios); `shipday-status` LIMPIO (solo las líneas
+  v65 eliminadas, esperado). El working tree de Isaac tiene los archivos de PROD descargados SIN commitear:
+  NO hacer `git checkout`/`git pull` hasta cerrar (b); después: `git checkout -- .` + `git pull` + Parte 2
   (`.\deploy.ps1 shipday-status wati-address wati-order shopify-webhook`).
 - **🚀 PARTE 1 EN VIVO (copilot-webhook desplegado 13-ago 15:46, healthcheck `version:v65-endurecimiento`);
   Parte 2 (puente: shipday-status/wati-*/shopify-webhook) BLOQUEADA por la reconciliación de arriba: v65
