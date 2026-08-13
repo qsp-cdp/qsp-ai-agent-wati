@@ -20,7 +20,10 @@ con certeza, y calla/deriva cuando es mejor que responda un humano. Tienda:
 **quickservicepanama.com** (suministros de impresión y tecnología en Panamá).
 
 ## Estado actual (2026-08-13)
-- **EN EL REPO, LISTO PARA DESPLEGAR: v66 (`v66-burbujas`).** Pedido de Gerencia (13-ago, diseño aprobado
+- **🚀 EN VIVO Y VERIFICADO (desplegado 13-ago; `COPILOT_BURBUJAS=1` flipeado 19:17Z, healthcheck
+  `burbujas:true`; caso real 2:24pm — Tinta Epson T664220 Cyan salió en 3 burbujas: tarjeta con FOTO +
+  título + link · "Precio: $10.00 + ITBMS (7%) = $10.70" · "Stock: ✅ 15 unidades. ¿Necesita también los
+  otros colores?"): v66 (`v66-burbujas`).** Pedido de Gerencia (13-ago, diseño aprobado
   "Está bien el orden"): la cotización de UN producto sale en **2-3 BURBUJAS encadenadas** como chatea un
   humano — (1) frase corta + TÍTULO + link pelado (el preview de WhatsApp pone la FOTO solo: sin API de
   media), (2) precio con ITBMS u OFERTA 🏷️, (3) stock con su emoji + pregunta de cierre. El modelo marca
