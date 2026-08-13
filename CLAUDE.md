@@ -20,7 +20,18 @@ con certeza, y calla/deriva cuando es mejor que responda un humano. Tienda:
 **quickservicepanama.com** (suministros de impresión y tecnología en Panamá).
 
 ## Estado actual (2026-08-13)
-- **RECONCILIACIÓN DERIVA `shopify-webhook` repo↔prod — BACK-PORT HECHO, verificación PENDIENTE.** La deriva
+- **🚀 PARTE 2 EN VIVO (13-ago): puente redesplegado (`shipday-status`/`wati-address`/`wati-order`/
+  `shopify-webhook`) — DERIVA repo↔prod CERRADA.** Desde hoy prod corre EXACTAMENTE lo del repo (rama de
+  trabajo): el parche F4/v31/v32 + es_correccion CONSERVADOS, más los supersets del repo que prod había
+  perdido: **la pata wati del círculo de pedidos RE-ENCENDIDA** (upsertPedido v48 en wati-order — estuvo
+  apagada ~06→13-ago), fail-closed v65 en shipday-status, sendWatiTemplateMessage + .trim() v40 en
+  watiapi.ts. Verificar con tráfico real: (1) próximo despacho WATI → `select * from pedidos where
+  fuente='wati' order by updated_at desc limit 3;` (2) `pedido_flag`/`envio_gratis_*` siguen fluyendo;
+  (3) captura con es_correccion limpia pin/referencia viejos. **Lección operativa:** la deriva nació de
+  parches a mano en prod del workstream de despacho (2 árboles distintos) — regla repo-first
+  (docs/flujo-despliegue.md): todo parche a prod se back-portea DE INMEDIATO, y los golden llevan locks
+  anti-regresión de las piezas que se perdieron. Detalle de la reconciliación abajo.
+- **RECONCILIACIÓN DERIVA `shopify-webhook` repo↔prod — CERRADA (histórico del proceso).** La deriva
   `pedido_flag` (v65) se identificó: prod corre un parche A MANO del workstream de despacho (su versionado
   propio "F4/v31/v32") que el repo no tenía. **Ya BACK-PORTEADO al repo** (13-ago, desde el `git diff` real de
   la descarga de prod): (1) `esRetiroEnTienda` (sin `shipping_address` o keywords recoger/pickup → no se
