@@ -1140,6 +1140,9 @@ caso("v67: telemetría audio_puente + envio_fallido del puente", /"audio_puente"
 caso("v67: SYSTEM_PROMPT — regla AUDIOS (no regañar ni repetir la petición)", /AUDIOS \/ NOTAS DE VOZ/.test(SYSTEM_PROMPT) && /NO puedes escuchar notas de voz/.test(SYSTEM_PROMPT) && /NO repitas esa petición/.test(SYSTEM_PROMPT));
 caso("v67: tope de turnos aplica también a audios", /await log\("tope_turnos", true, \{ waId, tipo: "audio" \}\)/.test(src));
 caso("v67: healthcheck expone audio_puente y versión v67", /audio_puente: AUDIO_PUENTE/.test(src) && /version: "v67-audio-puente"/.test(src));
+// sonda de transcripción: ¿WATI manda el audio ya transcrito? Solo nombres de claves y longitudes (PII v45).
+caso("v67: sonda audio_shape busca campo de transcripción sin volcar contenido", /"audio_shape"/.test(src) && /transcri\|speech\|voz\|voice\|caption\|dictat/.test(src) && /text_len: String\(p\?\.text \?\? ""\)\.trim\(\)\.length/.test(src));
+caso("v67: la sonda NO registra el texto del cliente (solo longitudes)", !/transcripcion: String\(\(p as any\)\[k\]\)/.test(src) && /largos_transcripcion/.test(src));
 
 // --- resumen --------------------------------------------------------------------------------------
 console.log(`\n${ok} OK, ${mal} FALLA${mal === 1 ? "" : "S"}`);

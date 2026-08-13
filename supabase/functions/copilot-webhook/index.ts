@@ -2406,6 +2406,18 @@ Deno.serve(async (req) => {
       const conv = (Array.isArray(convRows) ? convRows[0] : convRows) as { id: string; status: string; turns_today: number };
       if (!conv?.id) throw new Error("upsert_conversation devolvió vacío");
       const watiMsgId = (p.id ?? p.whatsappMessageId ?? null)?.toString() ?? null;
+      // v67 — SONDA DE TRANSCRIPCIÓN (diagnóstico, patrón v18.1): ¿WATI manda el audio ya transcrito? Si
+      // así fuera, hoy lo tiraríamos (el filtro exige type==='text') y podríamos alimentar el pipeline
+      // normal SIN proveedor de STT externo. Se registran solo NOMBRES de claves y LONGITUDES — nunca el
+      // contenido (lección de PII v45). Si esto muestra texto real, v68 lo cablea.
+      const clavesTranscripcion = Object.keys(p ?? {}).filter((k) => /transcri|speech|voz|voice|caption|dictat/i.test(k));
+      await log("audio_shape", true, {
+        waId, keys: Object.keys(p ?? {}).slice(0, 40),
+        text_len: String(p?.text ?? "").trim().length,
+        claves_transcripcion: clavesTranscripcion,
+        largos_transcripcion: clavesTranscripcion.map((k) => `${k}:${String((p as any)[k] ?? "").length}`),
+        mimeType: p?.mimeType ?? p?.mime_type ?? null,
+      });
       const insU = await sb.from("messages").insert({ conversation_id: conv.id, role: "user", content: "[audio]", mode: MODE, wati_message_id: watiMsgId, media_url: String(p.data ?? "").slice(0, 500) || null }).select("id");
       if (insU.error) {
         if (insU.error.code === "23505") return Response.json({ ok: true, skipped: "duplicado" });
