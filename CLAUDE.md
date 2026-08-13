@@ -33,7 +33,10 @@ con certeza, y calla/deriva cuando es mejor que responda un humano. Tienda:
   y envía. **Invariante anti-eco intacto (el riesgo serio del diseño):** una fila POR burbuja insertada
   ANTES de cada envío — 3 burbujas contra 1 fila = 3 ecos huérfanos = handoff falso; tokens/latencia/
   tool_calls en la 1ª fila; envío secuencial con 400ms; fallo a mitad ABORTA el resto (mejor título sin
-  precio que burbuja sin fila) con `envio_fallido` + resumen `respuesta_burbujas`. **Env-gated
+  precio que burbuja sin fila) con `envio_fallido` + resumen `respuesta_burbujas`. **v66.1 (pedido de
+  Gerencia tras ver el caso real):** la pausa entre burbujas pasa de 400 ms fijos a **`COPILOT_BURBUJA_MS`
+  (default 1000, tope 5000, 0=off)** — tuneable por secreto sin redeploy; healthcheck `burbuja_ms`.
+  **Env-gated
   `COPILOT_BURBUJAS`** (default OFF → deploy no-op: el marcador se RE-UNE y sale UN mensaje idéntico al de
   hoy; también se re-une siempre en sombra y asistencia — `[[---]]` jamás llega al cliente). Healthcheck
   `burbujas`. Reescribe el caché v35 (regla nueva → re-warm). 581 golden + 21 node tests. **Deploy:**

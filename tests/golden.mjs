@@ -1119,7 +1119,9 @@ caso("v66: gateado por COPILOT_BURBUJAS (default OFF)", /const BURBUJAS = \(Deno
 caso("v66: una fila POR burbuja, insertada ANTES de enviar (anti-eco v13/v21)", /fase: "burbuja_insert"/.test(src) && /content: partes\[bi\]/.test(src) && (() => { const iIns = src.indexOf("content: partes[bi]"); const iSend = src.indexOf("const ok = await enviarWati(waId, partes[bi])"); return iIns > -1 && iSend > -1 && iIns < iSend; })());
 caso("v66: el marcador se re-une en flujo normal Y asistencia (jamás llega al cliente)", /salida = partes\.join\("\\n\\n"\)/.test(src) && /salida = partirMensaje\(salida\)\.join\("\\n\\n"\)/.test(src));
 caso("v66: fallo a mitad ABORTA el resto + telemetría respuesta_burbujas", /sinEnviar = partes\.length - bi; break;/.test(src) && /"respuesta_burbujas"/.test(src));
-caso("v66: healthcheck expone burbujas", /burbujas: BURBUJAS/.test(src));
+caso("v66: healthcheck expone burbujas", /burbujas: BURBUJAS/.test(src) && /burbuja_ms: BURBUJA_MS/.test(src));
+// v66.1 — la pausa entre burbujas es tuneable por secreto (default 1000 ms, tope 5 s, 0 = sin pausa).
+caso("v66.1: pausa entre burbujas por COPILOT_BURBUJA_MS (default 1000)", /Deno\.env\.get\("COPILOT_BURBUJA_MS"\)/.test(src) && /Math\.min\(n, 5000\) : 1000/.test(src) && /BURBUJA_MS > 0\) await new Promise/.test(src));
 
 // --- resumen --------------------------------------------------------------------------------------
 console.log(`\n${ok} OK, ${mal} FALLA${mal === 1 ? "" : "S"}`);
