@@ -738,7 +738,23 @@ const dbSrc = readFileSync(join(dirname(fileURLToPath(import.meta.url)), "..", "
 caso("F4: db.ts del puente llama a resolver_tarifa_v2 (metro+interior)", /\/rpc\/resolver_tarifa_v2/.test(dbSrc));
 caso("F4: el copiloto sigue en resolver_tarifa (wrapper de telemetría, solo metro)", /rpc\("resolver_tarifa"/.test(src));
 caso("F4: ZonaResuelta conoce sin_servicio + ambito/provincia/lugar", /'sin_servicio'/.test(dbSrc) && /ambito\?: 'metro' \| 'interior'/.test(dbSrc));
-caso("v65: el PATCH de upsertContactByPhone actualiza lat/lng (fix CONSERVADO sobre prod)", /patch\.latitude = contact\.latitude/.test(dbSrc) && /patch\.latitude = null/.test(dbSrc));
+// Reconciliación 13-ago (parche wati-address de prod): el PATCH actualiza lat/lng cuando vienen (intent
+// v65) y la LIMPIEZA de pin/referencia/maps viejos quedó acotada a esCorreccion (flujo v2 de WATI).
+caso("v65/es_correccion: el PATCH actualiza lat/lng y la limpieza es por corrección", /patch\.latitude = contact\.latitude/.test(dbSrc) && /patch\.latitude = null/.test(dbSrc) && /esCorreccion\?: boolean/.test(dbSrc) && /opts\.esCorreccion\) patch\.maps_url = null/.test(dbSrc));
+// ANTI-REGRESIÓN (deriva 13-ago): el wati-order de PROD perdió la escritura a `pedidos` (su árbol no
+// tenía el helper v48) — el repo la RESTAURA. Si este lock falla, el círculo de pedidos pierde la pata wati.
+const watiOrderSrc = readFileSync(join(dirname(fileURLToPath(import.meta.url)), "..", "supabase", "functions", "wati-order", "index.ts"), "utf8");
+caso("v48: wati-order ESCRIBE pedidos (fuente wati) — prod lo había perdido", /upsertPedido\(\{/.test(watiOrderSrc) && /fuente: 'wati'/.test(watiOrderSrc));
+// Parche wati-address de prod ADOPTADO: valida variables WATI sin resolver, descarta negativas en prosa,
+// filtra maps por FORMA (looksLikeLocation) y propaga es_correccion al upsert.
+const watiAddrSrc = readFileSync(join(dirname(fileURLToPath(import.meta.url)), "..", "supabase", "functions", "wati-address", "index.ts"), "utf8");
+caso("wati-address: parche prod adoptado (es_correccion + NEGATIVAS + validación)", /esCorreccion/.test(watiAddrSrc) && /NEGATIVAS/.test(watiAddrSrc) && /looksUnresolved\(telefono\)/.test(watiAddrSrc) && /looksLikeLocation\(mapsRaw\)/.test(watiAddrSrc));
+const shipdaySrc = readFileSync(join(dirname(fileURLToPath(import.meta.url)), "..", "supabase", "functions", "_shared", "shipday.ts"), "utf8");
+caso("shipday.ts: helpers del parche prod (looksLikeLocation/looksUnresolved/isValidPhone)", /export function looksLikeLocation/.test(shipdaySrc) && /export function looksUnresolved/.test(shipdaySrc) && /export function isValidPhone/.test(shipdaySrc));
+// ANTI-REGRESIÓN: el watiapi.ts del árbol viejo de prod NO tenía el sender de plantillas (17-jul) ni el
+// .trim() v40 — el repo los conserva (los necesita el cron reengage-expired).
+const watiapiSrc = readFileSync(join(dirname(fileURLToPath(import.meta.url)), "..", "supabase", "functions", "_shared", "watiapi.ts"), "utf8");
+caso("watiapi.ts: conserva sendWatiTemplateMessage + .trim() v40 (el árbol viejo de prod los perdía)", /export async function sendWatiTemplateMessage/.test(watiapiSrc) && /\.trim\(\)/.test(watiapiSrc));
 
 // --- v60: FLIP a search_catalog (Catalog MCP) como motor primario ---------------------------------
 console.log("v60 flip a search_catalog");

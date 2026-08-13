@@ -1,15 +1,23 @@
 // Captura/actualización de datos de envío desde el flujo de WATI.
 //   POST https://<REF>.supabase.co/functions/v1/wati-address
 //   Header: x-wati-token: <WATI_WEBHOOK_TOKEN>
-//   Body: { waId | telefono, nombre?, direccion, referencia?, maps_url? }
+//   Body: { waId | telefono, nombre?, direccion, referencia?, maps_url?, es_correccion? }
 //
 // Guarda el contacto en la libreta (Supabase) y refleja los datos como
 // ATRIBUTOS del contacto en WATI, para que el agente vea en el perfil si el
 // cliente ya tiene datos de envío completos:
 //   direccion_envio · referencia_envio · maps_envio · envio_datos · envio_fecha
-import { HttpError, json, normalizePhone, resolveMapsCoords } from '../_shared/shipday.ts';
+import { HttpError, isValidPhone, json, looksLikeLocation, looksUnresolved, normalizePhone, resolveMapsCoords } from '../_shared/shipday.ts';
 import { upsertContactByPhone } from '../_shared/db.ts';
 import { updateWatiAttributes } from '../_shared/watiapi.ts';
+
+// Respuestas en prosa que significan "no tengo ese dato". La pregunta de
+// referencia no ofrece salida, pero la gente la escribe igual.
+const NEGATIVAS = new Set(['no', 'no.', 'no tengo', 'no lo tengo', 'ninguna', 'ninguno', 'nada', 'n/a', 'na', '-', '.']);
+
+function descartarNegativa(valor: string): string {
+  return NEGATIVAS.has(valor.toLowerCase()) ? '' : valor;
+}
 
 Deno.serve(async (req) => {
   if (req.method !== 'POST') return json({ error: 'Método no permitido' }, 405);
@@ -21,12 +29,43 @@ Deno.serve(async (req) => {
     const p = await req.json();
     const telefono = String(p.telefono ?? p.waId ?? p.wa_id ?? '').trim();
     const direccion = String(p.direccion ?? '').trim();
+    // Rechaza variables que WATI no resolvió (llegaron como @x o {{x}}): así no
+    // guardamos basura ni respondemos 200 en falso (WATI tomaría la rama de éxito).
+    if (looksUnresolved(telefono) || looksUnresolved(direccion)) {
+      throw new HttpError(400, 'WATI envió una variable sin resolver (revisa la sintaxis del body del webhook)');
+    }
     if (!telefono) throw new HttpError(400, 'Falta el teléfono (telefono o waId)');
     if (!direccion) throw new HttpError(400, 'Falta la dirección');
-    const referencia = String(p.referencia ?? '').trim();
-    const maps = String(p.maps_url ?? p.maps ?? p.ubicacion ?? '').trim();
-    const nombre = String(p.nombre ?? '').trim();
+
+    const referenciaRaw = looksUnresolved(p.referencia) ? '' : String(p.referencia ?? '').trim();
+    const referencia = descartarNegativa(referenciaRaw);
+
+    // El flujo invita a escribir "no" si el cliente no puede compartir el pin.
+    // Esa respuesta es prosa, no un mapa: se descarta en vez de guardarse como
+    // maps_url (así le pasó a los únicos 2 registros con maps_url de la libreta).
+    // Filtramos por FORMA, no por lista de palabras: solo pasa lo que parece
+    // ubicación de verdad, así también caen "ahí mismo", "en la casa", etc.
+    const mapsRaw = looksUnresolved(p.maps_url ?? p.maps)
+      ? '' : String(p.maps_url ?? p.maps ?? p.ubicacion ?? '').trim();
+    const maps = looksLikeLocation(mapsRaw) ? mapsRaw : '';
+    if (mapsRaw && !maps) {
+      console.log(`maps_url descartado, no es una ubicación: "${mapsRaw.slice(0, 60)}"`);
+    }
+
+    const nombre = looksUnresolved(p.nombre) ? '' : String(p.nombre ?? '').trim();
     const phone = normalizePhone(telefono);
+    if (!isValidPhone(phone)) {
+      throw new HttpError(400, `Teléfono inválido tras normalizar: "${phone}" (¿la variable del número no resolvió?)`);
+    }
+
+    // ¿Esta captura REEMPLAZA una dirección anterior? El flujo v2 solo pregunta
+    // "¿usamos esta dirección?" cuando el cliente YA tenía una guardada, y manda
+    // aquí el texto del botón (@confirma_direccion). Si llega resuelto y con
+    // valor, es una corrección: el pin y la referencia viejos describen el
+    // domicilio anterior y no deben sobrevivir a la dirección nueva.
+    // El bot original no manda este campo → esCorreccion=false → sin cambios.
+    const esCorreccion = !looksUnresolved(p.es_correccion)
+      && Boolean(String(p.es_correccion ?? '').trim());
 
     // Resuelve coordenadas: si el link es corto (maps.app.goo.gl) sigue la
     // redirección para sacar el pin exacto. Si trae lat/lng directas (ubicación
@@ -42,8 +81,8 @@ Deno.serve(async (req) => {
       maps_url: maps || null,
       ...(coords ? { latitude: coords.lat, longitude: coords.lng } : {}),
       source: 'wati',
-    });
-    console.log(`Dirección guardada para ${phone}`);
+    }, { esCorreccion });
+    console.log(`Dirección guardada para ${phone}${esCorreccion ? ' (corrección: reemplaza la anterior)' : ''}`);
 
     // Refleja en el perfil de WATI (best-effort: si falla, el dato ya quedó
     // en la libreta y el flujo no se rompe).
@@ -60,7 +99,7 @@ Deno.serve(async (req) => {
     } catch (err) {
       console.error('No se pudieron actualizar los atributos en WATI:', (err as Error).message);
     }
-    return json({ ok: true, guardado: true, atributos_wati: atributos });
+    return json({ ok: true, guardado: true, correccion: esCorreccion, con_pin: Boolean(maps), atributos_wati: atributos });
   } catch (err) {
     const status = err instanceof HttpError ? err.status : 500;
     console.error('Error en wati-address:', (err as Error).message);

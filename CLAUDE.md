@@ -53,16 +53,25 @@ con certeza, y calla/deriva cuando es mejor que responda un humano. Tienda:
   (28 migraciones limpias):** david→interior ok $6.42/$9.63 · changuinola hereda "3 a 5 días" de Bocas ·
   la chorrera/santiago/torti→interior ok · san blas→sin_servicio · 'el valle'→Z6 metro (CORRECTO:
   core-first, el barrio de San Miguelito gana) · el wrapper del copiloto intacto. 563 golden + 21 node
-  tests. **FALTA (bloquea Parte 2 del deploy):** (a) 2 queries de fidelidad de `zonas_entrega` (el
-  constraint real de `metodo` con pg_get_constraintdef + dump completo de las 10 filas — el frente
-  tarifario F1 del 06-ago pudo tocar tarifas/observaciones de las zonas METRO que el seed v47 no refleja);
-  (b) el diff COMPLETO de `wati-address`/`wati-order` (el paginador lo cortó): **`wati-address` tiene
-  DERIVA REAL** (parche a mano: `es_correccion`, set `NEGATIVAS`/`descartarNegativa`, e importa
-  `isValidPhone`/`looksLikeLocation`/`looksUnresolved` que NO existen en el shipday.ts del repo → el
-  `_shared/` del bundle de wati-address también trae más cambios); `shipday-status` LIMPIO (solo las líneas
-  v65 eliminadas, esperado). El working tree de Isaac tiene los archivos de PROD descargados SIN commitear:
-  NO hacer `git checkout`/`git pull` hasta cerrar (b); después: `git checkout -- .` + `git pull` + Parte 2
-  (`.\deploy.ps1 shipday-status wati-address wati-order shopify-webhook`).
+  tests. **RECONCILIACIÓN COMPLETA (13-ago, todo capturado y fusionado — commits hasta la secuencia de
+  cierre):** (a) zonas_entrega VERIFICADA (constraint de `metodo` = el de la migración; las 8 zonas METRO
+  idénticas repo↔prod — el frente F1 no las tocó); (b) el diff completo destapó que en prod conviven DOS
+  ÁRBOLES (el de shopify-webhook con F4 y otro MÁS VIEJO del que se desplegaron wati-address/wati-order el
+  ~06-ago): **`wati-address` parche ADOPTADO** (es_correccion + `UpsertOptions` en db.ts [supersede la
+  mitad "limpieza" del fix v65 lat/lng: el PATCH sigue actualizando coords, la limpieza quedó acotada a
+  corrección], NEGATIVAS en prosa, `looksUnresolved`/`isValidPhone`/`looksLikeLocation` + endurecimiento de
+  `resolveMapsCoords` [UA navegador, body.cancel, logging] + validación en `watiCaptureToShipday` — todo en
+  `_shared/shipday.ts`); **🚨 REGRESIÓN EN PROD detectada y RESTAURADA en el repo: el `wati-order` de prod
+  PERDIÓ el `upsertPedido` v48** (su árbol no tenía el helper → la pata wati del círculo de pedidos está
+  APAGADA en prod desde ~06-ago; el repo la conserva y la Parte 2 la re-enciende); `watiapi.ts` del árbol
+  viejo perdía `sendWatiTemplateMessage` (17-jul) y el `.trim()` v40 → el repo los CONSERVA (los necesita
+  reengage-expired); `shipday-status` limpio (solo faltaba el fail-closed v65, que el repo lleva). Locks
+  anti-regresión de todo esto en golden (567 OK) + 21 node; los 6 bundles validan con esbuild.
+  **SECUENCIA DE CIERRE (Isaac):** `cd C:\Users\Gerencia\qsp-ai-agent-wati` → `git checkout -- .` →
+  `Remove-Item deriva-prod.txt` → `git pull` → `.\deploy.ps1 shipday-status wati-address wati-order
+  shopify-webhook` (sin migraciones que aplicar: todas las de fidelidad YA están en prod). **Verificar
+  después:** shipday-status sin token → 401; próxima captura WATI escribe contacto (y con `es_correccion`
+  limpia pin/referencia viejos); próximo despacho WATI vuelve a escribir `pedidos` fuente='wati'.
 - **🚀 PARTE 1 EN VIVO (copilot-webhook desplegado 13-ago 15:46, healthcheck `version:v65-endurecimiento`);
   Parte 2 (puente: shipday-status/wati-*/shopify-webhook) BLOQUEADA por la reconciliación de arriba: v65
   (`v65-endurecimiento`).** Paquete de la REVISIÓN PROFUNDA del

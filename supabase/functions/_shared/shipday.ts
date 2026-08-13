@@ -118,6 +118,17 @@ export function parseMapsCoords(url?: string): { lat: number; lng: number } | nu
   return { lat, lng };
 }
 
+// ¿El valor es una ubicación de verdad? Solo aceptamos link http(s), URI geo:
+// (ubicación nativa de WhatsApp) o un par de coordenadas suelto. Todo lo demás
+// — "no", "no lo tengo", "ahí mismo" — es prosa, no un pin: filtrar por FORMA
+// evita la carrera interminable contra una lista de palabras negativas.
+export function looksLikeLocation(value?: unknown): boolean {
+  const s = String(value ?? '').trim();
+  if (!s) return false;
+  if (/^https?:\/\//i.test(s) || /^geo:/i.test(s)) return true;
+  return parseMapsCoords(s) != null;
+}
+
 // Los links cortos (maps.app.goo.gl, goo.gl/maps) no traen coordenadas: hay
 // que seguir la redirección para llegar a la URL larga que sí las tiene.
 // Devuelve las coordenadas o null (nunca lanza: si falla, seguimos sin pin).
@@ -129,20 +140,36 @@ export async function resolveMapsCoords(url?: string, fetchFn = fetch): Promise<
     // manual: leemos el Location del 3xx sin seguirlo (más rápido y evita cargar la página)
     let current = url;
     for (let i = 0; i < 5; i++) {
-      const res = await fetchFn(current, { method: 'GET', redirect: 'manual', signal: AbortSignal.timeout(6000) });
+      const res = await fetchFn(current, {
+        method: 'GET',
+        redirect: 'manual',
+        // UA de navegador: Google puede responder distinto a clientes "raros"
+        // desde IPs de datacenter.
+        headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0 Safari/537.36' },
+        signal: AbortSignal.timeout(6000),
+      });
       const loc = res.headers.get('location');
       if (loc) {
         const coords = parseMapsCoords(loc);
-        if (coords) return coords;
+        if (coords) {
+          if (res.body) await res.body.cancel();
+          return coords;
+        }
         current = new URL(loc, current).href;
+        if (res.body) await res.body.cancel();
         continue;
       }
       // sin redirección: intentar parsear el cuerpo (algunos short links resuelven vía HTML)
       const body = await res.text();
-      return parseMapsCoords(body);
+      const fromBody = parseMapsCoords(body);
+      // Solo se registra el fallo (sin datos de ubicación del cliente): útil
+      // para detectar bloqueos de Google al datacenter (403/429/consent).
+      if (!fromBody) console.log(`resolveMaps sin coordenadas: HTTP ${res.status}, body ${body.length} bytes`);
+      return fromBody;
     }
-  } catch {
-    // red/timeout: seguimos sin coordenadas, el link igual viaja en instrucciones
+    console.log('resolveMaps: se agotaron los saltos de redirección');
+  } catch (err) {
+    console.log(`resolveMaps error: ${String(err).slice(0, 200)}`);
   }
   return null;
 }
@@ -152,6 +179,12 @@ export function watiCaptureToShipday(capture: WatiCapture, pickup: Pickup = defa
   const missing = required.filter((f) => !String(capture?.[f] ?? '').trim());
   if (missing.length) {
     throw new HttpError(400, `Faltan campos obligatorios: ${missing.join(', ')}`);
+  }
+  if (looksUnresolved(capture.telefono) || looksUnresolved(capture.direccion)) {
+    throw new HttpError(400, 'Variable de WATI sin resolver en el pedido (teléfono o dirección)');
+  }
+  if (!isValidPhone(normalizePhone(capture.telefono!))) {
+    throw new HttpError(400, `Teléfono inválido: "${normalizePhone(capture.telefono!)}"`);
   }
   const direccion = [capture.direccion, capture.referencia].filter(Boolean).join(' — ');
   const items = Array.isArray(capture.items)
@@ -192,6 +225,18 @@ export function normalizePhone(phone: string | number): string {
   // Panamá: celulares de 8 dígitos → anteponer +507
   if (/^\d{7,8}$/.test(digits)) return `+${digits.length <= 8 ? '507' : ''}${digits}`;
   return `+${digits}`;
+}
+
+// Detecta un valor que WATI no resolvió: llegó como plantilla literal
+// (@variable o {{variable}}). Evita guardar basura y falsos éxitos.
+export function looksUnresolved(value: unknown): boolean {
+  const s = String(value ?? '');
+  return s.startsWith('@') || s.includes('{{') || s.includes('}}');
+}
+
+// Teléfono ya normalizado válido: + seguido de 8 a 15 dígitos.
+export function isValidPhone(phone: string): boolean {
+  return /^\+\d{8,15}$/.test(phone);
 }
 
 export class HttpError extends Error {

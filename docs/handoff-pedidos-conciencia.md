@@ -59,7 +59,9 @@ el `waId` de WATI. Quedó cableado así:
 - **`shipday-status`** (tras parsear el evento): `fuente:'shipday'`, `pedido_ref:event.orderNumber`,
   `estado: estadoNormalizado(event.status)` (helper en `_shared/status.ts`), `estado_raw`, `tracking`, `metodo:'propia'`.
 - **`wati-order`** (tras `createShipdayOrder` OK): `fuente:'wati'`, `pedido_ref:String(order.orderNumber)`,
-  `estado:'nuevo'`, `metodo:'propia'`, `total_usd`, `resumen`.
+  `estado:'nuevo'`, `metodo:'propia'`, `total_usd`, `resumen`. ⚠️ **El deploy de prod del ~06-ago (árbol del
+  workstream de despacho) PERDIÓ este upsert** — la pata wati estuvo apagada hasta el redeploy de la
+  reconciliación del 13-ago; hay un lock en golden para que no vuelva a pasar.
 
 El copiloto frasea el `estado` NORMALIZADO (no el crudo). `estadoNormalizado` (en `_shared/status.ts`) mapea el
 vocabulario de Shipday (el mismo que `STATUS_MESSAGES`).

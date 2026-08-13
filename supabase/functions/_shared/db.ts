@@ -85,28 +85,49 @@ export async function findContactByPhone(phone: string): Promise<Contact | null>
   return rows[0] ?? null;
 }
 
+export interface UpsertOptions {
+  // El cliente YA tenía dirección guardada y pidió cambiarla. El pin y la
+  // referencia viejos describen el domicilio anterior, así que si no llegan
+  // nuevos se LIMPIAN en vez de sobrevivir junto a la dirección nueva: Shipday
+  // prioriza el pin, y dejarlo mandaría al repartidor a la casa vieja.
+  esCorreccion?: boolean;
+}
+
 // Inserta o actualiza el contacto por teléfono: así la libreta se mantiene
-// fresca con cada captura o pedido que entra por WATI. En la actualización
-// solo se tocan los campos que vienen con valor (no borra datos previos).
-export async function upsertContactByPhone(contact: Contact): Promise<void> {
+// fresca con cada captura o pedido que entra por WATI. En una captura normal
+// solo se tocan los campos que vienen con valor (no borra datos previos); en
+// una corrección (ver UpsertOptions) los campos de ubicación que no lleguen se
+// limpian, para que no queden datos del domicilio anterior.
+// (Supersede el fix v65 del 13-ago: la mitad "el PATCH actualiza lat/lng cuando
+// vienen" se conserva; la limpieza de los viejos quedó acotada a esCorreccion —
+// el flujo v2 de WATI manda la señal — en vez de dispararse con cualquier
+// dirección sin pin, que borraba pines buenos en re-capturas.)
+export async function upsertContactByPhone(
+  contact: Contact,
+  opts: UpsertOptions = {},
+): Promise<void> {
   const existing = await findContactByPhone(contact.phone);
   if (existing) {
     const patch: Record<string, unknown> = { updated_at: new Date().toISOString() };
     if ((contact.name || '').trim()) patch.name = contact.name;
     if ((contact.address || '').trim()) patch.address = contact.address;
+
     if ((contact.referencia ?? '').toString().trim()) patch.referencia = contact.referencia;
+    else if (opts.esCorreccion) patch.referencia = null;
+
     if ((contact.maps_url ?? '').toString().trim()) patch.maps_url = contact.maps_url;
-    // v65 — las coordenadas SOLO se escribían en el INSERT: un cliente recurrente que cambiaba de dirección
-    // quedaba con el pin VIEJO y el driver de Shipday navegaba a la dirección anterior. Ahora el PATCH las
-    // actualiza cuando vienen resueltas; si llega dirección nueva SIN coordenadas, se limpian las viejas
-    // (mejor sin pin que con el pin equivocado — Shipday geocodifica el texto).
+    else if (opts.esCorreccion) patch.maps_url = null;
+
     if (contact.latitude != null && contact.longitude != null) {
       patch.latitude = contact.latitude;
       patch.longitude = contact.longitude;
-    } else if ((contact.address || '').trim()) {
+    } else if (opts.esCorreccion) {
+      // Sin pin nuevo: se borra el viejo. Shipday geocodifica desde la dirección
+      // en vez de enrutar a las coordenadas del domicilio anterior.
       patch.latitude = null;
       patch.longitude = null;
     }
+
     const digits = lastDigits(contact.phone);
     const res = await fetch(restUrl(`/contacts?phone_digits=eq.${digits}`), {
       method: 'PATCH',
