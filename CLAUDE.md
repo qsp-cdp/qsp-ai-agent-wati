@@ -20,7 +20,15 @@ con certeza, y calla/deriva cuando es mejor que responda un humano. Tienda:
 **quickservicepanama.com** (suministros de impresión y tecnología en Panamá).
 
 ## Estado actual (2026-08-13)
-- **EN EL REPO, LISTO PARA DESPLEGAR (SHADOW-FIRST, riesgo cero al cliente): v68 (`v68-transcripcion`).**
+- **🚀 EN VIVO Y VERIFICADO (13-ago, `COPILOT_STT=live`): v68 (`v68-transcripcion`).** Nota de voz real →
+  transcrita → respondida por el bot. **Bug de integración hallado y corregido en la 1ª prueba live** (dos
+  features nuevas chocando): la VISIÓN DE RÁFAGA (v49) junta el `media_url` de los mensajes recientes del
+  cliente, y desde v67/v68 las notas de voz también guardan uno → el `.opus` viajaba a Claude etiquetado
+  como imagen → **400 "Could not process image"**, turno muerto y respuesta de respaldo (la transcripción
+  sí había funcionado). Fixes: (a) el bucle de visión IGNORA las filas de audio (por contenido: `[audio]` /
+  `[nota de voz]`); (b) defensa de fondo — `descargarMediaWati` ya NO asume `image/jpeg` para cualquier
+  archivo: si ni el content-type ni la extensión dicen imagen, no adjunta y loguea `media_no_es_imagen`
+  (mata la clase entera: mañana un PDF tampoco podrá matar un turno). 611 golden + 21 node tests.
   El bot ENTIENDE las notas de voz. Tras verificar que WATI no sirve (no manda transcripción por webhook y
   la del inbox es un botón MANUAL — ver v67), se agrega el ÚNICO camino posible: **STT externo** (API de
   OpenAI, key que ya tiene Gerencia). Flujo: `descargarMediaBytes` (bytes crudos con la MISMA allowlist
