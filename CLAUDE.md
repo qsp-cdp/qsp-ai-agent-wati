@@ -20,7 +20,31 @@ con certeza, y calla/deriva cuando es mejor que responda un humano. Tienda:
 **quickservicepanama.com** (suministros de impresión y tecnología en Panamá).
 
 ## Estado actual (2026-08-13)
-- **EN EL REPO, LISTO PARA DESPLEGAR: v65 (`v65-endurecimiento`).** Paquete de la REVISIÓN PROFUNDA del
+- **RECONCILIACIÓN DERIVA `shopify-webhook` repo↔prod — BACK-PORT HECHO, verificación PENDIENTE.** La deriva
+  `pedido_flag` (v65) se identificó: prod corre un parche A MANO del workstream de despacho (su versionado
+  propio "F4/v31/v32") que el repo no tenía. **Ya BACK-PORTEADO al repo** (13-ago, desde el `git diff` real de
+  la descarga de prod): (1) `esRetiroEnTienda` (sin `shipping_address` o keywords recoger/pickup → no se
+  clasifica la dirección: sin zona ni flag); (2) `calcularFlag` (5 flags: `direccion_no_reconocida`,
+  `sin_servicio_comarca`, `eligio_ciudad_siendo_interior`, `eligio_interior_siendo_ciudad`,
+  `domicilio_imposible_z4a`) → job_log `pedido_flag` + columna `envio_flag` + nota 🚨 en Shipday (NO bloquea
+  nada); (3) `esFlotaPropia` excluye `ambito:'interior'`; (4) **`upsertPedido` corre para TODO pedido** (antes
+  solo despachados) con 5 campos nuevos `zona`/`zona_estado`/`zona_ambito`/`tarifa_zona_usd`/`envio_flag`
+  (migración de fidelidad `20260813160000_pedidos_zona_flags.sql` — columnas YA en prod, NO re-aplicar);
+  (5) `db.ts`: `ZonaResuelta` con `sin_servicio`/`ambito`/`lugar`/`provincia` + `PedidoUpsert` con las 5
+  llaves, CONSERVANDO el fix v65 de lat/lng (prod no lo tiene → el repo queda superset). El RPC
+  `resolver_tarifa` de prod es ahora un WRAPPER con telemetría `tarifa_consulta` que delega en
+  **`resolver_tarifa_core`** (functiondef del wrapper capturado; falta el del core para la migración de
+  fidelidad del resolver). 559 golden + 21 node tests. **FALTA (bloquea Parte 2 del deploy):** (a) `git diff
+  supabase/functions/_shared/` corrido DESDE el repo (el intento falló: se corrió desde system32) para
+  verificar el db.ts/shipday.ts de prod contra lo inferido; (b)
+  `select pg_get_functiondef('public.resolver_tarifa_core(text)'::regprocedure);`; (c) descargar
+  `shipday-status`/`wati-order`/`wati-address` y diffear sus index.ts (descartar más parches a mano — la
+  lección v52). El working tree de Isaac tiene los archivos de PROD descargados SIN commitear: NO hacer
+  `git checkout`/`git pull` hasta capturar (a); después: `git checkout -- .` + `git pull` + Parte 2
+  (`.\deploy.ps1 shipday-status wati-address wati-order shopify-webhook`).
+- **🚀 PARTE 1 EN VIVO (copilot-webhook desplegado 13-ago 15:46, healthcheck `version:v65-endurecimiento`);
+  Parte 2 (puente: shipday-status/wati-*/shopify-webhook) BLOQUEADA por la reconciliación de arriba: v65
+  (`v65-endurecimiento`).** Paquete de la REVISIÓN PROFUNDA del
   13-ago (workflow de 13 agentes: 5 lentes + verificación adversarial; 37 hallazgos → 7 CONFIRMADOS
   mecánicamente + seguridad + prompt). Fixes: (1) 🔴 un asesor que responde SOLO con media (PDF/captura, ~350
   docs/semana) ahora SÍ marca handoff + `human-agent` (antes bypasseaba la anti-interrupción y el bot podía

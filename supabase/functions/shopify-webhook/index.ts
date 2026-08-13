@@ -20,17 +20,45 @@ function esEnvioGratis(shopifyOrder: any): boolean {
 }
 
 // ¿La zona resuelta es entrega de FLOTA PROPIA (→ Shipday)? Solo entonces se despacha un envío gratis
-// "rescatado". Cualquier otra cosa (sin_match=interior, servientrega, retiro, asesor, o RPC caído/null) → false:
+// "rescatado". Cualquier otra cosa (interior/sin_servicio de v2, servientrega, retiro, asesor, o RPC caído/null) → false:
 // no es nuestra flota, va por Servientrega a la sucursal o lo ve el operador. `ambiguo` solo si TODAS las
 // opciones son propias (ej. San Miguelito Z3/Z6, ambas $7 propia). Conservador: ante la duda, NO despacha.
 function esFlotaPropia(zona: ZonaResuelta | null): boolean {
   if (!zona) return false;
-  if (zona.estado === 'ok') return zona.metodo === 'propia';
+  if (zona.estado === 'ok') return zona.ambito !== 'interior' && zona.metodo === 'propia';
   if (zona.estado === 'ambiguo') {
     const ops = zona.opciones ?? [];
     return ops.length > 0 && ops.every((o: any) => o?.metodo === 'propia');
   }
   return false;
+}
+
+// v32: RETIRO EN TIENDA. Señal fuerte = el pedido NO trae `shipping_address` (Shopify no pide dirección
+// cuando el cliente elige recoger). El nombre de la tarifa NO sirve solo: en esta tienda es literalmente
+// la dirección del local ("Via Ricardo J Alfaro, Plaza Aventura...") y no contiene la palabra retiro.
+// Sin esta guardia el resolver clasificaría la dirección de FACTURACIÓN y marcaría flags de puro ruido.
+function esRetiroEnTienda(shopifyOrder: any): boolean {
+  const env = shopifyOrder?.shipping_address;
+  const sinDireccion = !env || !String(env.address1 ?? '').trim();
+  if (sinDireccion) return true;
+  const lineas: string = (shopifyOrder?.shipping_lines || []).map((l: any) => `${l?.title ?? ''} ${l?.code ?? ''}`).join(' ').toLowerCase();
+  return lineas.includes('recoger') || lineas.includes('retiro en tienda') || lineas.includes('pickup');
+}
+
+// F4 (v31): detecta ventas imposibles o mal ruteadas comparando la LÍNEA de envío elegida en el
+// checkout con la zona real resuelta. NO bloquea nada — el agente humano maneja y asigna todos los
+// pedidos; esto produce `envio_flag` (pedidos) + job_log `pedido_flag` + nota 🚨 en Shipday.
+function calcularFlag(shopifyOrder: any, zona: ZonaResuelta | null, esLineaCiudad: boolean, gratis: boolean): string | null {
+  if (!zona) return null;
+  const lineas: string = (shopifyOrder?.shipping_lines || []).map((l: any) => `${l?.title ?? ''} ${l?.code ?? ''}`).join(' ').toLowerCase();
+  const esLineaInterior = lineas.includes('servientrega') || lineas.includes('sucursal');
+  if (zona.estado === 'sin_match') return 'direccion_no_reconocida';
+  if (zona.estado === 'sin_servicio') return 'sin_servicio_comarca';
+  if (zona.estado !== 'ok') return null; // ambiguo ya lleva su nota ⚠️; no es un imposible
+  if (zona.ambito === 'interior' && esLineaCiudad) return 'eligio_ciudad_siendo_interior';
+  if (zona.ambito !== 'interior' && esLineaInterior) return 'eligio_interior_siendo_ciudad';
+  if (zona.ambito !== 'interior' && zona.metodo === 'retiro_agente_verde' && (esLineaCiudad || gratis)) return 'domicilio_imposible_z4a';
+  return null;
 }
 
 async function verifyShopifyHmac(rawBody: string, hmacHeader: string): Promise<boolean> {
@@ -64,28 +92,62 @@ Deno.serve(async (req) => {
     // RESCATE de envío gratis (>$300, todo el país): esa tarifa no pasa el filtro por nombre, pero SÍ debe ir
     // a Shipday cuando es entrega de flota PROPIA (ciudad). En el interior el envío gratis es a la sucursal
     // Servientrega (retiro) → NO va a Shipday. La zona resuelta decide; se reutiliza para el enriquecimiento.
-    let zona: ZonaResuelta | null = null;
-    let despachar = shouldDispatchShopifyOrder(shopifyOrder);
-    if (!despachar && esEnvioGratis(shopifyOrder)) {
-      zona = await resolverTarifa(String(order.customerAddress ?? ''));
+    // F4 (v31): la zona se resuelve SIEMPRE con resolver_tarifa_v2 (metro+interior) y se persiste en
+    // `pedidos` junto con `envio_flag`. NADA se bloquea: el agente humano maneja y asigna todos los
+    // pedidos; los casos imposibles solo llevan nota 🚨 en Shipday + flag consultable.
+    const esLineaCiudad = shouldDispatchShopifyOrder(shopifyOrder);
+    const gratis = esEnvioGratis(shopifyOrder);
+    // v32: en retiro no hay dirección de entrega que clasificar — el pedido se registra sin zona ni flag.
+    const retiro = esRetiroEnTienda(shopifyOrder);
+    const zona = retiro ? null : await resolverTarifa(String(order.customerAddress ?? ''));
+    let despachar = esLineaCiudad;
+    if (!despachar && gratis) {
       despachar = esFlotaPropia(zona);
       await logJob('shopify-webhook', despachar ? 'envio_gratis_rescatado' : 'envio_gratis_omitido', true, {
         order: order.orderNumber, zona: zona?.zona ?? zona?.estado ?? 'n/d', total: shopifyOrder.total_price ?? null,
       });
     }
+    const flag = calcularFlag(shopifyOrder, zona, esLineaCiudad, gratis);
+    if (flag) {
+      await logJob('shopify-webhook', 'pedido_flag', true, {
+        order: order.orderNumber, flag, zona: zona?.zona ?? zona?.estado ?? 'n/d',
+        ambito: zona?.ambito ?? null, lugar: zona?.lugar ?? null, total: shopifyOrder.total_price ?? null,
+      });
+    }
+    // v48/v52/v31: conciencia de pedidos — ahora se escribe para TODO pedido (antes solo los
+    // despachados): el copiloto gana visibilidad de interior/retiro y la zona+flag quedan consultables.
+    await upsertPedido({
+      wa_id: normalizePhone(String(order.customerPhoneNumber ?? '')),
+      fuente: 'shopify',
+      pedido_ref: String(order.orderNumber),
+      shopify_order_id: shopifyOrder.id != null ? String(shopifyOrder.id) : null,
+      estado: shopifyOrder.cancelled_at ? 'cancelado' : 'nuevo',
+      estado_raw: shopifyOrder.financial_status ?? null,
+      metodo: zona?.estado === 'ok' ? (zona.ambito === 'interior' ? 'servientrega' : (zona.metodo ?? 'propia')) : (despachar ? 'propia' : undefined),
+      total_usd: Number(shopifyOrder.total_price) || null,
+      resumen: (shopifyOrder.line_items || []).map((li: any) => `${li.quantity}x ${li.title}`).slice(0, 3).join(', ') || null,
+      zona: zona?.estado === 'ok' ? (zona.ambito === 'interior' ? `INT ${[zona.provincia, zona.lugar && zona.lugar !== zona.provincia ? zona.lugar : null].filter(Boolean).join(' · ')}` : (zona.zona ?? null)) : null,
+      zona_estado: zona?.estado ?? null,
+      zona_ambito: zona?.estado === 'ok' ? (zona.ambito ?? 'metro') : null,
+      tarifa_zona_usd: zona?.estado === 'ok' && zona.ambito !== 'interior' && zona.tarifa_usd != null ? Number(zona.tarifa_usd) : null,
+      envio_flag: flag,
+    });
     if (!despachar) {
-      console.log(`Pedido ${shopifyOrder.order_number ?? shopifyOrder.id} omitido (no es entrega local)`);
+      console.log(`Pedido ${shopifyOrder.order_number ?? shopifyOrder.id} omitido (${retiro ? 'retiro en tienda' : 'no es entrega local'})${flag ? ` · flag ${flag}` : ''}`);
       return json({ ok: true, skipped: true });
     }
     // v52: enriquecimiento de despacho. NO altera la dirección que Shipday geocodifica;
     // agrega la zona resuelta a las instrucciones para quien despacha. Best-effort:
     // si el RPC falla o tarda, `zona` es null y el pedido sale igual que antes.
-    if (zona === null) zona = await resolverTarifa(String(order.customerAddress ?? ''));
     const nota: string[] = [];
-    if (zona?.estado === 'ok') {
+    if (zona?.estado === 'ok' && zona.ambito === 'interior') {
+      nota.push(`🚨 PEDIDO DEL INTERIOR (${[zona.provincia, zona.lugar && zona.lugar !== zona.provincia ? zona.lugar : null].filter(Boolean).join(' · ')}) con tarifa de ciudad — NO entregar con flota propia. Coordinar envío Servientrega con el cliente.`);
+    } else if (zona?.estado === 'ok') {
       nota.push(`🗺️ ${zona.zona} · $${zona.tarifa_usd} · ${zona.metodo} · confianza ${zona.confianza}`);
       if (zona.sectores?.length) nota.push(`Sector: ${zona.sectores.join(' / ')}`);
-      if (zona.metodo && zona.metodo !== 'propia') {
+      if (zona.metodo === 'retiro_agente_verde') {
+        nota.push(`🚨 Z4a — aquí NO hay entrega a DOMICILIO: solo retiro en punto. ${zona.puntos_retiro ?? ''}`.trim());
+      } else if (zona.metodo && zona.metodo !== 'propia') {
         nota.push(`⚠️ NO es flota propia (${zona.metodo}). ${zona.puntos_retiro ?? ''}`.trim());
       }
     } else if (zona?.estado === 'ambiguo') {
@@ -95,25 +157,14 @@ Deno.serve(async (req) => {
       nota.push(`⚠️ Zona ambigua — confirmar sector antes de despachar. Opciones: ${ops}`);
     } else if (zona?.estado === 'sin_match') {
       nota.push('⚠️ Dirección no reconocida en el diccionario de zonas — verificar antes de despachar.');
+    } else if (zona?.estado === 'sin_servicio') {
+      nota.push('🚨 Zona SIN SERVICIO de entrega (comarca) — coordinar con el cliente antes de despachar.');
     }
     if (nota.length) {
       order.deliveryInstruction = [order.deliveryInstruction, ...nota].filter(Boolean).join('\n');
     }
     const result = await createShipdayOrder(order);
-    console.log(`Pedido Shopify ${order.orderNumber} enviado a Shipday (zona: ${zona?.zona ?? zona?.estado ?? 'n/d'})`);
-    // v48: conciencia de pedidos — deja el estado en `pedidos` para el copiloto (best-effort, no rompe).
-    // `metodo` REAL (v52) — resuelto por la zona; cae a 'propia' si el resolver no dio 'ok'. estado 'nuevo'/'cancelado'.
-    await upsertPedido({
-      wa_id: normalizePhone(String(order.customerPhoneNumber ?? '')),
-      fuente: 'shopify',
-      pedido_ref: String(order.orderNumber),
-      shopify_order_id: shopifyOrder.id != null ? String(shopifyOrder.id) : null,
-      estado: shopifyOrder.cancelled_at ? 'cancelado' : 'nuevo',
-      estado_raw: shopifyOrder.financial_status ?? null,
-      metodo: zona?.estado === 'ok' ? (zona.metodo ?? 'propia') : 'propia',
-      total_usd: Number(shopifyOrder.total_price) || null,
-      resumen: (shopifyOrder.line_items || []).map((li: any) => `${li.quantity}x ${li.title}`).slice(0, 3).join(', ') || null,
-    });
+    console.log(`Pedido Shopify ${order.orderNumber} enviado a Shipday (zona: ${zona?.zona ?? zona?.estado ?? 'n/d'}${flag ? ` · flag ${flag}` : ''})`);
     return json({ ok: true, shipday: result });
   } catch (err) {
     console.error('Error Shopify→Shipday:', (err as Error).message);

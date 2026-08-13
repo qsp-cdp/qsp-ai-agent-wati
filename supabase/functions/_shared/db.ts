@@ -139,6 +139,14 @@ export interface PedidoUpsert {
   resumen?: string | null;
   shopify_order_id?: string | null;
   shipday_order_id?: string | null;
+  // F4 (v31 de shopify-webhook): la zona resuelta y el flag de ruteo quedan consultables en `pedidos`.
+  // `zona` es legible ("Z1 Centro" o "INT Chiriquí · David"); `envio_flag` marca ventas imposibles/mal
+  // ruteadas (direccion_no_reconocida / sin_servicio_comarca / eligio_* / domicilio_imposible_z4a).
+  zona?: string | null;
+  zona_estado?: string | null;     // ok/ambiguo/sin_match/sin_servicio (estado del resolver)
+  zona_ambito?: string | null;     // metro/interior
+  tarifa_zona_usd?: number | null; // solo metro con estado ok (la tarifa del interior la define Servientrega)
+  envio_flag?: string | null;
 }
 
 // Upsert por (fuente, pedido_ref) vía PostgREST (merge-duplicates). BEST-EFFORT y NULL-SAFE: nunca lanza —
@@ -154,7 +162,7 @@ export async function upsertPedido(p: PedidoUpsert): Promise<void> {
     const row: Record<string, unknown> = {
       wa_id: wa, fuente: p.fuente, pedido_ref: ref, updated_at: new Date().toISOString(),
     };
-    for (const k of ['estado', 'estado_raw', 'metodo', 'tracking', 'total_usd', 'resumen', 'shopify_order_id', 'shipday_order_id'] as const) {
+    for (const k of ['estado', 'estado_raw', 'metodo', 'tracking', 'total_usd', 'resumen', 'shopify_order_id', 'shipday_order_id', 'zona', 'zona_estado', 'zona_ambito', 'tarifa_zona_usd', 'envio_flag'] as const) {
       const v = p[k];
       if (v === undefined || v === null) continue;
       if (typeof v === 'string' && v.trim() === '') continue;
@@ -178,8 +186,13 @@ export async function upsertPedido(p: PedidoUpsert): Promise<void> {
 // zona/tarifa/método de la tabla para quien despacha, y alimenta el campo `metodo` de `pedidos`.
 // BEST-EFFORT: ante cualquier fallo devuelve null y el despacho sigue exactamente igual que antes.
 export interface ZonaResuelta {
-  estado: 'ok' | 'ambiguo' | 'sin_match';
+  // resolver_tarifa v2 (metro+interior): suma el estado `sin_servicio` (comarcas) y los campos
+  // `ambito` (metro/interior), `lugar` y `provincia` (para pedidos del interior).
+  estado: 'ok' | 'ambiguo' | 'sin_match' | 'sin_servicio';
   zona?: string;
+  ambito?: string;             // 'metro' | 'interior'
+  lugar?: string;              // lugar del interior resuelto (ej. "David")
+  provincia?: string;          // provincia del interior (ej. "Chiriquí")
   tarifa_usd?: number;
   metodo?: string;
   plazo?: string;

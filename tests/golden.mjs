@@ -720,7 +720,18 @@ caso("v60.2: cuando aplica (web) interior = sucursal Servientrega retiro, no pue
 // wiring del despacho (shopify-webhook, no copilot): fuente real chequeada por si la lógica se toca.
 const shopifySrc = readFileSync(join(dirname(fileURLToPath(import.meta.url)), "..", "supabase", "functions", "shopify-webhook", "index.ts"), "utf8");
 caso("v59.2: shopify-webhook rescata envío gratis por zona (esEnvioGratis + esFlotaPropia)", /esEnvioGratis\(shopifyOrder\)/.test(shopifySrc) && /esFlotaPropia\(zona\)/.test(shopifySrc));
-caso("v59.2: rescate solo despacha flota PROPIA (interior/servientrega/retiro → no Shipday)", /if \(zona\.estado === 'ok'\) return zona\.metodo === 'propia';/.test(shopifySrc) && /envio_gratis_omitido/.test(shopifySrc));
+// F4/v31 (back-port de prod 13-ago): esFlotaPropia además EXCLUYE ambito 'interior' (v2 del resolver
+// también resuelve interior con estado 'ok' — sin esta guardia, un interior 'ok' se despacharía a Shipday).
+caso("v59.2: rescate solo despacha flota PROPIA (interior/servientrega/retiro → no Shipday)", /if \(zona\.estado === 'ok'\) return zona\.ambito !== 'interior' && zona\.metodo === 'propia';/.test(shopifySrc) && /envio_gratis_omitido/.test(shopifySrc));
+// F4/v31/v32 (back-port de prod 13-ago): flags de ruteo + retiro en tienda + upsert para TODO pedido.
+caso("F4: calcularFlag cubre los 5 flags de venta imposible/mal ruteada", ["direccion_no_reconocida", "sin_servicio_comarca", "eligio_ciudad_siendo_interior", "eligio_interior_siendo_ciudad", "domicilio_imposible_z4a"].every((f) => shopifySrc.includes(`'${f}'`)) && /pedido_flag/.test(shopifySrc));
+caso("v32: retiro en tienda NO clasifica la dirección (sin zona ni flag)", /esRetiroEnTienda\(shopifyOrder\)/.test(shopifySrc) && /retiro \? null : await resolverTarifa/.test(shopifySrc));
+caso("F4: upsertPedido corre para TODO pedido (antes del gate !despachar) con zona+flag", (() => {
+  const iUp = shopifySrc.indexOf("await upsertPedido({");
+  const iGate = shopifySrc.indexOf("if (!despachar) {");
+  return iUp > -1 && iGate > -1 && iUp < iGate && /envio_flag: flag/.test(shopifySrc) && /zona_estado: zona\?\.estado \?\? null/.test(shopifySrc);
+})());
+caso("F4: pedido del interior → metodo servientrega y zona 'INT provincia · lugar'", /zona\.ambito === 'interior' \? 'servientrega'/.test(shopifySrc) && /INT \$\{/.test(shopifySrc));
 
 // --- v60: FLIP a search_catalog (Catalog MCP) como motor primario ---------------------------------
 console.log("v60 flip a search_catalog");

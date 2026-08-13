@@ -32,6 +32,11 @@ WATI→Shipday (despacho)        ──► wati-order       ─┘        (RPC e
 | `metodo` | `propia`\|`servientrega`\|`retiro_agente_verde`\|`asesor` (amarra al modelo de zonas) — nullable |
 | `tracking` | guía Servientrega / link de seguimiento Shipday (si hay) |
 | `total_usd`, `resumen` | opcionales, livianos (ej. `1x Epson L3250`) |
+| `zona` | (F4/v31 de shopify-webhook, 13-ago) zona resuelta legible: `Z1`/`Z4a` (metro) o `INT Chiriquí · David` (interior) — nullable |
+| `zona_estado` | estado del resolver: `ok`\|`ambiguo`\|`sin_match`\|`sin_servicio` |
+| `zona_ambito` | `metro`\|`interior` (solo cuando el resolver dio `ok`) |
+| `tarifa_zona_usd` | tarifa de la zona SOLO metro con `ok` (la del interior la define Servientrega) |
+| `envio_flag` | venta imposible/mal ruteada: `direccion_no_reconocida`\|`sin_servicio_comarca`\|`eligio_ciudad_siendo_interior`\|`eligio_interior_siendo_ciudad`\|`domicilio_imposible_z4a` |
 
 **Privacidad:** NO se guarda aquí dirección, cédula, RUC ni datos de pago (el bot no los necesita para decir
 el estado). Retención: purga futura por `created_at` (entregados/cancelados viejos), como `ref_codes`.
@@ -45,10 +50,12 @@ no colgar la respuesta; solo envía los campos con valor, así una fila `shipday
 `shopify`). El teléfono se normaliza a dígitos con código de país (`normalizePhone` → strip `\D`) para cruzar con
 el `waId` de WATI. Quedó cableado así:
 
-- **`shopify-webhook`** (tras `createShipdayOrder` OK): `fuente:'shopify'`, `pedido_ref:String(order.orderNumber)`,
-  `estado: cancelled_at ? 'cancelado' : 'nuevo'`, **`metodo` REAL (v52)** — resuelto por `resolver_tarifa(dirección)`
-  cuando el veredicto es `ok` (`servientrega`/`retiro_agente_verde`/`asesor`/`propia`); cae a `'propia'` si es
-  `ambiguo`/`sin_match` o el RPC falla — `total_usd`, `resumen` (líneas), `shopify_order_id`.
+- **`shopify-webhook`** (F4/v31, back-porteado de prod el 13-ago — el upsert corre para **TODO pedido**, ya no
+  solo los despachados, y ANTES de `createShipdayOrder`): `fuente:'shopify'`, `pedido_ref:String(order.orderNumber)`,
+  `estado: cancelled_at ? 'cancelado' : 'nuevo'`, **`metodo` REAL** — con veredicto `ok`: interior→`servientrega`,
+  metro→el `metodo` de la zona; sin veredicto: `propia` solo si se despacha (si no, se omite el campo) —
+  `total_usd`, `resumen` (líneas), `shopify_order_id`, **+ `zona`/`zona_estado`/`zona_ambito`/`tarifa_zona_usd`/
+  `envio_flag`** (retiro en tienda → sin zona ni flag: no hay dirección de entrega que clasificar).
 - **`shipday-status`** (tras parsear el evento): `fuente:'shipday'`, `pedido_ref:event.orderNumber`,
   `estado: estadoNormalizado(event.status)` (helper en `_shared/status.ts`), `estado_raw`, `tracking`, `metodo:'propia'`.
 - **`wati-order`** (tras `createShipdayOrder` OK): `fuente:'wati'`, `pedido_ref:String(order.orderNumber)`,
