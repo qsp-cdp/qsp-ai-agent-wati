@@ -190,7 +190,7 @@ export function normalizePhone(phone: string | number): string {
   const digits = String(phone).replace(/[^\d+]/g, '');
   if (digits.startsWith('+')) return digits;
   // Panamá: celulares de 8 dígitos → anteponer +507
-  if (/^\d{7,8}$/.test(digits)) return `+507${digits}`;
+  if (/^\d{7,8}$/.test(digits)) return `+${digits.length <= 8 ? '507' : ''}${digits}`;
   return `+${digits}`;
 }
 

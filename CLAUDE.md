@@ -30,17 +30,24 @@ con certeza, y calla/deriva cuando es mejor que responda un humano. Tienda:
   nada); (3) `esFlotaPropia` excluye `ambito:'interior'`; (4) **`upsertPedido` corre para TODO pedido** (antes
   solo despachados) con 5 campos nuevos `zona`/`zona_estado`/`zona_ambito`/`tarifa_zona_usd`/`envio_flag`
   (migración de fidelidad `20260813160000_pedidos_zona_flags.sql` — columnas YA en prod, NO re-aplicar);
-  (5) `db.ts`: `ZonaResuelta` con `sin_servicio`/`ambito`/`lugar`/`provincia` + `PedidoUpsert` con las 5
-  llaves, CONSERVANDO el fix v65 de lat/lng (prod no lo tiene → el repo queda superset). El RPC
-  `resolver_tarifa` de prod es ahora un WRAPPER con telemetría `tarifa_consulta` que delega en
-  **`resolver_tarifa_core`** (functiondef del wrapper capturado; falta el del core para la migración de
-  fidelidad del resolver). 559 golden + 21 node tests. **FALTA (bloquea Parte 2 del deploy):** (a) `git diff
-  supabase/functions/_shared/` corrido DESDE el repo (el intento falló: se corrió desde system32) para
-  verificar el db.ts/shipday.ts de prod contra lo inferido; (b)
-  `select pg_get_functiondef('public.resolver_tarifa_core(text)'::regprocedure);`; (c) descargar
-  `shipday-status`/`wati-order`/`wati-address` y diffear sus index.ts (descartar más parches a mano — la
-  lección v52). El working tree de Isaac tiene los archivos de PROD descargados SIN commitear: NO hacer
-  `git checkout`/`git pull` hasta capturar (a); después: `git checkout -- .` + `git pull` + Parte 2
+  (5) `db.ts` = el de PROD (diff `_shared/` capturado 13-ago) + el fix v65 de lat/lng CONSERVADO (prod no lo
+  tiene → el repo queda superset): `ZonaResuelta` con `sin_servicio`/`ambito`/`lugar`/`provincia`/`nota`/
+  `tarifa_con_itbms`/`envio_gratis_umbral_usd`, `PedidoUpsert` con las 5 llaves, y **`resolverTarifa` del
+  PUENTE llama al RPC `resolver_tarifa_v2`** (metro E interior — solo lo usa shopify-webhook; wati-* no).
+  (6) `shipday.ts`: línea `normalizePhone` de prod adoptada (no-op semántico, fidelidad byte). **El resolver
+  en prod quedó en 3 funciones:** `resolver_tarifa` (la llama el COPILOTO) = WRAPPER con telemetría
+  `tarifa_consulta` → **`resolver_tarifa_core`** (metro + guardia de provincias F1.2 del 06-ago:
+  `fuera_del_area_metro`) — ambos capturados y en la migración de fidelidad
+  `20260813170000_resolver_tarifa_core_wrapper.sql` (**VALIDADA end-to-end en PG16 local**: 26 migraciones
+  limpias, betania ok + telemetría, david/chorrera→fuera_del_area_metro, la boca sigue ok, transistmica
+  ambiguo×5) — y **`resolver_tarifa_v2`** (metro+interior, la llama el puente) cuyo functiondef AÚN FALTA.
+  563 golden + 21 node tests. **FALTA (bloquea Parte 2 del deploy):** (a)
+  `select pg_get_functiondef('public.resolver_tarifa_v2(text)'::regprocedure);` → su migración de fidelidad;
+  (b) re-descargar `shipday-status`/`wati-order`/`wati-address` DESDE la carpeta del repo (el intento cayó
+  en `C:\WINDOWS\system32\supabase\` — el CLI extrae relativo al cwd) y diffear sus index.ts (descartar más
+  parches a mano — la lección v52; en shipday-status es NORMAL ver las líneas v65 fail-closed como
+  eliminadas). El working tree de Isaac tiene los archivos de PROD descargados SIN commitear: NO hacer
+  `git checkout`/`git pull` hasta cerrar (b); después: `git checkout -- .` + `git pull` + Parte 2
   (`.\deploy.ps1 shipday-status wati-address wati-order shopify-webhook`).
 - **🚀 PARTE 1 EN VIVO (copilot-webhook desplegado 13-ago 15:46, healthcheck `version:v65-endurecimiento`);
   Parte 2 (puente: shipday-status/wati-*/shopify-webhook) BLOQUEADA por la reconciliación de arriba: v65

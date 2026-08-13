@@ -139,14 +139,11 @@ export interface PedidoUpsert {
   resumen?: string | null;
   shopify_order_id?: string | null;
   shipday_order_id?: string | null;
-  // F4 (v31 de shopify-webhook): la zona resuelta y el flag de ruteo quedan consultables en `pedidos`.
-  // `zona` es legible ("Z1 Centro" o "INT Chiriquí · David"); `envio_flag` marca ventas imposibles/mal
-  // ruteadas (direccion_no_reconocida / sin_servicio_comarca / eligio_* / domicilio_imposible_z4a).
-  zona?: string | null;
-  zona_estado?: string | null;     // ok/ambiguo/sin_match/sin_servicio (estado del resolver)
-  zona_ambito?: string | null;     // metro/interior
-  tarifa_zona_usd?: number | null; // solo metro con estado ok (la tarifa del interior la define Servientrega)
-  envio_flag?: string | null;
+  zona?: string | null;            // F4 (v31): zona resuelta (metro) o "INT provincia · lugar"
+  zona_estado?: string | null;     // ok / ambiguo / sin_match / sin_servicio
+  zona_ambito?: string | null;     // metro / interior
+  tarifa_zona_usd?: number | null; // solo metro ok
+  envio_flag?: string | null;      // eligio_ciudad_siendo_interior · domicilio_imposible_z4a · ...
 }
 
 // Upsert por (fuente, pedido_ref) vía PostgREST (merge-duplicates). BEST-EFFORT y NULL-SAFE: nunca lanza —
@@ -181,18 +178,19 @@ export async function upsertPedido(p: PedidoUpsert): Promise<void> {
 }
 
 // --- Resolución de zona (v52) --------------------------------------------------------------------
-// El diccionario `sectores_entrega` + el RPC `resolver_tarifa` saben la zona real de una dirección;
+// El diccionario + el RPC `resolver_tarifa_v2` (v31: metro E interior) saben la zona real de una dirección;
 // Shipday solo geocodifica texto libre. Esto NO reemplaza el geocoding: enriquece la orden con la
 // zona/tarifa/método de la tabla para quien despacha, y alimenta el campo `metodo` de `pedidos`.
 // BEST-EFFORT: ante cualquier fallo devuelve null y el despacho sigue exactamente igual que antes.
 export interface ZonaResuelta {
-  // resolver_tarifa v2 (metro+interior): suma el estado `sin_servicio` (comarcas) y los campos
-  // `ambito` (metro/interior), `lugar` y `provincia` (para pedidos del interior).
   estado: 'ok' | 'ambiguo' | 'sin_match' | 'sin_servicio';
+  ambito?: 'metro' | 'interior';
+  provincia?: string;
+  lugar?: string;
+  nota?: string;
+  tarifa_con_itbms?: number;
+  envio_gratis_umbral_usd?: number;
   zona?: string;
-  ambito?: string;             // 'metro' | 'interior'
-  lugar?: string;              // lugar del interior resuelto (ej. "David")
-  provincia?: string;          // provincia del interior (ej. "Chiriquí")
   tarifa_usd?: number;
   metodo?: string;
   plazo?: string;
@@ -207,7 +205,7 @@ export interface ZonaResuelta {
 export async function resolverTarifa(lugar: string): Promise<ZonaResuelta | null> {
   if (!String(lugar ?? '').trim()) return null;
   try {
-    const res = await fetch(restUrl('/rpc/resolver_tarifa'), {
+    const res = await fetch(restUrl('/rpc/resolver_tarifa_v2'), {
       method: 'POST',
       headers: serviceHeaders(),
       body: JSON.stringify({ p_lugar: lugar }),

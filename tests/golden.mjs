@@ -732,6 +732,13 @@ caso("F4: upsertPedido corre para TODO pedido (antes del gate !despachar) con zo
   return iUp > -1 && iGate > -1 && iUp < iGate && /envio_flag: flag/.test(shopifySrc) && /zona_estado: zona\?\.estado \?\? null/.test(shopifySrc);
 })());
 caso("F4: pedido del interior → metodo servientrega y zona 'INT provincia · lugar'", /zona\.ambito === 'interior' \? 'servientrega'/.test(shopifySrc) && /INT \$\{/.test(shopifySrc));
+// Reconciliación 13-ago: el PUENTE resuelve zona con el RPC resolver_tarifa_v2 (metro E interior);
+// el COPILOTO sigue llamando resolver_tarifa (wrapper con telemetría → resolver_tarifa_core, solo metro).
+const dbSrc = readFileSync(join(dirname(fileURLToPath(import.meta.url)), "..", "supabase", "functions", "_shared", "db.ts"), "utf8");
+caso("F4: db.ts del puente llama a resolver_tarifa_v2 (metro+interior)", /\/rpc\/resolver_tarifa_v2/.test(dbSrc));
+caso("F4: el copiloto sigue en resolver_tarifa (wrapper de telemetría, solo metro)", /rpc\("resolver_tarifa"/.test(src));
+caso("F4: ZonaResuelta conoce sin_servicio + ambito/provincia/lugar", /'sin_servicio'/.test(dbSrc) && /ambito\?: 'metro' \| 'interior'/.test(dbSrc));
+caso("v65: el PATCH de upsertContactByPhone actualiza lat/lng (fix CONSERVADO sobre prod)", /patch\.latitude = contact\.latitude/.test(dbSrc) && /patch\.latitude = null/.test(dbSrc));
 
 // --- v60: FLIP a search_catalog (Catalog MCP) como motor primario ---------------------------------
 console.log("v60 flip a search_catalog");

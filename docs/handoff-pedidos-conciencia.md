@@ -76,12 +76,14 @@ const ESTADO_SHIPDAY = {
 } as Record<string, string>; // ajustar a los estados EXACTOS que emita su cuenta Shipday
 ```
 
-**Método** — **`shopify-webhook` (v52) ya resuelve el método REAL** con el RPC `resolver_tarifa(dirección)` (fuente
-única = data layer de zonas): para pedidos de Shopify el `metodo` de `pedidos` puede ser `servientrega`,
-`retiro_agente_verde`, `asesor` o `propia` (cae a `propia` si el resolver no da veredicto `ok`). **El copiloto LEE
+**Método** — **`shopify-webhook` resuelve el método REAL** con el RPC **`resolver_tarifa_v2(dirección)`** (F4/v31:
+metro E interior; fuente única = data layer de zonas): interior→`servientrega`; metro→`servientrega`,
+`retiro_agente_verde`, `asesor` o `propia`; sin veredicto `ok` cae a `propia` solo si el pedido se despacha.
+(El COPILOTO —tool `tarifa_entrega`— sigue llamando `resolver_tarifa`, que hoy es un wrapper de telemetría
+sobre `resolver_tarifa_core`, solo metro: dos entradas distintas, mismo data layer.) **El copiloto LEE
 ese campo** (`frasearPedido`) → ya no asume flota propia para Shopify. `shipday-status` y `wati-order` **siguen** con
 `metodo:'propia'` hardcodeado (pendiente: cuando haya asignaciones / tráfico real, resolverlos igual con
-`resolver_tarifa`, para no duplicar la lógica).
+el resolver, para no duplicar la lógica).
 
 **wa_id** — SIEMPRE dígitos sin `+`, con código de país (`normalizePhone` de `_shared/shipday.ts`, que ya
 maneja Panamá +507). El RPC de lectura normaliza ambos lados, pero guardar normalizado mantiene el índice útil.
