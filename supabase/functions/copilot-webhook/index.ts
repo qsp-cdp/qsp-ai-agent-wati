@@ -2238,24 +2238,28 @@ async function consultarFolleto(productoUrl: string, pregunta: string): Promise<
 // v68 — descarga CRUDA de un media de WATI (bytes, no base64). Misma allowlist y mismo Bearer que la
 // descarga de imágenes (v65): el token no debe viajar a un host que elija el payload. Tope propio porque
 // un audio pesa más que una foto (nota de voz de 1 min ≈ 1 MB en opus; el tope de Whisper son 25 MB).
-async function descargarMediaBytes(dataUrl: string, maxBytes = 15_000_000): Promise<{ bytes: Uint8Array; mediaType: string } | null> {
-  if (!dataUrl || !/^https?:\/\//i.test(dataUrl)) return null;
+// Devuelve los bytes o un `error` LEGIBLE (status HTTP, tamaño, excepción): sin ese detalle, un fallo de
+// descarga es indistinguible entre token inválido, URL expirada y archivo enorme (la lección del selftest
+// de inventario v44 — diagnosticar desde adentro sin exponer el token).
+async function descargarMediaBytes(dataUrl: string, maxBytes = 15_000_000): Promise<{ bytes?: Uint8Array; mediaType?: string; error?: string }> {
+  if (!dataUrl || !/^https?:\/\//i.test(dataUrl)) return { error: "url_invalida" };
   try {
     const host = new URL(dataUrl).hostname.toLowerCase();
     if (!(host === "wati.io" || host.endsWith(".wati.io"))) {
       await log("media_host_rechazado", false, { host: host.slice(0, 80), uso: "audio" });
-      return null;
+      return { error: `host_no_permitido:${host.slice(0, 60)}` };
     }
-  } catch { return null; }
+  } catch { return { error: "url_no_parseable" }; }
   try {
     const headers: Record<string, string> = WATI_API_TOKEN ? { Authorization: `Bearer ${WATI_API_TOKEN}` } : {};
     const r = await fetch(dataUrl, { headers, signal: AbortSignal.timeout(20000) });
-    if (!r.ok) return null;
+    if (!r.ok) return { error: `http_${r.status}:${(await r.text()).slice(0, 120)}` };
     const bytes = new Uint8Array(await r.arrayBuffer());
-    if (!bytes.byteLength || bytes.byteLength > maxBytes) return null;
+    if (!bytes.byteLength) return { error: "archivo_vacio" };
+    if (bytes.byteLength > maxBytes) return { error: `demasiado_grande_${bytes.byteLength}` };
     const mediaType = (r.headers.get("content-type") || "").split(";")[0].trim().toLowerCase() || "audio/ogg";
     return { bytes, mediaType };
-  } catch { return null; }
+  } catch (e) { return { error: `excepcion:${String(e).slice(0, 120)}` }; }
 }
 
 // v68 — transcribe una nota de voz con la API de OpenAI. Devuelve el texto o null (nunca lanza: si falla,
@@ -2266,11 +2270,12 @@ async function transcribirAudio(dataUrl: string): Promise<{ texto: string; ms: n
   if (!OPENAI_API_KEY) return null;
   const t0 = Date.now();
   const media = await descargarMediaBytes(dataUrl);
-  if (!media) { await log("audio_stt_fallo", false, { motivo: "descarga" }); return null; }
+  if (!media.bytes) { await log("audio_stt_fallo", false, { motivo: "descarga", detalle: media.error ?? "sin_detalle" }); return null; }
+  const mediaType = media.mediaType ?? "audio/ogg";
   try {
-    const ext = /ogg|opus/.test(media.mediaType) ? "ogg" : /mpeg|mp3/.test(media.mediaType) ? "mp3" : /mp4|m4a/.test(media.mediaType) ? "m4a" : /wav/.test(media.mediaType) ? "wav" : "ogg";
+    const ext = /ogg|opus/.test(mediaType) ? "ogg" : /mpeg|mp3/.test(mediaType) ? "mp3" : /mp4|m4a/.test(mediaType) ? "m4a" : /wav/.test(mediaType) ? "wav" : "ogg";
     const fd = new FormData();
-    fd.append("file", new Blob([media.bytes], { type: media.mediaType }), `nota.${ext}`);
+    fd.append("file", new Blob([media.bytes], { type: mediaType }), `nota.${ext}`);
     fd.append("model", STT_MODEL);
     fd.append("language", "es");
     fd.append("prompt", "Consulta a una tienda de suministros de impresión en Panamá. Marcas y modelos: HP, Canon, Epson, Brother, Kyocera, Lexmark, PIXMA, EcoTank, LaserJet, DeskJet, TN-830XL, GI-190, T544, PG-145, TK-8337. Se habla de tóner, tinta, cabezales, impresoras, ITBMS y envíos.");
@@ -2391,12 +2396,22 @@ Deno.serve(async (req) => {
       if (!OPENAI_API_KEY) return Response.json({ selftest: "stt", diagnostico: "falta_openai_api_key" });
       const audioUrl = url.searchParams.get("url") ?? "";
       if (!audioUrl) return Response.json({ selftest: "stt", diagnostico: "falta_parametro_url" });
+      // Se prueba la DESCARGA por separado: así el reporte distingue "WATI no entrega el archivo" (token,
+      // URL expirada, 404) de "el STT falló", sin tener que ir a job_log.
+      const media = await descargarMediaBytes(audioUrl);
+      if (!media.bytes) {
+        return Response.json({
+          selftest: "stt", etapa: "descarga_wati", diagnostico: "no_se_pudo_descargar",
+          detalle: media.error ?? "sin_detalle", url_recibida: audioUrl.slice(0, 200),
+          wati_token_configurado: !!WATI_API_TOKEN, ts: new Date().toISOString(),
+        });
+      }
       const tr = await transcribirAudio(audioUrl);
       return Response.json({
-        selftest: "stt", modelo: STT_MODEL, modo_actual: STT_MODE,
+        selftest: "stt", etapa: tr ? "completo" : "transcripcion", modelo: STT_MODEL, modo_actual: STT_MODE,
         diagnostico: tr ? "ok" : "fallo_ver_job_log_audio_stt_fallo",
-        ms: tr?.ms ?? null, bytes: tr?.bytes ?? null, texto: tr?.texto ?? null,
-        ts: new Date().toISOString(),
+        ms: tr?.ms ?? null, bytes: tr?.bytes ?? media.bytes.byteLength, tipo_archivo: media.mediaType ?? null,
+        texto: tr?.texto ?? null, ts: new Date().toISOString(),
       });
     }
     return Response.json({ status: "ok", function: "copilot-webhook", version: "v68-transcripcion", mode: MODE, mode_raw: MODE_RAW, model: MODEL, llm_configured: !!anthropic, wati_send_configured: !!(WATI_API_TOKEN && WATI_API_BASE), inventario_configurado: !!(SHOPIFY_ADMIN_TOKEN && SHOPIFY_ADMIN_API_BASE), resolve_configured: !!RESOLVE_SECRET, webhook_key_es_default: WEBHOOK_KEY_ES_DEFAULT, handoff_assist_min: HANDOFF_ASSIST_MIN, handoff_cold_hours: HANDOFF_COLD_HOURS, debounce_ms: DEBOUNCE_MS, sesion_gap_dias: SESION_GAP_DIAS, burbujas: BURBUJAS, burbuja_ms: BURBUJA_MS, audio_puente: AUDIO_PUENTE, stt: STT_MODE, stt_raw: STT_RAW, stt_configurado: !!OPENAI_API_KEY, stt_model: STT_MODEL, busqueda_shadow: BUSQUEDA_SHADOW, busqueda_mcp: BUSQUEDA_MCP, busqueda_mcp_limit: BUSQUEDA_MCP_LIMIT, catalog_mcp_url: CATALOG_MCP_URL, ucp_profile_url: UCP_PROFILE_URL, live_targets: MODE === "live" ? (LIVE_ALL ? "all" : LIVE_ALLOWLIST.length) : 0, ts: new Date().toISOString() });
