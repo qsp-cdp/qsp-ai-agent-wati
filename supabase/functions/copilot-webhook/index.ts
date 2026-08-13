@@ -2327,6 +2327,14 @@ async function descargarMediaWati(dataUrl: string): Promise<{ b64: string; media
     // media_type: confía en el content-type si es imagen; si no, infiere por la extensión del fileName.
     let mt = (r.headers.get("content-type") || "").split(";")[0].trim().toLowerCase();
     if (!/^image\/(jpeg|png|gif|webp)$/.test(mt)) {
+      // v68 — DEFENSA: antes se caía a "image/jpeg" para CUALQUIER archivo, así que un audio o un PDF
+      // viajaban a Claude etiquetados como foto y el turno moría con 400 "Could not process image"
+      // (perdiendo la respuesta al cliente). Si ni el content-type ni la extensión dicen imagen, no se
+      // adjunta: mejor responder sin la imagen que matar el turno entero.
+      if (!/\.(png|jpe?g|gif|webp)(\?|$)/i.test(dataUrl)) {
+        await log("media_no_es_imagen", false, { content_type: mt.slice(0, 40), url_fin: dataUrl.slice(-40) });
+        return null;
+      }
       mt = /\.png/i.test(dataUrl) ? "image/png"
         : /\.webp/i.test(dataUrl) ? "image/webp"
         : /\.gif/i.test(dataUrl) ? "image/gif"
@@ -2799,7 +2807,11 @@ Deno.serve(async (req) => {
         const urlsRafaga: string[] = [];
         for (let i = history.length - 1; i >= 0 && (history[i] as any).role === "user"; i--) {
           const m = history[i] as any;
-          if (m.media_url && new Date(m.created_at).getTime() > hace5min) urlsRafaga.unshift(String(m.media_url));
+          // v68 — SOLO imágenes: desde v67/v68 las notas de voz también guardan media_url, y colarlas aquí
+          // hacía que un .opus se mandara a Claude como si fuera una foto → 400 "Could not process image"
+          // (el turno moría y salía la respuesta de respaldo; caso real 13-ago). Se filtran por contenido.
+          const esAudioFila = m.content === "[audio]" || String(m.content ?? "").startsWith("[nota de voz]");
+          if (m.media_url && !esAudioFila && new Date(m.created_at).getTime() > hace5min) urlsRafaga.unshift(String(m.media_url));
         }
         const imagenes: { b64: string; mediaType: string }[] = [];
         for (const u of urlsRafaga.slice(-3)) { // máx 3 (payload); las más recientes, en orden cronológico
