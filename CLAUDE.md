@@ -39,8 +39,17 @@ con certeza, y calla/deriva cuando es mejor que responda un humano. Tienda:
   593 golden + 21 node tests. **Deploy:** `.\deploy.ps1 copilot-webhook` (no-op) → flip
   `npx supabase secrets set COPILOT_AUDIO_PUENTE=1 --project-ref jbigmlcalcwiphqeudxd` → mandar una nota
   de voz de prueba → debe llegar el puente y quedar `audio_puente {enviado:true}` en job_log + fila
-  "[audio]" en messages. Rollback: borrar el secreto. **Futuro (evaluación aparte):** transcripción real
-  (STT externo) — el `media_url` ya queda guardado para eso.
+  "[audio]" en messages. Rollback: borrar el secreto.
+  **❌ DESCARTADO CON EVIDENCIA (13-ago): WATI NO manda la transcripción por webhook.** La sonda
+  `audio_shape` sobre una nota de voz REAL devolvió `text_len:0` y `claves_transcripcion:[]`; las 29
+  claves del payload son fijas (`text`,`data`,`sourceUrl`,`mimeType`…) y ninguna trae texto transcrito —
+  la transcripción que se ve en el INBOX de WATI es de su panel, no del webhook. **No re-investigar**
+  (queda la sonda por si WATI cambia el shape). **Futuro (evaluación aparte):** transcripción real con STT
+  externo (~$1/mes por 44 audios; Whisper) — el `media_url` ya se guarda para eso; el plan sería
+  shadow-first (transcribir y loguear una semana SIN responder, para medir calidad con español panameño
+  y ruido) y recién después dejar que el bot conteste. Preguntar antes a soporte WATI si exponen la
+  transcripción del inbox por API (`whatsappMessageId` → texto): si existe, es preferible (sin proveedor
+  nuevo, la voz no sale a un tercero).
 - **🚀 EN VIVO Y VERIFICADO (desplegado 13-ago; `COPILOT_BURBUJAS=1` flipeado 19:17Z, healthcheck
   `burbujas:true`; caso real 2:24pm — Tinta Epson T664220 Cyan salió en 3 burbujas: tarjeta con FOTO +
   título + link · "Precio: $10.00 + ITBMS (7%) = $10.70" · "Stock: ✅ 15 unidades. ¿Necesita también los
