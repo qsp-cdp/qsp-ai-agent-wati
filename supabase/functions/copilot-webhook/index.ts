@@ -2286,7 +2286,14 @@ async function transcribirAudio(dataUrl: string): Promise<{ texto: string; ms: n
       signal: AbortSignal.timeout(45000),
     });
     if (!r.ok) {
-      await log("audio_stt_fallo", false, { motivo: "http", status: r.status, detalle: (await r.text()).slice(0, 200) });
+      // La respuesta de error de OpenAI ECHOA la API key en el mensaje ("Incorrect API key provided: …").
+      // Sin esta limpieza, un 401 con la key BUENA la dejaría escrita en job_log (visto en la prueba real
+      // del 13-ago). Se enmascara la key configurada y cualquier cosa con forma de secreto.
+      const cuerpo = (await r.text())
+        .replaceAll(OPENAI_API_KEY, "***")
+        .replace(/sk-[A-Za-z0-9_\-]{6,}/g, "sk-***")
+        .slice(0, 200);
+      await log("audio_stt_fallo", false, { motivo: "http", status: r.status, detalle: cuerpo });
       return null;
     }
     const j = await r.json();

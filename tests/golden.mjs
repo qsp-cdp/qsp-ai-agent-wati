@@ -1169,6 +1169,8 @@ caso("v68: la nota transcrita conserva la URL del audio original", /\(esImagenCl
 caso("v68: SYSTEM_PROMPT — la transcripción puede errar en códigos: confirmar, no inventar", /\[nota de voz\] …" = lo que el cliente DIJO/.test(SYSTEM_PROMPT) && /confirma en una línea el modelo con el cliente ANTES de cotizar/.test(SYSTEM_PROMPT) && /aplica la regla anti-interrupción igual que si lo hubiera escrito/.test(SYSTEM_PROMPT));
 caso("v68: healthcheck expone stt/stt_configurado y versión v68", /stt: STT_MODE/.test(src) && /stt_configurado: !!OPENAI_API_KEY/.test(src) && /version: "v68-transcripcion"/.test(src));
 // autotest ?selftest=stt — permite medir calidad con audios REALES ya recibidos, sin esperar el shadow.
+// seguridad: OpenAI ECHOA la API key en el mensaje de error de un 401 → no debe quedar en job_log.
+caso("v68: el error del STT enmascara la API key antes de loguear", /replaceAll\(OPENAI_API_KEY, "\*\*\*"\)/.test(src) && /replace\(\/sk-\[A-Za-z0-9_\\-\]\{6,\}\/g, "sk-\*\*\*"\)/.test(src));
 caso("v68: autotest ?selftest=stt gated por key (patrón v44/v45)", /url\.searchParams\.get\("selftest"\) === "stt"/.test(src) && (() => {
   const i = src.indexOf('url.searchParams.get("selftest") === "stt"');
   const cuerpo = src.slice(i, i + 900);
