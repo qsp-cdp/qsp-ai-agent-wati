@@ -516,6 +516,11 @@ const BURBUJA_MS = (() => {
   return Number.isFinite(n) && n >= 0 ? Math.min(n, 5000) : 3000;
 })();
 
+// v67 — AUDIO PUENTE: una nota de voz de un cliente recibe un acuse fijo ("¿me lo escribe? o un asesor
+// la escucha") en vez de silencio total (44 audios/semana ignorados). Default OFF → deploy no-op (los
+// audios siguen cayendo a evento_sin_texto como hoy); flip por secreto, rollback instantáneo.
+const AUDIO_PUENTE = (Deno.env.get("COPILOT_AUDIO_PUENTE") ?? "").trim() === "1";
+
 // Piloto gradual: en live, SOLO se envía a estos wa_id. Vacío = no se envía a nadie (sigue
 // registrando en sombra); "all"/"*" = todos. Evita ir a live total por accidente.
 const LIVE_RAW = (Deno.env.get("COPILOT_LIVE_ALLOWLIST") ?? "").trim().toLowerCase();
@@ -743,6 +748,9 @@ IMÁGENES (el cliente envía una foto o captura)
   - PRODUCTO (captura de nuestro ecommerce o de Instagram, foto de un toner, tinta, impresora o su caja): identifica la MARCA y el MODELO visibles y úsalos para llamar buscar_producto. NUNCA des un precio "leído" de la imagen ni inventes el modelo — el precio y la disponibilidad SIEMPRE salen de buscar_producto. Si no logras leer el modelo con claridad, descríbelo en una línea y pide que confirme el modelo, o deriva a un asesor.
   - COMPROBANTE DE PAGO, transferencia, factura, RUC/cédula o cualquier dato fiscal: NO lo proceses ni repitas datos; di en UNA línea que un asesor lo revisa (anti-interrupción).
   - Si no entiendes la imagen o no es de la tienda: discúlpate breve y deriva a un asesor.
+
+AUDIOS / NOTAS DE VOZ
+- NO puedes escuchar notas de voz. Cuando veas "[audio]" en el historial, el sistema YA acusó recibo y le pidió al cliente escribirlo — NO repitas esa petición, no lo regañes por mandar audio y no digas "no puedo escuchar audios" de la nada: simplemente responde a lo que el cliente SÍ haya escrito. Si el cliente insiste solo con audios y no escribe nada, indica breve y amable que un asesor escuchará sus notas de voz.
 
 HANDOFF A HUMANO (deriva con calma y sin prometer de más)
 - Deriva a un asesor cuando: la tool no encuentra el producto; piden algo fuera de catálogo; quieren reclamar o están molestos; piden hablar con una persona; detectas un trámite/pago en curso (ver anti-interrupción); o la consulta excede lo que puedes resolver. Discúlpate breve e indica que un asesor le responderá pronto.
@@ -2111,8 +2119,12 @@ function extraerCustomParams(p: any): Record<string, string> {
 // v20 (anti-duplicado): ¿hay un mensaje de cliente MÁS NUEVO que el que estamos respondiendo?
 // Si llegan varios en ráfaga, solo el último contesta (evita respuestas dobles/triples).
 async function hayMensajeClienteMasNuevo(convId: string, desde: string): Promise<boolean> {
+  // v67 — los "[audio]" NO cuentan como "mensaje más nuevo": una nota de voz nunca genera respuesta del
+  // LLM (solo el puente fijo), así que no debe DESCARTAR la respuesta de un texto pendiente. Sin esto,
+  // el combo común "le escribo + le mando audio" dejaba el texto SIN respuesta (descartado_superado por
+  // un mensaje que jamás iba a contestarse).
   const { data } = await sb.from("messages").select("id")
-    .eq("conversation_id", convId).eq("role", "user").gt("created_at", desde).limit(1);
+    .eq("conversation_id", convId).eq("role", "user").neq("content", "[audio]").gt("created_at", desde).limit(1);
   return !!(data && data.length);
 }
 
@@ -2292,7 +2304,7 @@ Deno.serve(async (req) => {
       const diag = await inventarioSelfTest(pid);
       return Response.json({ selftest: "inventario", ...diag, ts: new Date().toISOString() });
     }
-    return Response.json({ status: "ok", function: "copilot-webhook", version: "v66-burbujas", mode: MODE, mode_raw: MODE_RAW, model: MODEL, llm_configured: !!anthropic, wati_send_configured: !!(WATI_API_TOKEN && WATI_API_BASE), inventario_configurado: !!(SHOPIFY_ADMIN_TOKEN && SHOPIFY_ADMIN_API_BASE), resolve_configured: !!RESOLVE_SECRET, webhook_key_es_default: WEBHOOK_KEY_ES_DEFAULT, handoff_assist_min: HANDOFF_ASSIST_MIN, handoff_cold_hours: HANDOFF_COLD_HOURS, debounce_ms: DEBOUNCE_MS, sesion_gap_dias: SESION_GAP_DIAS, burbujas: BURBUJAS, burbuja_ms: BURBUJA_MS, busqueda_shadow: BUSQUEDA_SHADOW, busqueda_mcp: BUSQUEDA_MCP, busqueda_mcp_limit: BUSQUEDA_MCP_LIMIT, catalog_mcp_url: CATALOG_MCP_URL, ucp_profile_url: UCP_PROFILE_URL, live_targets: MODE === "live" ? (LIVE_ALL ? "all" : LIVE_ALLOWLIST.length) : 0, ts: new Date().toISOString() });
+    return Response.json({ status: "ok", function: "copilot-webhook", version: "v67-audio-puente", mode: MODE, mode_raw: MODE_RAW, model: MODEL, llm_configured: !!anthropic, wati_send_configured: !!(WATI_API_TOKEN && WATI_API_BASE), inventario_configurado: !!(SHOPIFY_ADMIN_TOKEN && SHOPIFY_ADMIN_API_BASE), resolve_configured: !!RESOLVE_SECRET, webhook_key_es_default: WEBHOOK_KEY_ES_DEFAULT, handoff_assist_min: HANDOFF_ASSIST_MIN, handoff_cold_hours: HANDOFF_COLD_HOURS, debounce_ms: DEBOUNCE_MS, sesion_gap_dias: SESION_GAP_DIAS, burbujas: BURBUJAS, burbuja_ms: BURBUJA_MS, audio_puente: AUDIO_PUENTE, busqueda_shadow: BUSQUEDA_SHADOW, busqueda_mcp: BUSQUEDA_MCP, busqueda_mcp_limit: BUSQUEDA_MCP_LIMIT, catalog_mcp_url: CATALOG_MCP_URL, ucp_profile_url: UCP_PROFILE_URL, live_targets: MODE === "live" ? (LIVE_ALL ? "all" : LIVE_ALLOWLIST.length) : 0, ts: new Date().toISOString() });
   }
   if (req.method !== "POST") return Response.json({ error: "method_not_allowed" }, { status: 405 });
   if (url.searchParams.get("key") !== WEBHOOK_KEY) return Response.json({ error: "forbidden" }, { status: 403 });
@@ -2379,8 +2391,55 @@ Deno.serve(async (req) => {
     return Response.json({ ok: true, skipped: "negocio_atendiendo_media" });
   }
 
+  // v67 (v64a del backlog) — NOTA DE VOZ de un CLIENTE: 44 audios/semana quedaban en SILENCIO total (la
+  // peor UX: el cliente habló y nadie acusó recibo). Sin transcripción ni dependencias nuevas: se guarda
+  // "[audio]" en el hilo (contexto para el LLM y dedup por wati_message_id) y se responde un PUENTE fijo —
+  // pedir el mensaje por escrito u ofrecer que un asesor lo escuche. Guardrails: en HANDOFF calla (el
+  // asesor lo escuchará); tope de turnos; anti-spam (3 notas seguidas = UN puente: si ya salió uno hace
+  // <10 min no se repite); insert-antes-de-enviar con model='audio-puente' (anti-eco v21); consciente del
+  // horario. La transcripción real (STT) queda como evaluación futura — esto elimina el silencio YA.
+  const esAudioCliente = AUDIO_PUENTE && (tipo === "audio" || tipo === "voice") && !esDelNegocio && !!waId;
+  if (esAudioCliente) {
+    try {
+      const { data: convRows, error: convErr } = await sb.rpc("upsert_conversation", { p_wa_id: waId, p_sender_name: p.senderName ?? null });
+      if (convErr) throw new Error(`upsert_conversation: ${convErr.message}`);
+      const conv = (Array.isArray(convRows) ? convRows[0] : convRows) as { id: string; status: string; turns_today: number };
+      if (!conv?.id) throw new Error("upsert_conversation devolvió vacío");
+      const watiMsgId = (p.id ?? p.whatsappMessageId ?? null)?.toString() ?? null;
+      const insU = await sb.from("messages").insert({ conversation_id: conv.id, role: "user", content: "[audio]", mode: MODE, wati_message_id: watiMsgId, media_url: String(p.data ?? "").slice(0, 500) || null }).select("id");
+      if (insU.error) {
+        if (insU.error.code === "23505") return Response.json({ ok: true, skipped: "duplicado" });
+        throw new Error(`insert audio msg: ${insU.error.message}`);
+      }
+      if (conv.status === "handoff") { await log("audio_puente", true, { waId, enviado: false, motivo: "handoff" }); return Response.json({ ok: true, skipped: "audio_en_handoff" }); }
+      if (conv.turns_today > MAX_TURNS_DIA) { await log("tope_turnos", true, { waId, tipo: "audio" }); return Response.json({ ok: true, skipped: "tope_diario" }); }
+      const desdeAntiSpam = new Date(Date.now() - 10 * 60 * 1000).toISOString();
+      const { data: puenteReciente } = await sb.from("messages").select("id").eq("conversation_id", conv.id).eq("model", "audio-puente").gte("created_at", desdeAntiSpam).limit(1);
+      if (puenteReciente && puenteReciente.length) { await log("audio_puente", true, { waId, enviado: false, motivo: "reciente" }); return Response.json({ ok: true, skipped: "audio_puente_reciente" }); }
+      const puente = horarioPanama().dentro
+        ? "Recibí su nota de voz 🎧 ¿Me lo puede escribir en un mensaje? Así le respondo al instante — o si prefiere, un asesor escucha su audio en breve."
+        : "Recibí su nota de voz 🎧 ¿Me lo puede escribir en un mensaje? Así le respondo al instante — o un asesor escucha su audio apenas estemos en horario (Lun-Vie 9:00am–5:00pm).";
+      const quiereEnviarA = liveAllowed(waId);
+      const insP = await sb.from("messages").insert({ conversation_id: conv.id, role: "assistant", content: puente, mode: quiereEnviarA ? "live" : "shadow", model: "audio-puente" }).select("id");
+      if (insP.error) { await log("error", false, { waId, fase: "audio_puente_insert", error: String(insP.error.message ?? "").slice(0, 150) }); return Response.json({ ok: true, skipped: "audio_insert_fallo" }); }
+      let enviadoA = false;
+      if (quiereEnviarA) {
+        enviadoA = await enviarWati(waId, puente);
+        if (!enviadoA) {
+          await sb.from("messages").update({ mode: "shadow" }).eq("id", (insP.data?.[0] as any)?.id);
+          await log("envio_fallido", false, { waId, largo: puente.length, tipo: "audio_puente" });
+        }
+      }
+      await log("audio_puente", true, { waId, enviado: enviadoA });
+      return Response.json({ ok: true, audio_puente: true, enviado: enviadoA });
+    } catch (e) {
+      await log("error", false, { waId, fase: "audio_puente", error: String(e).slice(0, 300) });
+      return Response.json({ ok: true, skipped: "audio_error" });
+    }
+  }
+
   // v19: una imagen de un CLIENTE (owner=false) SÍ se procesa (visión). El resto de mensajes
-  // no-texto (documentos, audio, o imágenes del propio negocio) se registran y se saltan.
+  // no-texto (documentos, o imágenes del propio negocio) se registran y se saltan.
   const esImagenCliente = tipo === "image" && !esDelNegocio && !!waId;
 
   if (!esImagenCliente && (!waId || !texto || tipo !== "text")) {

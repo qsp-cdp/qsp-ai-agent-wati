@@ -20,6 +20,27 @@ con certeza, y calla/deriva cuando es mejor que responda un humano. Tienda:
 **quickservicepanama.com** (suministros de impresión y tecnología en Panamá).
 
 ## Estado actual (2026-08-13)
+- **EN EL REPO, LISTO PARA DESPLEGAR: v67 (`v67-audio-puente`) — el "v64a" del backlog, GO de Gerencia
+  13-ago.** Del análisis ML del 13-ago: **44 notas de voz/semana quedaban en SILENCIO total** (caían a
+  `evento_sin_texto` y nadie acusaba recibo — la peor UX). Quick win SIN transcripción ni dependencias:
+  audio de un CLIENTE (`tipo audio|voice`, owner=false) → se guarda **"[audio]"** en el hilo (contexto +
+  dedup por `wati_message_id` + `media_url` para un futuro STT) y se responde un **PUENTE fijo**: "Recibí
+  su nota de voz 🎧 ¿Me lo puede escribir en un mensaje? Así le respondo al instante — o un asesor escucha
+  su audio" (consciente del horario, trato de usted). **Guardrails:** en HANDOFF calla (el asesor lo
+  escuchará); tope de turnos; **anti-spam** (3 notas seguidas = UN puente: ventana de 10 min por
+  conversación); insert-antes-de-enviar con `model='audio-puente'` (anti-eco v21); sale al instante (sin
+  debounce — es un acuse). **Fix de interacción crítico:** `hayMensajeClienteMasNuevo` ahora EXCLUYE
+  "[audio]" — sin eso, el combo común "le escribo + le mando audio" DESCARTABA la respuesta del texto
+  (`descartado_superado` por un mensaje que jamás iba a contestarse). Regla de prompt AUDIOS / NOTAS DE
+  VOZ (el modelo ve "[audio]" en el historial: no regaña, no repite la petición, responde a lo escrito).
+  **Env-gated `COPILOT_AUDIO_PUENTE`** (default OFF → deploy no-op: los audios siguen cayendo a
+  `evento_sin_texto` como hoy). Healthcheck `audio_puente` + versión. Telemetría `audio_puente`
+  ({enviado, motivo}) — mide los 44/semana reales. Reescribe el caché v35 (regla nueva → re-warm).
+  593 golden + 21 node tests. **Deploy:** `.\deploy.ps1 copilot-webhook` (no-op) → flip
+  `npx supabase secrets set COPILOT_AUDIO_PUENTE=1 --project-ref jbigmlcalcwiphqeudxd` → mandar una nota
+  de voz de prueba → debe llegar el puente y quedar `audio_puente {enviado:true}` en job_log + fila
+  "[audio]" en messages. Rollback: borrar el secreto. **Futuro (evaluación aparte):** transcripción real
+  (STT externo) — el `media_url` ya queda guardado para eso.
 - **🚀 EN VIVO Y VERIFICADO (desplegado 13-ago; `COPILOT_BURBUJAS=1` flipeado 19:17Z, healthcheck
   `burbujas:true`; caso real 2:24pm — Tinta Epson T664220 Cyan salió en 3 burbujas: tarjeta con FOTO +
   título + link · "Precio: $10.00 + ITBMS (7%) = $10.70" · "Stock: ✅ 15 unidades. ¿Necesita también los

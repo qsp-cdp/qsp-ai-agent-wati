@@ -1123,6 +1123,24 @@ caso("v66: healthcheck expone burbujas", /burbujas: BURBUJAS/.test(src) && /burb
 // v66.1 — la pausa entre burbujas es tuneable por secreto (default 1000 ms, tope 5 s, 0 = sin pausa).
 caso("v66.1: pausa entre burbujas por COPILOT_BURBUJA_MS (default 3000, elegido en vivo)", /Deno\.env\.get\("COPILOT_BURBUJA_MS"\)/.test(src) && /Math\.min\(n, 5000\) : 3000/.test(src) && /BURBUJA_MS > 0\) await new Promise/.test(src));
 
+// --- v67: nota de voz → respuesta puente ----------------------------------------------------------
+console.log("v67 audio puente");
+caso("v67: gateado por COPILOT_AUDIO_PUENTE (default OFF → no-op)", /const AUDIO_PUENTE = \(Deno\.env\.get\("COPILOT_AUDIO_PUENTE"\) \?\? ""\)\.trim\(\) === "1"/.test(src) && /const esAudioCliente = AUDIO_PUENTE && \(tipo === "audio" \|\| tipo === "voice"\) && !esDelNegocio && !!waId/.test(src));
+caso("v67: '[audio]' al hilo con dedup por wati_message_id + media_url", /content: "\[audio\]", mode: MODE, wati_message_id: watiMsgId/.test(src));
+caso("v67: en HANDOFF calla (el asesor escuchará el audio)", /skipped: "audio_en_handoff"/.test(src) && /motivo: "handoff"/.test(src));
+caso("v67: anti-spam — un puente por ráfaga (ventana 10 min)", /"audio-puente"\)\.gte\("created_at", desdeAntiSpam\)/.test(src) && /motivo: "reciente"/.test(src));
+caso("v67: insert-antes-de-enviar con model audio-puente (anti-eco v21)", (() => {
+  const i1 = src.indexOf('model: "audio-puente" }).select("id")');
+  const i2 = src.indexOf("enviadoA = await enviarWati(waId, puente)");
+  return i1 > -1 && i2 > -1 && i1 < i2;
+})());
+caso("v67: puente de usted y consciente del horario", /Recibí su nota de voz 🎧 ¿Me lo puede escribir en un mensaje\?/.test(src) && /un asesor escucha su audio apenas estemos en horario \(Lun-Vie 9:00am–5:00pm\)/.test(src));
+caso("v67: '[audio]' NO descarta una respuesta de texto pendiente (combo texto+audio)", /\.neq\("content", "\[audio\]"\)\.gt\("created_at", desde\)/.test(src));
+caso("v67: telemetría audio_puente + envio_fallido del puente", /"audio_puente"/.test(src) && /tipo: "audio_puente"/.test(src));
+caso("v67: SYSTEM_PROMPT — regla AUDIOS (no regañar ni repetir la petición)", /AUDIOS \/ NOTAS DE VOZ/.test(SYSTEM_PROMPT) && /NO puedes escuchar notas de voz/.test(SYSTEM_PROMPT) && /NO repitas esa petición/.test(SYSTEM_PROMPT));
+caso("v67: tope de turnos aplica también a audios", /await log\("tope_turnos", true, \{ waId, tipo: "audio" \}\)/.test(src));
+caso("v67: healthcheck expone audio_puente y versión v67", /audio_puente: AUDIO_PUENTE/.test(src) && /version: "v67-audio-puente"/.test(src));
+
 // --- resumen --------------------------------------------------------------------------------------
 console.log(`\n${ok} OK, ${mal} FALLA${mal === 1 ? "" : "S"}`);
 if (mal > 0) process.exit(1);
