@@ -521,6 +521,22 @@ const BURBUJA_MS = (() => {
 // audios siguen cayendo a evento_sin_texto como hoy); flip por secreto, rollback instantáneo.
 const AUDIO_PUENTE = (Deno.env.get("COPILOT_AUDIO_PUENTE") ?? "").trim() === "1";
 
+// v68 — TRANSCRIPCIÓN de notas de voz (STT). Verificado el 13-ago que WATI NO la manda por webhook y que
+// su transcripción del inbox es MANUAL (el asesor hace clic) → hace falta un servicio externo. Modos, con
+// el ADN de COPILOT_MODE (valor inválido → "off", nunca rompe):
+//   off    (default) → no se transcribe nada; manda el puente v67 si está encendido.
+//   shadow           → transcribe y GUARDA el texto en job_log para medir calidad, pero el cliente sigue
+//                      recibiendo el puente: riesgo cero mientras se evalúa el español panameño/ruido.
+//   live             → la transcripción entra como mensaje del cliente ("[nota de voz] …") y sigue el
+//                      pipeline NORMAL, con todos los guardrails corriendo sobre ese texto.
+const STT_RAW = (Deno.env.get("COPILOT_STT") ?? "").trim().toLowerCase();
+const STT_MODE = ["shadow", "live"].includes(STT_RAW) ? STT_RAW : "off";
+const OPENAI_API_KEY = (Deno.env.get("OPENAI_API_KEY") ?? "").trim();
+// whisper-1 es el modelo estable de referencia. Configurable por si se quiere probar otro (p.ej. los
+// gpt-4o-transcribe, más baratos/precisos) sin tocar código.
+const STT_MODEL = (Deno.env.get("OPENAI_STT_MODEL") ?? "whisper-1").trim();
+const STT_ACTIVO = STT_MODE !== "off" && !!OPENAI_API_KEY;
+
 // Piloto gradual: en live, SOLO se envía a estos wa_id. Vacío = no se envía a nadie (sigue
 // registrando en sombra); "all"/"*" = todos. Evita ir a live total por accidente.
 const LIVE_RAW = (Deno.env.get("COPILOT_LIVE_ALLOWLIST") ?? "").trim().toLowerCase();
@@ -750,7 +766,8 @@ IMÁGENES (el cliente envía una foto o captura)
   - Si no entiendes la imagen o no es de la tienda: discúlpate breve y deriva a un asesor.
 
 AUDIOS / NOTAS DE VOZ
-- NO puedes escuchar notas de voz. Cuando veas "[audio]" en el historial, el sistema YA acusó recibo y le pidió al cliente escribirlo — NO repitas esa petición, no lo regañes por mandar audio y no digas "no puedo escuchar audios" de la nada: simplemente responde a lo que el cliente SÍ haya escrito. Si el cliente insiste solo con audios y no escribe nada, indica breve y amable que un asesor escuchará sus notas de voz.
+- "[audio]" en el historial = una nota de voz que NO se pudo transcribir. El sistema ya acusó recibo y le pidió al cliente escribirlo — NO repitas esa petición, no lo regañes por mandar audio y no digas "no puedo escuchar audios" de la nada: responde a lo que el cliente SÍ haya escrito. Si insiste solo con audios, indica breve y amable que un asesor escuchará sus notas de voz.
+- "[nota de voz] …" = lo que el cliente DIJO, transcrito automáticamente. Trátalo como un mensaje normal suyo (no menciones que es una transcripción ni que "escuchaste" el audio) PERO ten presente que la transcripción puede traer errores, sobre todo en CÓDIGOS DE MODELO y cifras (un "TN-830XL" puede llegar como "TN 830 excele" o "T and 830"). Reglas: interpreta el código con sentido común y BÚSCALO igual con buscar_producto; si el resultado no calza o el código suena dudoso, confirma en una línea el modelo con el cliente ANTES de cotizar ("¿me confirma que es la TN-830XL?"). NUNCA inventes un modelo que la transcripción no permite reconocer con claridad: pregunta. Y si la transcripción menciona pago, transferencia, comprobante, RUC o datos de factura, aplica la regla anti-interrupción igual que si lo hubiera escrito.
 
 HANDOFF A HUMANO (deriva con calma y sin prometer de más)
 - Deriva a un asesor cuando: la tool no encuentra el producto; piden algo fuera de catálogo; quieren reclamar o están molestos; piden hablar con una persona; detectas un trámite/pago en curso (ver anti-interrupción); o la consulta excede lo que puedes resolver. Discúlpate breve e indica que un asesor le responderá pronto.
@@ -2218,6 +2235,65 @@ async function consultarFolleto(productoUrl: string, pregunta: string): Promise<
 // v19 — descarga una imagen enviada por el cliente desde WATI (el campo `data` del webhook es
 // un link de live-mt-server.wati.io que requiere el token) y la devuelve en base64 para pasarla
 // a Claude vision. Devuelve null si falla, no es imagen soportada o pesa demasiado.
+// v68 — descarga CRUDA de un media de WATI (bytes, no base64). Misma allowlist y mismo Bearer que la
+// descarga de imágenes (v65): el token no debe viajar a un host que elija el payload. Tope propio porque
+// un audio pesa más que una foto (nota de voz de 1 min ≈ 1 MB en opus; el tope de Whisper son 25 MB).
+async function descargarMediaBytes(dataUrl: string, maxBytes = 15_000_000): Promise<{ bytes: Uint8Array; mediaType: string } | null> {
+  if (!dataUrl || !/^https?:\/\//i.test(dataUrl)) return null;
+  try {
+    const host = new URL(dataUrl).hostname.toLowerCase();
+    if (!(host === "wati.io" || host.endsWith(".wati.io"))) {
+      await log("media_host_rechazado", false, { host: host.slice(0, 80), uso: "audio" });
+      return null;
+    }
+  } catch { return null; }
+  try {
+    const headers: Record<string, string> = WATI_API_TOKEN ? { Authorization: `Bearer ${WATI_API_TOKEN}` } : {};
+    const r = await fetch(dataUrl, { headers, signal: AbortSignal.timeout(20000) });
+    if (!r.ok) return null;
+    const bytes = new Uint8Array(await r.arrayBuffer());
+    if (!bytes.byteLength || bytes.byteLength > maxBytes) return null;
+    const mediaType = (r.headers.get("content-type") || "").split(";")[0].trim().toLowerCase() || "audio/ogg";
+    return { bytes, mediaType };
+  } catch { return null; }
+}
+
+// v68 — transcribe una nota de voz con la API de OpenAI. Devuelve el texto o null (nunca lanza: si falla,
+// el llamador cae al puente v67 → el cliente nunca queda en silencio). El `prompt` le da VOCABULARIO del
+// negocio: sin él, Whisper destroza los códigos de modelo ("te ene ocho tres cero" → "TN830"), que es
+// justo el dato que necesitamos para buscar en el catálogo.
+async function transcribirAudio(dataUrl: string): Promise<{ texto: string; ms: number; bytes: number } | null> {
+  if (!OPENAI_API_KEY) return null;
+  const t0 = Date.now();
+  const media = await descargarMediaBytes(dataUrl);
+  if (!media) { await log("audio_stt_fallo", false, { motivo: "descarga" }); return null; }
+  try {
+    const ext = /ogg|opus/.test(media.mediaType) ? "ogg" : /mpeg|mp3/.test(media.mediaType) ? "mp3" : /mp4|m4a/.test(media.mediaType) ? "m4a" : /wav/.test(media.mediaType) ? "wav" : "ogg";
+    const fd = new FormData();
+    fd.append("file", new Blob([media.bytes], { type: media.mediaType }), `nota.${ext}`);
+    fd.append("model", STT_MODEL);
+    fd.append("language", "es");
+    fd.append("prompt", "Consulta a una tienda de suministros de impresión en Panamá. Marcas y modelos: HP, Canon, Epson, Brother, Kyocera, Lexmark, PIXMA, EcoTank, LaserJet, DeskJet, TN-830XL, GI-190, T544, PG-145, TK-8337. Se habla de tóner, tinta, cabezales, impresoras, ITBMS y envíos.");
+    const r = await fetch("https://api.openai.com/v1/audio/transcriptions", {
+      method: "POST",
+      headers: { Authorization: `Bearer ${OPENAI_API_KEY}` },
+      body: fd,
+      signal: AbortSignal.timeout(45000),
+    });
+    if (!r.ok) {
+      await log("audio_stt_fallo", false, { motivo: "http", status: r.status, detalle: (await r.text()).slice(0, 200) });
+      return null;
+    }
+    const j = await r.json();
+    const texto = String(j?.text ?? "").trim();
+    if (!texto) { await log("audio_stt_fallo", false, { motivo: "vacio" }); return null; }
+    return { texto: texto.slice(0, 1500), ms: Date.now() - t0, bytes: media.bytes.byteLength };
+  } catch (e) {
+    await log("audio_stt_fallo", false, { motivo: "excepcion", error: String(e).slice(0, 200) });
+    return null;
+  }
+}
+
 async function descargarMediaWati(dataUrl: string): Promise<{ b64: string; mediaType: string } | null> {
   if (!dataUrl || !/^https?:\/\//i.test(dataUrl)) return null;
   // v65 — ALLOWLIST de host: el WATI_API_TOKEN viaja como Bearer en esta descarga; sin este chequeo, una URL
@@ -2304,7 +2380,7 @@ Deno.serve(async (req) => {
       const diag = await inventarioSelfTest(pid);
       return Response.json({ selftest: "inventario", ...diag, ts: new Date().toISOString() });
     }
-    return Response.json({ status: "ok", function: "copilot-webhook", version: "v67-audio-puente", mode: MODE, mode_raw: MODE_RAW, model: MODEL, llm_configured: !!anthropic, wati_send_configured: !!(WATI_API_TOKEN && WATI_API_BASE), inventario_configurado: !!(SHOPIFY_ADMIN_TOKEN && SHOPIFY_ADMIN_API_BASE), resolve_configured: !!RESOLVE_SECRET, webhook_key_es_default: WEBHOOK_KEY_ES_DEFAULT, handoff_assist_min: HANDOFF_ASSIST_MIN, handoff_cold_hours: HANDOFF_COLD_HOURS, debounce_ms: DEBOUNCE_MS, sesion_gap_dias: SESION_GAP_DIAS, burbujas: BURBUJAS, burbuja_ms: BURBUJA_MS, audio_puente: AUDIO_PUENTE, busqueda_shadow: BUSQUEDA_SHADOW, busqueda_mcp: BUSQUEDA_MCP, busqueda_mcp_limit: BUSQUEDA_MCP_LIMIT, catalog_mcp_url: CATALOG_MCP_URL, ucp_profile_url: UCP_PROFILE_URL, live_targets: MODE === "live" ? (LIVE_ALL ? "all" : LIVE_ALLOWLIST.length) : 0, ts: new Date().toISOString() });
+    return Response.json({ status: "ok", function: "copilot-webhook", version: "v68-transcripcion", mode: MODE, mode_raw: MODE_RAW, model: MODEL, llm_configured: !!anthropic, wati_send_configured: !!(WATI_API_TOKEN && WATI_API_BASE), inventario_configurado: !!(SHOPIFY_ADMIN_TOKEN && SHOPIFY_ADMIN_API_BASE), resolve_configured: !!RESOLVE_SECRET, webhook_key_es_default: WEBHOOK_KEY_ES_DEFAULT, handoff_assist_min: HANDOFF_ASSIST_MIN, handoff_cold_hours: HANDOFF_COLD_HOURS, debounce_ms: DEBOUNCE_MS, sesion_gap_dias: SESION_GAP_DIAS, burbujas: BURBUJAS, burbuja_ms: BURBUJA_MS, audio_puente: AUDIO_PUENTE, stt: STT_MODE, stt_raw: STT_RAW, stt_configurado: !!OPENAI_API_KEY, stt_model: STT_MODEL, busqueda_shadow: BUSQUEDA_SHADOW, busqueda_mcp: BUSQUEDA_MCP, busqueda_mcp_limit: BUSQUEDA_MCP_LIMIT, catalog_mcp_url: CATALOG_MCP_URL, ucp_profile_url: UCP_PROFILE_URL, live_targets: MODE === "live" ? (LIVE_ALL ? "all" : LIVE_ALLOWLIST.length) : 0, ts: new Date().toISOString() });
   }
   if (req.method !== "POST") return Response.json({ error: "method_not_allowed" }, { status: 405 });
   if (url.searchParams.get("key") !== WEBHOOK_KEY) return Response.json({ error: "forbidden" }, { status: 403 });
@@ -2323,9 +2399,12 @@ Deno.serve(async (req) => {
   } catch { return Response.json({ error: "invalid_json" }, { status: 400 }); }
 
   const waId = String(p.waId ?? p.wa_id ?? "").replace(/\D/g, "");
-  const texto = (p.text ?? "").toString().trim();
+  // v68 — `texto`/`tipo` dejan de ser const: una nota de voz TRANSCRITA (STT en modo live) se reescribe
+  // aquí como si el cliente la hubiera escrito, para que siga EXACTAMENTE el mismo camino que un texto
+  // (guardrails, debounce, tools, anti-eco). Fuera de ese caso conservan el valor del payload.
+  let texto = (p.text ?? "").toString().trim();
   const esDelNegocio = p.owner === true || p.owner === "true";
-  const tipo = (p.type ?? "text").toString();
+  let tipo = (p.type ?? "text").toString();
   const eventType = (p.eventType ?? p.event ?? "").toString().toLowerCase();
   const operador = (p.operatorName ?? p.operatorEmail ?? "").toString().trim(); // asesor que escribió (v15)
 
@@ -2398,8 +2477,32 @@ Deno.serve(async (req) => {
   // asesor lo escuchará); tope de turnos; anti-spam (3 notas seguidas = UN puente: si ya salió uno hace
   // <10 min no se repite); insert-antes-de-enviar con model='audio-puente' (anti-eco v21); consciente del
   // horario. La transcripción real (STT) queda como evaluación futura — esto elimina el silencio YA.
-  const esAudioCliente = AUDIO_PUENTE && (tipo === "audio" || tipo === "voice") && !esDelNegocio && !!waId;
-  if (esAudioCliente) {
+  const esAudioCliente = (tipo === "audio" || tipo === "voice") && !esDelNegocio && !!waId;
+  // v68 — TRANSCRIPCIÓN. Corre ANTES de decidir el camino: en `live`, si el STT devuelve texto, la nota de
+  // voz se convierte en un mensaje de texto normal (se reescriben `texto`/`tipo`) y NO se manda el puente
+  // — el cliente recibe una respuesta de verdad. En `shadow` se transcribe, se registra para medir calidad
+  // y el cliente igual recibe el puente. Si el STT falla en cualquier modo → puente v67 (sin silencio).
+  let sttTexto: string | null = null;
+  let esAudioTranscrito = false;
+  if (esAudioCliente && STT_ACTIVO) {
+    const tr = await transcribirAudio(String(p.data ?? ""));
+    if (tr) {
+      sttTexto = tr.texto;
+      // En shadow se guarda el TEXTO para poder evaluar la calidad (es el propósito de la medición); es
+      // contenido del cliente, así que el modo shadow es temporal — al pasar a live se deja de escribir.
+      await log("audio_transcrito", true, {
+        waId, modo: STT_MODE, ms: tr.ms, bytes: tr.bytes, chars: tr.texto.length, modelo: STT_MODEL,
+        texto: STT_MODE === "shadow" ? tr.texto.slice(0, 500) : undefined,
+      });
+    }
+  }
+  if (esAudioCliente && STT_MODE === "live" && sttTexto) {
+    // La marca "[nota de voz]" viaja en el contenido: el modelo sabe que es una transcripción (regla de
+    // prompt AUDIOS) y queda visible en el hilo para el asesor que lea la conversación después.
+    texto = `[nota de voz] ${sttTexto}`;
+    tipo = "text";
+    esAudioTranscrito = true; // para conservar la URL del audio original en la fila del mensaje
+  } else if (esAudioCliente && AUDIO_PUENTE) {
     try {
       const { data: convRows, error: convErr } = await sb.rpc("upsert_conversation", { p_wa_id: waId, p_sender_name: p.senderName ?? null });
       if (convErr) throw new Error(`upsert_conversation: ${convErr.message}`);
@@ -2482,7 +2585,9 @@ Deno.serve(async (req) => {
     // v49: se guarda la URL del media — antes solo quedaba "[imagen]" y una foto que llegaba ANTES del
     // último mensaje de la ráfaga era imposible de recuperar (el ganador no podía verla). Requiere la
     // migración 20260708150000_messages_media_url (aplicarla ANTES de desplegar v49).
-    const ins = await sb.from("messages").insert({ conversation_id: conv.id, role: "user", content: contenido.slice(0, 4000), mode: MODE, wati_message_id: watiMsgId, media_url: esImagenCliente ? (String(p.data ?? "").slice(0, 500) || null) : null }).select("id,created_at");
+    // v68: una nota de voz transcrita conserva la URL del audio ORIGINAL (el asesor puede escucharlo si la
+    // transcripción quedó dudosa, y sirve para auditar la calidad del STT contra lo que dijo el cliente).
+    const ins = await sb.from("messages").insert({ conversation_id: conv.id, role: "user", content: contenido.slice(0, 4000), mode: MODE, wati_message_id: watiMsgId, media_url: (esImagenCliente || esAudioTranscrito) ? (String(p.data ?? "").slice(0, 500) || null) : null }).select("id,created_at");
     if (ins.error) {
       if (ins.error.code === "23505") return Response.json({ ok: true, skipped: "duplicado" });
       throw new Error(`insert user msg: ${ins.error.message}`);

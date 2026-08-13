@@ -20,6 +20,29 @@ con certeza, y calla/deriva cuando es mejor que responda un humano. Tienda:
 **quickservicepanama.com** (suministros de impresión y tecnología en Panamá).
 
 ## Estado actual (2026-08-13)
+- **EN EL REPO, LISTO PARA DESPLEGAR (SHADOW-FIRST, riesgo cero al cliente): v68 (`v68-transcripcion`).**
+  El bot ENTIENDE las notas de voz. Tras verificar que WATI no sirve (no manda transcripción por webhook y
+  la del inbox es un botón MANUAL — ver v67), se agrega el ÚNICO camino posible: **STT externo** (API de
+  OpenAI, key que ya tiene Gerencia). Flujo: `descargarMediaBytes` (bytes crudos con la MISMA allowlist
+  `*.wati.io` + Bearer de la visión, tope 15 MB) → `transcribirAudio` (multipart a
+  `/v1/audio/transcriptions`, `language=es`, **`prompt` con vocabulario del negocio** —sin él Whisper
+  destroza los códigos de modelo, que es justo lo que se necesita para buscar—, timeout 45 s, modelo por
+  env `OPENAI_STT_MODEL` default `whisper-1`). **Modos `COPILOT_STT` con el ADN de COPILOT_MODE (inválido
+  → `off`):** `off` (default, no transcribe) · **`shadow`** (transcribe y GUARDA el texto en job_log
+  `audio_transcrito` para medir calidad; el cliente sigue recibiendo el PUENTE v67 → riesgo cero) ·
+  `live` (la transcripción reescribe `texto`/`tipo` y entra al **pipeline NORMAL** como si el cliente lo
+  hubiera escrito: `INTERRUPT_RE`, `HANDOFF_RE`, debounce, tools y anti-eco corren IGUAL sobre ese texto).
+  Fail-safe en cadena: sin `OPENAI_API_KEY` → inactivo; STT caído/vacío/timeout → `audio_stt_fallo` +
+  **puente v67** (el cliente NUNCA queda en silencio). La fila del mensaje conserva el `media_url` del
+  audio original (el asesor puede escucharlo si la transcripción quedó dudosa). Regla de prompt: el texto
+  llega marcado **`[nota de voz] …`**, se trata como mensaje normal PERO puede errar en CÓDIGOS DE MODELO
+  → buscar igual, y si no calza CONFIRMAR el modelo antes de cotizar, nunca inventarlo; si menciona
+  pago/RUC/factura, la anti-interrupción aplica igual. Costo real ~$0.20/semana (44 audios). 607 golden +
+  21 node tests. **Secuencia:** `.\deploy.ps1 copilot-webhook` (no-op) → `npx supabase secrets set
+  OPENAI_API_KEY=… COPILOT_STT=shadow --project-ref jbigmlcalcwiphqeudxd` → **una semana midiendo**
+  (`select detail->>'texto', detail->>'ms' from job_log where action='audio_transcrito'` vs. el audio real
+  en WATI: ¿entiende español panameño, ruido de local, códigos?) → si la calidad convence,
+  `COPILOT_STT=live`. Rollback: `COPILOT_STT=off` (vuelve al puente).
 - **EN EL REPO, LISTO PARA DESPLEGAR: v67 (`v67-audio-puente`) — el "v64a" del backlog, GO de Gerencia
   13-ago.** Del análisis ML del 13-ago: **44 notas de voz/semana quedaban en SILENCIO total** (caían a
   `evento_sin_texto` y nadie acusaba recibo — la peor UX). Quick win SIN transcripción ni dependencias:
@@ -1296,8 +1319,13 @@ por `Authorization: Bearer`; si falta, el endpoint da 403). **`COPILOT_HANDOFF_A
 **15**) y **`COPILOT_HANDOFF_COLD_HOURS`** (v31, default **24**) — umbrales del ciclo de vida del handoff.
 **`COPILOT_DEBOUNCE_MS`** (v49, default **10000**, 0=off, tope 60000) — espera de ráfaga antes de responder
 (el bot junta 2-3 líneas y/o imágenes del cliente como UN contexto; tuneable sin redesplegar).
+**`COPILOT_BURBUJAS`** (v66, `1`=on, default OFF) y **`COPILOT_BURBUJA_MS`** (v66.1, default **3000**, tope
+5000, 0=sin pausa) — cotización de UN producto en 2-3 mensajes encadenados y la pausa entre ellos.
+**`COPILOT_AUDIO_PUENTE`** (v67, `1`=on, default OFF) — acuse a las notas de voz que no se transcriben.
+**`COPILOT_STT`** (v68, `off`|`shadow`|`live`, default **off**; inválido → off) + **`OPENAI_API_KEY`** +
+**`OPENAI_STT_MODEL`** (default `whisper-1`) — transcripción de notas de voz. Sin la key, inactivo.
 El healthcheck expone `inventario_configurado`, `resolve_configured`, `handoff_assist_min`, `handoff_cold_hours`,
-`debounce_ms`.
+`debounce_ms`, `burbujas`, `burbuja_ms`, `audio_puente`, `stt`, `stt_configurado`, `stt_model`.
 
 > ⚠️ **OJO — no cruzar `COPILOT_MODE` con `COPILOT_MODEL`** (pasó 3 veces): el ID del
 > modelo (`claude-…`) va SIEMPRE en `COPILOT_MODE**L**` (la L = modeLo). `COPILOT_MODE`

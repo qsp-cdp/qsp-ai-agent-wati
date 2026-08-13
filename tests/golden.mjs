@@ -359,7 +359,7 @@ const iSleep = src.indexOf("setTimeout(res, DEBOUNCE_MS)");
 const iPreLlm = src.indexOf('fase: "pre-llm"');
 caso("sleep de debounce presente y antes del chequeo pre-LLM", iSleep > -1 && iPreLlm > -1 && iSleep < iPreLlm);
 caso("anti-carrera temprano post-debounce", /post-debounce/.test(src));
-caso("se persiste media_url del mensaje del cliente", /media_url: esImagenCliente/.test(src));
+caso("se persiste media_url del mensaje del cliente (v68: imagen o nota de voz transcrita)", /media_url: \(esImagenCliente \|\| esAudioTranscrito\)/.test(src));
 caso("el historial trae media_url", /select\("role,content,model,created_at,media_url"\)/.test(src));
 caso("visión multi-imagen (adjunta el array completo)", /\.\.\.imagenes\.map\(\(im\)/.test(src));
 caso("ráfaga acotada: máx 3 imágenes", /urlsRafaga\.slice\(-3\)/.test(src));
@@ -1125,7 +1125,7 @@ caso("v66.1: pausa entre burbujas por COPILOT_BURBUJA_MS (default 3000, elegido 
 
 // --- v67: nota de voz → respuesta puente ----------------------------------------------------------
 console.log("v67 audio puente");
-caso("v67: gateado por COPILOT_AUDIO_PUENTE (default OFF → no-op)", /const AUDIO_PUENTE = \(Deno\.env\.get\("COPILOT_AUDIO_PUENTE"\) \?\? ""\)\.trim\(\) === "1"/.test(src) && /const esAudioCliente = AUDIO_PUENTE && \(tipo === "audio" \|\| tipo === "voice"\) && !esDelNegocio && !!waId/.test(src));
+caso("v67: puente gateado por COPILOT_AUDIO_PUENTE (default OFF → no-op)", /const AUDIO_PUENTE = \(Deno\.env\.get\("COPILOT_AUDIO_PUENTE"\) \?\? ""\)\.trim\(\) === "1"/.test(src) && /\} else if \(esAudioCliente && AUDIO_PUENTE\) \{/.test(src) && /const esAudioCliente = \(tipo === "audio" \|\| tipo === "voice"\) && !esDelNegocio && !!waId/.test(src));
 caso("v67: '[audio]' al hilo con dedup por wati_message_id + media_url", /content: "\[audio\]", mode: MODE, wati_message_id: watiMsgId/.test(src));
 caso("v67: en HANDOFF calla (el asesor escuchará el audio)", /skipped: "audio_en_handoff"/.test(src) && /motivo: "handoff"/.test(src));
 caso("v67: anti-spam — un puente por ráfaga (ventana 10 min)", /"audio-puente"\)\.gte\("created_at", desdeAntiSpam\)/.test(src) && /motivo: "reciente"/.test(src));
@@ -1137,12 +1137,37 @@ caso("v67: insert-antes-de-enviar con model audio-puente (anti-eco v21)", (() =>
 caso("v67: puente de usted y consciente del horario", /Recibí su nota de voz 🎧 ¿Me lo puede escribir en un mensaje\?/.test(src) && /un asesor escucha su audio apenas estemos en horario \(Lun-Vie 9:00am–5:00pm\)/.test(src));
 caso("v67: '[audio]' NO descarta una respuesta de texto pendiente (combo texto+audio)", /\.neq\("content", "\[audio\]"\)\.gt\("created_at", desde\)/.test(src));
 caso("v67: telemetría audio_puente + envio_fallido del puente", /"audio_puente"/.test(src) && /tipo: "audio_puente"/.test(src));
-caso("v67: SYSTEM_PROMPT — regla AUDIOS (no regañar ni repetir la petición)", /AUDIOS \/ NOTAS DE VOZ/.test(SYSTEM_PROMPT) && /NO puedes escuchar notas de voz/.test(SYSTEM_PROMPT) && /NO repitas esa petición/.test(SYSTEM_PROMPT));
+caso("v67: SYSTEM_PROMPT — regla AUDIOS (no regañar ni repetir la petición)", /AUDIOS \/ NOTAS DE VOZ/.test(SYSTEM_PROMPT) && /una nota de voz que NO se pudo transcribir/.test(SYSTEM_PROMPT) && /NO repitas esa petición/.test(SYSTEM_PROMPT));
 caso("v67: tope de turnos aplica también a audios", /await log\("tope_turnos", true, \{ waId, tipo: "audio" \}\)/.test(src));
-caso("v67: healthcheck expone audio_puente y versión v67", /audio_puente: AUDIO_PUENTE/.test(src) && /version: "v67-audio-puente"/.test(src));
+caso("v67: healthcheck expone audio_puente", /audio_puente: AUDIO_PUENTE/.test(src));
 // sonda de transcripción: ¿WATI manda el audio ya transcrito? Solo nombres de claves y longitudes (PII v45).
 caso("v67: sonda audio_shape busca campo de transcripción sin volcar contenido", /"audio_shape"/.test(src) && /transcri\|speech\|voz\|voice\|caption\|dictat/.test(src) && /text_len: String\(p\?\.text \?\? ""\)\.trim\(\)\.length/.test(src));
 caso("v67: la sonda NO registra el texto del cliente (solo longitudes)", !/transcripcion: String\(\(p as any\)\[k\]\)/.test(src) && /largos_transcripcion/.test(src));
+
+// --- v68: transcripción de notas de voz (STT externo) ---------------------------------------------
+console.log("v68 transcripción");
+// modos con el ADN de COPILOT_MODE: un valor inválido cae a "off" (nunca rompe ni transcribe por error).
+caso("v68: COPILOT_STT clampa a off/shadow/live", /const STT_MODE = \["shadow", "live"\]\.includes\(STT_RAW\) \? STT_RAW : "off"/.test(src));
+caso("v68: sin OPENAI_API_KEY el STT queda inactivo (fail-safe)", /const STT_ACTIVO = STT_MODE !== "off" && !!OPENAI_API_KEY/.test(src));
+caso("v68: descarga cruda con la MISMA allowlist *.wati.io que la visión", (() => {
+  const i = src.indexOf("async function descargarMediaBytes");
+  const cuerpo = src.slice(i, i + 1200);
+  return /host === "wati\.io" \|\| host\.endsWith\("\.wati\.io"\)/.test(cuerpo) && /media_host_rechazado/.test(cuerpo);
+})());
+caso("v68: llama a la API de transcripción con español y vocabulario del negocio", /api\.openai\.com\/v1\/audio\/transcriptions/.test(src) && /fd\.append\("language", "es"\)/.test(src) && /TN-830XL, GI-190, T544/.test(src));
+caso("v68: modelo de STT configurable (default whisper-1)", /Deno\.env\.get\("OPENAI_STT_MODEL"\) \?\? "whisper-1"/.test(src));
+// live: la transcripción se convierte en un mensaje de texto normal → MISMOS guardrails que si lo escribiera.
+caso("v68: en live la transcripción reescribe texto/tipo (pipeline normal)", /texto = `\[nota de voz\] \$\{sttTexto\}`/.test(src) && /tipo = "text";/.test(src) && /let texto = \(p\.text \?\? ""\)/.test(src));
+caso("v68: en shadow NO responde con la transcripción (el cliente recibe el puente)", /STT_MODE === "live" && sttTexto/.test(src));
+caso("v68: shadow guarda el texto para medir calidad; live NO lo duplica en job_log", /texto: STT_MODE === "shadow" \? tr\.texto\.slice\(0, 500\) : undefined/.test(src));
+caso("v68: fallo de STT → puente v67 (nunca silencio)", (() => {
+  const i = src.indexOf("async function transcribirAudio");
+  const cuerpo = src.slice(i, i + 2600);
+  return /audio_stt_fallo/.test(cuerpo) && /motivo: "descarga"/.test(cuerpo) && /motivo: "http"/.test(cuerpo) && /return null;/.test(cuerpo);
+})());
+caso("v68: la nota transcrita conserva la URL del audio original", /\(esImagenCliente \|\| esAudioTranscrito\)/.test(src));
+caso("v68: SYSTEM_PROMPT — la transcripción puede errar en códigos: confirmar, no inventar", /\[nota de voz\] …" = lo que el cliente DIJO/.test(SYSTEM_PROMPT) && /confirma en una línea el modelo con el cliente ANTES de cotizar/.test(SYSTEM_PROMPT) && /aplica la regla anti-interrupción igual que si lo hubiera escrito/.test(SYSTEM_PROMPT));
+caso("v68: healthcheck expone stt/stt_configurado y versión v68", /stt: STT_MODE/.test(src) && /stt_configurado: !!OPENAI_API_KEY/.test(src) && /version: "v68-transcripcion"/.test(src));
 
 // --- resumen --------------------------------------------------------------------------------------
 console.log(`\n${ok} OK, ${mal} FALLA${mal === 1 ? "" : "S"}`);
