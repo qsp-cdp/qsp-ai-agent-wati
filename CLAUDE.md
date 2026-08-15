@@ -49,7 +49,11 @@ con certeza, y calla/deriva cuando es mejor que responda un humano. Tienda:
   Nuevo mensaje de contacto; los extras —plantilla enviada, botón CTA— son inofensivos). **Lecciones:**
   (1) violar la regla de v14 no solo gasta plata, puede tumbar el canal entero; (2) **hueco de
   monitoreo**: nadie se enteró en ~8 h porque no hay alarma de "cero eventos en horario hábil" — candidato
-  claro a un watchdog (pg_cron que avise si `job_log` no registra nada en X horas de día hábil).
+  claro a un watchdog (pg_cron que avise si `job_log` no registra nada en X horas de día hábil);
+  (3) **por qué la prueba live del 13-ago NO lo cazó: el bug tenía UMBRAL.** El audio de prueba era corto
+  (36 chars) y transcribió en **1,7 s** — por debajo del timeout de WATI, así que pasó limpio. El audio
+  que tumbó el canal era de 2 min (186 KB, 1.032 chars) y tardó **4-6 s**. Moraleja para futuras pruebas
+  de features con latencia: probar el caso PESADO (audio largo, PDF grande), no solo el típico.
   **PENDIENTE (lunes, desde la PC de la oficina):** `git pull` + `.\deploy.ps1 copilot-webhook` →
   healthcheck `v68.1-stt-fondo` → recién ahí volver a `COPILOT_STT=live` (hoy quedó en `off`, que es lo
   que evita que se repita mientras el fix no esté desplegado).
