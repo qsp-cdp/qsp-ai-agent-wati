@@ -39,6 +39,20 @@ con certeza, y calla/deriva cuando es mejor que responda un humano. Tienda:
   seguidas se responderían las dos. 615 golden + 21 node tests. **Deploy:** `.\deploy.ps1 copilot-webhook`.
   **Verificar después:** mandar una nota de voz → UNA sola fila `audio_transcrito` (no una cada 10 min) y
   respuesta real del bot.
+  **🔥 EL RADIO DE DAÑO FUE MUCHO MAYOR QUE EL COSTO DEL STT: WATI DESACTIVÓ EL WEBHOOK.** Tras los 18
+  fallos por timeout, WATI marcó el endpoint como **defectuoso** y dejó de llamarlo: el bot quedó FUERA DE
+  SERVICIO desde las 02:40 hasta que Isaac lo desinstaló y reinstaló a mano (~11:00 del 15-ago, sábado).
+  Síntoma engañoso: mensajes SÍ entrando al inbox de WATI, base de datos SIN eventos, y **healthcheck
+  VERDE** (la función estaba sana; el que no llamaba era WATI). Diagnóstico correcto = comparar el inbox
+  de WATI contra `messages`/`job_log`: si hay mensajes allá y nada acá, el webhook está caído.
+  Recuperación: reinstalar el webhook con los 3 eventos (Mensaje Recibido · Mensaje de sesión enviado ·
+  Nuevo mensaje de contacto; los extras —plantilla enviada, botón CTA— son inofensivos). **Lecciones:**
+  (1) violar la regla de v14 no solo gasta plata, puede tumbar el canal entero; (2) **hueco de
+  monitoreo**: nadie se enteró en ~8 h porque no hay alarma de "cero eventos en horario hábil" — candidato
+  claro a un watchdog (pg_cron que avise si `job_log` no registra nada en X horas de día hábil).
+  **PENDIENTE (lunes, desde la PC de la oficina):** `git pull` + `.\deploy.ps1 copilot-webhook` →
+  healthcheck `v68.1-stt-fondo` → recién ahí volver a `COPILOT_STT=live` (hoy quedó en `off`, que es lo
+  que evita que se repita mientras el fix no esté desplegado).
 - **🚀 EN VIVO (13-ago, `COPILOT_STT=live`; superseded por v68.1): v68 (`v68-transcripcion`).** Nota de voz real →
   transcrita → respondida por el bot. **Bug de integración hallado y corregido en la 1ª prueba live** (dos
   features nuevas chocando): la VISIÓN DE RÁFAGA (v49) junta el `media_url` de los mensajes recientes del
