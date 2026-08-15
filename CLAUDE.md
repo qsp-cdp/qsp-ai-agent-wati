@@ -20,7 +20,26 @@ con certeza, y calla/deriva cuando es mejor que responda un humano. Tienda:
 **quickservicepanama.com** (suministros de impresión y tecnología en Panamá).
 
 ## Estado actual (2026-08-13)
-- **🚀 EN VIVO Y VERIFICADO (13-ago, `COPILOT_STT=live`): v68 (`v68-transcripcion`).** Nota de voz real →
+## Estado actual (2026-08-15)
+- **🔴 INCIDENTE Y FIX — v68.1 (`v68.1-stt-fondo`), EN EL REPO, DESPLEGAR YA.** Reporte del 15-ago ("el
+  agente no está trabajando"): el `job_log` mostró **el MISMO audio transcrito 18 veces, cada 10 minutos
+  exactos** (mismo waId/bytes/chars, 23:50→02:40 del 14→15-ago). Causa: v68 llamaba al STT **ANTES** de
+  devolverle el 200 a WATI y tarda 4-6 s → WATI dio el webhook por fallido y **reintentó cada 10 min**;
+  cada reintento volvía a transcribir (≈18 × 2 min de audio pagados) y volvía a tardar → bucle hasta que
+  WATI se rindió. **Es exactamente la lección de v14** (todo lo lento va en `EdgeRuntime.waitUntil` para no
+  chocar con el timeout de WATI) violada por el propio código nuevo. **Fix:** la nota de voz se inserta al
+  instante como `"[audio]"` (WATI recibe su 200 en ms y el dedup por `wati_message_id` corta cualquier
+  reintento **sin gastar STT**) y la transcripción corre en la tarea de fondo **después del debounce y del
+  anti-duplicado** → una ráfaga de 3 notas transcribe UNA sola; al terminar reescribe la fila con
+  `[nota de voz] …`. Como los guardrails del flujo normal ya habían corrido sobre `"[audio]"` (que no
+  matchea nada), se **REPITEN sobre la transcripción**: `INTERRUPT_RE` (abstención, `por_audio:true`) y
+  `HANDOFF_RE` (`handoff_por_audio`) — la anti-interrupción no puede saltarse porque el mensaje llegó
+  hablado. STT caído → puente v67 (nunca silencio). Además `hayMensajeClienteMasNuevo` vuelve a CONTAR los
+  `"[audio]"` cuando `STT=live` (con STT off siguen excluidos, regla v67): si no, dos notas de voz
+  seguidas se responderían las dos. 615 golden + 21 node tests. **Deploy:** `.\deploy.ps1 copilot-webhook`.
+  **Verificar después:** mandar una nota de voz → UNA sola fila `audio_transcrito` (no una cada 10 min) y
+  respuesta real del bot.
+- **🚀 EN VIVO (13-ago, `COPILOT_STT=live`; superseded por v68.1): v68 (`v68-transcripcion`).** Nota de voz real →
   transcrita → respondida por el bot. **Bug de integración hallado y corregido en la 1ª prueba live** (dos
   features nuevas chocando): la VISIÓN DE RÁFAGA (v49) junta el `media_url` de los mensajes recientes del
   cliente, y desde v67/v68 las notas de voz también guardan uno → el `.opus` viajaba a Claude etiquetado

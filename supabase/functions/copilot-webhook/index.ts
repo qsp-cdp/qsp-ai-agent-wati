@@ -2136,12 +2136,14 @@ function extraerCustomParams(p: any): Record<string, string> {
 // v20 (anti-duplicado): ¿hay un mensaje de cliente MÁS NUEVO que el que estamos respondiendo?
 // Si llegan varios en ráfaga, solo el último contesta (evita respuestas dobles/triples).
 async function hayMensajeClienteMasNuevo(convId: string, desde: string): Promise<boolean> {
-  // v67 — los "[audio]" NO cuentan como "mensaje más nuevo": una nota de voz nunca genera respuesta del
-  // LLM (solo el puente fijo), así que no debe DESCARTAR la respuesta de un texto pendiente. Sin esto,
-  // el combo común "le escribo + le mando audio" dejaba el texto SIN respuesta (descartado_superado por
-  // un mensaje que jamás iba a contestarse).
-  const { data } = await sb.from("messages").select("id")
-    .eq("conversation_id", convId).eq("role", "user").neq("content", "[audio]").gt("created_at", desde).limit(1);
+  let q = sb.from("messages").select("id")
+    .eq("conversation_id", convId).eq("role", "user").gt("created_at", desde);
+  // v67 — con STT apagado, un "[audio]" NUNCA genera respuesta del LLM (solo el puente fijo), así que no
+  // debe DESCARTAR la respuesta de un texto pendiente: sin esto, el combo "le escribo + le mando audio"
+  // dejaba el texto sin contestar. v68 — con STT en live SÍ se responden, así que vuelven a contar como
+  // mensaje más nuevo (si no, dos notas de voz seguidas se responderían las dos).
+  if (STT_MODE !== "live") q = q.neq("content", "[audio]");
+  const { data } = await q.limit(1);
   return !!(data && data.length);
 }
 
@@ -2429,7 +2431,7 @@ Deno.serve(async (req) => {
         texto: tr?.texto ?? null, ts: new Date().toISOString(),
       });
     }
-    return Response.json({ status: "ok", function: "copilot-webhook", version: "v68-transcripcion", mode: MODE, mode_raw: MODE_RAW, model: MODEL, llm_configured: !!anthropic, wati_send_configured: !!(WATI_API_TOKEN && WATI_API_BASE), inventario_configurado: !!(SHOPIFY_ADMIN_TOKEN && SHOPIFY_ADMIN_API_BASE), resolve_configured: !!RESOLVE_SECRET, webhook_key_es_default: WEBHOOK_KEY_ES_DEFAULT, handoff_assist_min: HANDOFF_ASSIST_MIN, handoff_cold_hours: HANDOFF_COLD_HOURS, debounce_ms: DEBOUNCE_MS, sesion_gap_dias: SESION_GAP_DIAS, burbujas: BURBUJAS, burbuja_ms: BURBUJA_MS, audio_puente: AUDIO_PUENTE, stt: STT_MODE, stt_raw: STT_RAW, stt_configurado: !!OPENAI_API_KEY, stt_model: STT_MODEL, busqueda_shadow: BUSQUEDA_SHADOW, busqueda_mcp: BUSQUEDA_MCP, busqueda_mcp_limit: BUSQUEDA_MCP_LIMIT, catalog_mcp_url: CATALOG_MCP_URL, ucp_profile_url: UCP_PROFILE_URL, live_targets: MODE === "live" ? (LIVE_ALL ? "all" : LIVE_ALLOWLIST.length) : 0, ts: new Date().toISOString() });
+    return Response.json({ status: "ok", function: "copilot-webhook", version: "v68.1-stt-fondo", mode: MODE, mode_raw: MODE_RAW, model: MODEL, llm_configured: !!anthropic, wati_send_configured: !!(WATI_API_TOKEN && WATI_API_BASE), inventario_configurado: !!(SHOPIFY_ADMIN_TOKEN && SHOPIFY_ADMIN_API_BASE), resolve_configured: !!RESOLVE_SECRET, webhook_key_es_default: WEBHOOK_KEY_ES_DEFAULT, handoff_assist_min: HANDOFF_ASSIST_MIN, handoff_cold_hours: HANDOFF_COLD_HOURS, debounce_ms: DEBOUNCE_MS, sesion_gap_dias: SESION_GAP_DIAS, burbujas: BURBUJAS, burbuja_ms: BURBUJA_MS, audio_puente: AUDIO_PUENTE, stt: STT_MODE, stt_raw: STT_RAW, stt_configurado: !!OPENAI_API_KEY, stt_model: STT_MODEL, busqueda_shadow: BUSQUEDA_SHADOW, busqueda_mcp: BUSQUEDA_MCP, busqueda_mcp_limit: BUSQUEDA_MCP_LIMIT, catalog_mcp_url: CATALOG_MCP_URL, ucp_profile_url: UCP_PROFILE_URL, live_targets: MODE === "live" ? (LIVE_ALL ? "all" : LIVE_ALLOWLIST.length) : 0, ts: new Date().toISOString() });
   }
   if (req.method !== "POST") return Response.json({ error: "method_not_allowed" }, { status: 405 });
   if (url.searchParams.get("key") !== WEBHOOK_KEY) return Response.json({ error: "forbidden" }, { status: 403 });
@@ -2531,26 +2533,32 @@ Deno.serve(async (req) => {
   // voz se convierte en un mensaje de texto normal (se reescriben `texto`/`tipo`) y NO se manda el puente
   // — el cliente recibe una respuesta de verdad. En `shadow` se transcribe, se registra para medir calidad
   // y el cliente igual recibe el puente. Si el STT falla en cualquier modo → puente v67 (sin silencio).
-  let sttTexto: string | null = null;
   let esAudioTranscrito = false;
-  if (esAudioCliente && STT_ACTIVO) {
+  let audioUrlPendiente = "";   // v68.1: se transcribe en SEGUNDO PLANO (ver más abajo), no aquí
+  if (esAudioCliente && STT_MODE === "live" && STT_ACTIVO) {
+    // ⚠️ v68.1 — LA TRANSCRIPCIÓN NO PUEDE CORRER AQUÍ. Tarda 4-6 s y este punto está ANTES del 200 a
+    // WATI: el 14-ago eso disparó el timeout de WATI, que reintentó el MISMO webhook cada 10 minutos
+    // durante 3 horas (18 transcripciones pagadas del mismo audio). Es la lección de v14 —todo lo lento
+    // va en EdgeRuntime.waitUntil— que este código había violado. Ahora la fila se inserta al instante
+    // como "[audio]" (rápido: WATI recibe su 200 y el dedup por wati_message_id corta cualquier
+    // reintento SIN gastar STT) y la transcripción ocurre en la tarea de fondo, que actualiza la fila.
+    texto = "[audio]";
+    tipo = "text";
+    esAudioTranscrito = true;          // conserva la URL del audio original en la fila del mensaje
+    audioUrlPendiente = String(p.data ?? "");
+  } else if (esAudioCliente && STT_MODE === "shadow" && STT_ACTIVO) {
+    // Shadow: se transcribe para MEDIR calidad y el cliente igual recibe el puente. Aquí sí es síncrono,
+    // pero shadow es un modo de evaluación temporal (y el autotest ?selftest=stt lo reemplaza mejor).
     const tr = await transcribirAudio(String(p.data ?? ""));
     if (tr) {
-      sttTexto = tr.texto;
-      // En shadow se guarda el TEXTO para poder evaluar la calidad (es el propósito de la medición); es
-      // contenido del cliente, así que el modo shadow es temporal — al pasar a live se deja de escribir.
       await log("audio_transcrito", true, {
         waId, modo: STT_MODE, ms: tr.ms, bytes: tr.bytes, chars: tr.texto.length, modelo: STT_MODEL,
-        texto: STT_MODE === "shadow" ? tr.texto.slice(0, 500) : undefined,
+        texto: tr.texto.slice(0, 500),
       });
     }
   }
-  if (esAudioCliente && STT_MODE === "live" && sttTexto) {
-    // La marca "[nota de voz]" viaja en el contenido: el modelo sabe que es una transcripción (regla de
-    // prompt AUDIOS) y queda visible en el hilo para el asesor que lea la conversación después.
-    texto = `[nota de voz] ${sttTexto}`;
-    tipo = "text";
-    esAudioTranscrito = true; // para conservar la URL del audio original en la fila del mensaje
+  if (esAudioCliente && esAudioTranscrito) {
+    // cae al flujo normal con "[audio]"; la tarea de fondo transcribe y reescribe la fila
   } else if (esAudioCliente && AUDIO_PUENTE) {
     try {
       const { data: convRows, error: convErr } = await sb.rpc("upsert_conversation", { p_wa_id: waId, p_sender_name: p.senderName ?? null });
@@ -2630,7 +2638,9 @@ Deno.serve(async (req) => {
 
     const watiMsgId = (p.id ?? p.whatsappMessageId ?? null)?.toString() ?? null;
     // Para una imagen el caption va en `texto`; si no hay caption, se guarda un marcador.
-    const contenido = esImagenCliente ? (texto || "[imagen]") : texto;
+    // v68.1: `let` porque una nota de voz se inserta como "[audio]" y la tarea de fondo la reescribe con
+    // la transcripción (el ticket de promesa y el motivo deben ver lo que el cliente dijo, no el marcador).
+    let contenido = esImagenCliente ? (texto || "[imagen]") : texto;
     // v49: se guarda la URL del media — antes solo quedaba "[imagen]" y una foto que llegaba ANTES del
     // último mensaje de la ráfaga era imposible de recuperar (el ganador no podía verla). Requiere la
     // migración 20260708150000_messages_media_url (aplicarla ANTES de desplegar v49).
@@ -2797,6 +2807,42 @@ Deno.serve(async (req) => {
         // el LLM ni la pisamos (el chequeo v20 post-LLM seguía existiendo, pero este ahorra la llamada).
         const { data: convTrasEspera } = await sb.from("conversations").select("status").eq("id", conv.id).maybeSingle();
         if (convTrasEspera?.status === "handoff") { await log("descartado_handoff_tardio", true, { waId, fase: "post-debounce" }); return; }
+        // v68.1 — TRANSCRIPCIÓN (STT) aquí, en segundo plano y DESPUÉS del debounce/anti-duplicado: WATI ya
+        // recibió su 200 (no hay timeout ni reintentos) y solo se paga por el audio que de verdad se va a
+        // responder — una ráfaga de 3 notas de voz transcribe UNA. La fila "[audio]" se reescribe con el
+        // texto para que el LLM, el historial y el asesor vean lo que el cliente dijo.
+        if (audioUrlPendiente) {
+          const tr = await transcribirAudio(audioUrlPendiente);
+          if (tr) {
+            texto = `[nota de voz] ${tr.texto}`;
+            contenido = texto;
+            await sb.from("messages").update({ content: texto.slice(0, 4000) }).eq("id", (ins.data?.[0] as any)?.id);
+            await log("audio_transcrito", true, { waId, modo: STT_MODE, ms: tr.ms, bytes: tr.bytes, chars: tr.texto.length, modelo: STT_MODEL });
+            // Los guardrails del flujo normal ya corrieron sobre "[audio]" (que no matchea nada), así que
+            // se REPITEN sobre lo que el cliente realmente dijo: la anti-interrupción es sagrada y no puede
+            // saltarse solo porque el mensaje llegó hablado.
+            if (INTERRUPT_RE.test(texto)) { await log("abstencion_interrupcion", true, { waId, por_audio: true }); return; }
+            if (HANDOFF_RE.test(texto)) {
+              await sb.from("conversations").update({ status: "handoff" }).eq("id", conv.id);
+              await sb.from("handoffs").insert({ conversation_id: conv.id, motivo: `keyword (nota de voz): ${texto.slice(0, 120)}`, origen: "keyword" });
+              await log("handoff_por_audio", true, { waId });
+              return;
+            }
+          } else {
+            // STT caído: el cliente NO puede quedar en silencio → puente v67 (insert antes de enviar).
+            const puenteA = horarioPanama().dentro
+              ? "Recibí su nota de voz 🎧 ¿Me lo puede escribir en un mensaje? Así le respondo al instante — o si prefiere, un asesor escucha su audio en breve."
+              : "Recibí su nota de voz 🎧 ¿Me lo puede escribir en un mensaje? Así le respondo al instante — o un asesor escucha su audio apenas estemos en horario (Lun-Vie 9:00am–5:00pm).";
+            const quiereP = liveAllowed(waId);
+            const insPA = await sb.from("messages").insert({ conversation_id: conv.id, role: "assistant", content: puenteA, mode: quiereP ? "live" : "shadow", model: "audio-puente" }).select("id");
+            if (!insPA.error && quiereP) {
+              const okP = await enviarWati(waId, puenteA);
+              if (!okP) await sb.from("messages").update({ mode: "shadow" }).eq("id", (insPA.data?.[0] as any)?.id);
+              await log("audio_puente", true, { waId, enviado: okP, motivo: "stt_fallo" });
+            }
+            return;
+          }
+        }
         const { data: hist } = await sb.from("messages").select("role,content,model,created_at,media_url").eq("conversation_id", conv.id).in("role", ["user", "assistant"]).order("created_at", { ascending: false }).limit(10);
         const history = (hist ?? []).reverse();
         // v49 — VISIÓN de ráfaga: junta las imágenes de la COLA de mensajes del cliente (los "user"

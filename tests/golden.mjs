@@ -1135,7 +1135,7 @@ caso("v67: insert-antes-de-enviar con model audio-puente (anti-eco v21)", (() =>
   return i1 > -1 && i2 > -1 && i1 < i2;
 })());
 caso("v67: puente de usted y consciente del horario", /Recibí su nota de voz 🎧 ¿Me lo puede escribir en un mensaje\?/.test(src) && /un asesor escucha su audio apenas estemos en horario \(Lun-Vie 9:00am–5:00pm\)/.test(src));
-caso("v67: '[audio]' NO descarta una respuesta de texto pendiente (combo texto+audio)", /\.neq\("content", "\[audio\]"\)\.gt\("created_at", desde\)/.test(src));
+caso("v67/v68.1: '[audio]' no descarta un texto pendiente con STT off, pero SÍ cuenta con STT live", /if \(STT_MODE !== "live"\) q = q\.neq\("content", "\[audio\]"\)/.test(src));
 caso("v67: telemetría audio_puente + envio_fallido del puente", /"audio_puente"/.test(src) && /tipo: "audio_puente"/.test(src));
 caso("v67: SYSTEM_PROMPT — regla AUDIOS (no regañar ni repetir la petición)", /AUDIOS \/ NOTAS DE VOZ/.test(SYSTEM_PROMPT) && /una nota de voz que NO se pudo transcribir/.test(SYSTEM_PROMPT) && /NO repitas esa petición/.test(SYSTEM_PROMPT));
 caso("v67: tope de turnos aplica también a audios", /await log\("tope_turnos", true, \{ waId, tipo: "audio" \}\)/.test(src));
@@ -1157,9 +1157,20 @@ caso("v68: descarga cruda con la MISMA allowlist *.wati.io que la visión", (() 
 caso("v68: llama a la API de transcripción con español y vocabulario del negocio", /api\.openai\.com\/v1\/audio\/transcriptions/.test(src) && /fd\.append\("language", "es"\)/.test(src) && /TN-830XL, GI-190, T544/.test(src));
 caso("v68: modelo de STT configurable (default whisper-1)", /Deno\.env\.get\("OPENAI_STT_MODEL"\) \?\? "whisper-1"/.test(src));
 // live: la transcripción se convierte en un mensaje de texto normal → MISMOS guardrails que si lo escribiera.
-caso("v68: en live la transcripción reescribe texto/tipo (pipeline normal)", /texto = `\[nota de voz\] \$\{sttTexto\}`/.test(src) && /tipo = "text";/.test(src) && /let texto = \(p\.text \?\? ""\)/.test(src));
-caso("v68: en shadow NO responde con la transcripción (el cliente recibe el puente)", /STT_MODE === "live" && sttTexto/.test(src));
-caso("v68: shadow guarda el texto para medir calidad; live NO lo duplica en job_log", /texto: STT_MODE === "shadow" \? tr\.texto\.slice\(0, 500\) : undefined/.test(src));
+caso("v68: en live la transcripción reescribe el mensaje (pipeline normal)", /texto = `\[nota de voz\] \$\{tr\.texto\}`/.test(src) && /let texto = \(p\.text \?\? ""\)/.test(src));
+// 🔴 caso real 14-ago: el STT corría ANTES del 200 a WATI (4-6 s) → timeout → WATI reintentó el MISMO
+// webhook cada 10 min durante 3 h (18 transcripciones pagadas del mismo audio). Es la lección de v14.
+caso("v68.1: el STT corre en la tarea de FONDO, nunca antes del ACK a WATI", (() => {
+  const iAck = src.indexOf('audioUrlPendiente = String(p.data ?? "")');
+  const iStt = src.indexOf("const tr = await transcribirAudio(audioUrlPendiente)");
+  const iDebounce = src.indexOf("if (DEBOUNCE_MS > 0) await new Promise");
+  return iAck > -1 && iStt > -1 && iDebounce > -1 && iAck < iDebounce && iDebounce < iStt;
+})());
+caso("v68.1: la fila entra como '[audio]' (dedup corta los reintentos sin gastar STT)", /texto = "\[audio\]";\s*\n\s*tipo = "text";/.test(src));
+caso("v68.1: tras transcribir se REPITEN los guardrails sobre lo que dijo el cliente", /if \(INTERRUPT_RE\.test\(texto\)\) \{ await log\("abstencion_interrupcion", true, \{ waId, por_audio: true \}\)/.test(src) && /handoff_por_audio/.test(src));
+caso("v68.1: STT caído en live → puente v67 (el cliente nunca queda en silencio)", /motivo: "stt_fallo"/.test(src));
+caso("v68: en shadow NO responde con la transcripción (el cliente recibe el puente)", /esAudioCliente && STT_MODE === "shadow" && STT_ACTIVO/.test(src));
+caso("v68: shadow guarda el texto para medir calidad", /modo: STT_MODE, ms: tr\.ms, bytes: tr\.bytes, chars: tr\.texto\.length, modelo: STT_MODEL,\s*\n\s*texto: tr\.texto\.slice\(0, 500\),/.test(src));
 caso("v68: fallo de STT → puente v67 (nunca silencio)", (() => {
   const i = src.indexOf("async function transcribirAudio");
   const cuerpo = src.slice(i, i + 2600);
@@ -1167,7 +1178,7 @@ caso("v68: fallo de STT → puente v67 (nunca silencio)", (() => {
 })());
 caso("v68: la nota transcrita conserva la URL del audio original", /\(esImagenCliente \|\| esAudioTranscrito\)/.test(src));
 caso("v68: SYSTEM_PROMPT — la transcripción puede errar en códigos: confirmar, no inventar", /\[nota de voz\] …" = lo que el cliente DIJO/.test(SYSTEM_PROMPT) && /confirma en una línea el modelo con el cliente ANTES de cotizar/.test(SYSTEM_PROMPT) && /aplica la regla anti-interrupción igual que si lo hubiera escrito/.test(SYSTEM_PROMPT));
-caso("v68: healthcheck expone stt/stt_configurado y versión v68", /stt: STT_MODE/.test(src) && /stt_configurado: !!OPENAI_API_KEY/.test(src) && /version: "v68-transcripcion"/.test(src));
+caso("v68: healthcheck expone stt/stt_configurado y versión v68", /stt: STT_MODE/.test(src) && /stt_configurado: !!OPENAI_API_KEY/.test(src) && /version: "v68\.1-stt-fondo"/.test(src));
 // autotest ?selftest=stt — permite medir calidad con audios REALES ya recibidos, sin esperar el shadow.
 // 🔴 caso real 13-ago: la visión de ráfaga (v49) agarraba el media_url de las notas de voz y mandaba un
 // .opus a Claude como imagen → 400 "Could not process image", turno muerto y respuesta de respaldo.
