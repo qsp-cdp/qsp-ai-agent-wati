@@ -23,7 +23,7 @@ $url  = "https://$proj.functions.supabase.co/copilot-webhook"
 #   Despacho (necesita Shipday configurado): shopify-webhook, shipday-status, wati-order.
 # Ej. para solo la captura:  .\deploy.ps1 wati-address contacts-lookup
 $funcs = if ($args.Count -gt 0) { $args } else {
-  @("copilot-webhook", "wati-address", "contacts-lookup", "shopify-webhook", "shipday-status", "wati-order", "reengage-expired")
+  @("copilot-webhook", "wati-address", "contacts-lookup", "shopify-webhook", "shipday-status", "wati-order", "reengage-expired", "watchdog")
 }
 
 foreach ($fn in $funcs) {

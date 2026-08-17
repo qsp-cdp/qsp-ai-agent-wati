@@ -21,6 +21,24 @@ con certeza, y calla/deriva cuando es mejor que responda un humano. Tienda:
 
 ## Estado actual (2026-08-13)
 ## Estado actual (2026-08-17)
+- **EN EL REPO, LISTO PARA DESPLEGAR (SHADOW-FIRST): v69 — `watchdog`, la alarma que faltó el 15-ago.**
+  Edge Function NUEVA + `pg_cron` cada 30 min en horario hábil. **Señal: `messages`, NO `job_log`** (un
+  turno normal exitoso no siempre escribe en job_log → no sirve de latido): si el mensaje más reciente
+  —de cliente, bot o asesor— tiene más de **90 min** (env `WATCHDOG_UMBRAL_MIN`) en día hábil de Panamá
+  entre 9 y 17, algo está roto aguas arriba. Con ~25 mensajes/hora hábiles, ese silencio es anómalo.
+  **La alerta va por CORREO (Resend), no por WhatsApp** — decisión de Isaac, y es lo correcto: la alerta no
+  debe viajar por el canal que puede estar roto (avisar por WATI de que WATI no responde), y evita depender
+  de una plantilla aprobada por Meta. El correo trae el diagnóstico masticado: minutos de silencio, último
+  mensaje en hora de Panamá, **estado del healthcheck del copiloto** (distingue "función caída" de "función
+  OK pero WATI no llama" — la confusión exacta que costó horas) y qué revisar en WATI. **Anti-spam:** una
+  alerta, no doce (`WATCHDOG_REPETIR_MIN`, default 180) + **aviso de RECUPERACIÓN** cuando vuelve el
+  tráfico. Decisión aislada en `decidirAccion` (pura) con **8 node tests** que son el contrato del
+  vigilante (29 en total). Fail-closed por `?key=`; `?force=1` salta el gate de horario para pruebas.
+  **Limitación honesta:** si Supabase entero cae, el watchdog cae con él (haría falta un vigilante
+  externo); y solo vigila el horario configurado. **Puesta en marcha en `docs/watchdog.md`:**
+  `.\deploy.ps1 watchdog` (importa `_shared` → solo CLI) → `WATCHDOG_KEY` + cron → **una semana en shadow**
+  (mide y registra lo que HABRÍA alertado, sin mandar correo) para calibrar el umbral con datos reales →
+  Resend + `WATCHDOG_MODE=live`, probando que el correo NO caiga en spam.
 - **🚀 v68.1 (`v68.1-stt-fondo`) EN VIVO Y VERIFICADO (17-ago, `COPILOT_STT=live` de vuelta).** Prueba con
   el CASO PESADO (nota de voz larga, varios productos): el bot transcribió y respondió perfecto, acertando
   los TRES códigos hablados (CF283A, PG-145XL, HP M283 → juego 206A con los 4 W211xA correctos) con

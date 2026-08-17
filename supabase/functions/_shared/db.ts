@@ -198,6 +198,36 @@ export async function upsertPedido(p: PedidoUpsert): Promise<void> {
   }
 }
 
+// --- Watchdog de actividad (v69) -----------------------------------------------------------------
+// El apagón del 15-ago (WATI desactivó el webhook y nadie se enteró en 8 h) dejó claro que falta una
+// señal de "no está entrando NADA". `job_log` no sirve como latido —un turno normal exitoso no siempre
+// escribe ahí—; la señal buena es la tabla `messages`: si no hay NINGÚN mensaje (cliente, bot o asesor)
+// en horario hábil, algo está roto aguas arriba.
+
+// Marca de tiempo del mensaje más reciente (cualquier rol). null = tabla vacía o error.
+export async function ultimoMensajeAt(): Promise<string | null> {
+  try {
+    const res = await fetch(restUrl('/messages?select=created_at&order=created_at.desc&limit=1'), {
+      headers: serviceHeaders(),
+      signal: AbortSignal.timeout(10000),
+    });
+    if (!res.ok) return null;
+    const filas = await res.json();
+    return filas?.[0]?.created_at ?? null;
+  } catch { return null; }
+}
+
+// Última fila de job_log con esta `action` (para el anti-spam de alertas y el aviso de recuperación).
+export async function ultimoJobLog(action: string, desdeIso: string): Promise<{ created_at: string; detail: any } | null> {
+  try {
+    const url = `/job_log?select=created_at,detail&action=eq.${encodeURIComponent(action)}&created_at=gte.${encodeURIComponent(desdeIso)}&order=created_at.desc&limit=1`;
+    const res = await fetch(restUrl(url), { headers: serviceHeaders(), signal: AbortSignal.timeout(10000) });
+    if (!res.ok) return null;
+    const filas = await res.json();
+    return filas?.[0] ?? null;
+  } catch { return null; }
+}
+
 // --- Resolución de zona (v52) --------------------------------------------------------------------
 // El diccionario + el RPC `resolver_tarifa_v2` (v31: metro E interior) saben la zona real de una dirección;
 // Shipday solo geocodifica texto libre. Esto NO reemplaza el geocoding: enriquece la orden con la

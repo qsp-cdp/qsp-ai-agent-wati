@@ -26,3 +26,7 @@ verify_jwt = false
 # Cron de re-enganche de fin de semana (v51): disparado por pg_cron vía net.http_post, guardado por ?key=.
 [functions.reengage-expired]
 verify_jwt = false
+
+# Watchdog de actividad (v69): disparado por pg_cron cada 30 min en horario hábil, guardado por ?key=.
+[functions.watchdog]
+verify_jwt = false
