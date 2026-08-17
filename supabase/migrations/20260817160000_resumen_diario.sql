@@ -24,9 +24,9 @@ begin
 
   -- Volumen del día. El asesor humano se guarda como role='assistant' con model='human-agent'.
   select jsonb_build_object(
-    'cliente', count(*) filter (where role = 'user'),
-    'bot',     count(*) filter (where role = 'assistant' and coalesce(model,'') <> 'human-agent'),
-    'asesor',  count(*) filter (where model = 'human-agent')
+    'de_clientes',  count(*) filter (where role = 'user'),
+    'del_bot',      count(*) filter (where role = 'assistant' and coalesce(model,'') <> 'human-agent'),
+    'de_asesores',  count(*) filter (where model = 'human-agent')
   ) into v_msgs
   from messages where created_at >= v_desde;
 
@@ -57,11 +57,12 @@ begin
       and extract(hour from (created_at at time zone 'America/Panama')) between 9 and 16
   ) g;
 
-  -- CLIENTES ATENDIDOS hoy. Se cuenta por CONVERSACIÓN (cliente único), no por mensaje: lo que interesa
+  -- CLIENTES del día: se cuenta por CONVERSACIÓN (cliente ÚNICO de WATI), no por mensaje — `mensajes`
+  -- de arriba son mensajes sueltos y confunde leerlos como clientes (lo notó Isaac viendo 387 vs 59). Lo que interesa
   -- es a cuánta gente se le habló. NO se distingue si respondió el bot o un asesor (decisión de Isaac:
   -- para el resumen diario da igual quién atendió — lo que importa es que alguien lo hiciera).
   select jsonb_build_object(
-    'total',        count(*),
+    'escribieron',  count(*),
     'atendidos',    count(*) filter (where hubo_bot or hubo_asesor),
     'sin_atencion', count(*) filter (where not hubo_bot and not hubo_asesor)
   ) into v_conv
@@ -108,7 +109,7 @@ begin
 
   return jsonb_build_object(
     'desde', v_desde,
-    'conversaciones', v_conv,
+    'clientes', v_conv,
     'mensajes', v_msgs,
     'incidencias', v_inc,
     'silencio_max_min', v_silencio,

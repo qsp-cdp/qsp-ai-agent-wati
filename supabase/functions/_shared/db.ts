@@ -221,8 +221,8 @@ export async function ultimoMensajeAt(): Promise<string | null> {
 // conversaciones que quedaron SIN RESPONDER (ni bot ni asesor). Alimenta el correo de cierre.
 export interface ResumenDiario {
   desde: string;
-  conversaciones: { total: number; atendidos: number; sin_atencion: number };
-  mensajes: { cliente: number; bot: number; asesor: number };
+  clientes: { escribieron: number; atendidos: number; sin_atencion: number };
+  mensajes: { de_clientes: number; del_bot: number; de_asesores: number };
   incidencias: Record<string, number>;
   silencio_max_min: number;
   sin_responder: Array<{ wa_id: string; nombre: string | null; hora: string; espera_min: number; texto: string }>;
