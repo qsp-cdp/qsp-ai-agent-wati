@@ -2593,6 +2593,22 @@ Deno.serve(async (req) => {
   const eventType = (p.eventType ?? p.event ?? "").toString().toLowerCase();
   const operador = (p.operatorName ?? p.operatorEmail ?? "").toString().trim(); // asesor que escribió (v15)
 
+  // v71.1 — SONDA DE EVENTOS DESCONOCIDOS. Hallazgo del 17-ago: cuando el asesor marca el chat "resuelto"
+  // y el cliente vuelve a escribir, WATI devuelve la conversación A SU PROPIO BOT — o sea, para WATI ya no
+  // hay humano ahí, mientras nuestro `status` sigue en 'handoff' y el copiloto se calla. Los dos sistemas
+  // discrepan y el cliente queda sin atender (casos Marlius y Helen). Si el evento "Chatbot activado" (u
+  // otro) trae esa señal, podríamos devolver la conversación a 'bot' y atender con normalidad —
+  // mucho mejor que el barrido por tiempo. El botón de PRUEBA de WATI devuelve un error interno suyo, así
+  // que la única forma de saber qué manda de verdad es escuchar el disparo REAL. Solo NOMBRES de claves y
+  // el tipo de evento; nada de contenido del cliente (lección de PII v45). Se quita cuando se resuelva.
+  const EVENTOS_CONOCIDOS = ["message", "mensaje", "newcontact", "template", "plantilla", "session", "sesion"];
+  if (eventType && !EVENTOS_CONOCIDOS.some((e) => eventType.includes(e))) {
+    await log("evento_desconocido", true, {
+      eventType, waId: waId || null, owner: esDelNegocio, tipo,
+      keys: Object.keys(p ?? {}).slice(0, 40), text_len: texto.length,
+    });
+  }
+
   // Evento WATI de contacto nuevo (sin texto): marcar lead nuevo. El texto llega aparte.
   if (eventType.includes("newcontact")) {
     if (waId) {
