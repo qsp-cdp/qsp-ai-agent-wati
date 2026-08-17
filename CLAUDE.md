@@ -44,7 +44,8 @@ con certeza, y calla/deriva cuando es mejor que responda un humano. Tienda:
   los dos correos.** La alerta solo habla cuando algo falla → si el watchdog MISMO muere (cron
   desprogramado, función rota, key vencida) no llega nada y nadie lo nota (el mismo hueco un piso arriba).
   El correo diario es la **PRUEBA DE VIDA: su ausencia ES la alarma**. Contenido (todo calculado en SQL, un
-  solo viaje): **clientes atendidos** desglosados (bot / asesor / sin atención — pedido de Isaac),
+  solo viaje): **clientes atendidos** (cuántos de los que escribieron recibieron respuesta; SIN desglosar
+  quién atendió — decisión de Isaac: para el resumen da igual, importa que alguien lo hiciera),
   mensajes, **silencio máximo del día** (calibra el umbral), incidencias (respaldo/envío fallido/STT/MCP) y
   la lista **⚠️ SIN RESPONDER** (teléfono, nombre, hora, minutos de espera y qué escribieron): clientes que
   hablaron y no les contestó NADIE, ni bot ni asesor — la lista para rescatar ventas antes de cerrar.

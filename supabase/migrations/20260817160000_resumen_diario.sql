@@ -53,14 +53,13 @@ begin
     from messages where created_at >= v_desde
   ) g;
 
-  -- CLIENTES ATENDIDOS hoy, y por quién. Se cuenta por CONVERSACIÓN (cliente único), no por mensaje:
-  -- lo que interesa es a cuánta gente se le habló. Si un asesor tocó el chat cuenta como suyo (aunque el
-  -- bot también haya contestado antes): el humano es quien lleva la venta.
+  -- CLIENTES ATENDIDOS hoy. Se cuenta por CONVERSACIÓN (cliente único), no por mensaje: lo que interesa
+  -- es a cuánta gente se le habló. NO se distingue si respondió el bot o un asesor (decisión de Isaac:
+  -- para el resumen diario da igual quién atendió — lo que importa es que alguien lo hiciera).
   select jsonb_build_object(
-    'total',           count(*),
-    'por_asesor',      count(*) filter (where hubo_asesor),
-    'por_bot',         count(*) filter (where hubo_bot and not hubo_asesor),
-    'sin_atencion',    count(*) filter (where not hubo_bot and not hubo_asesor)
+    'total',        count(*),
+    'atendidos',    count(*) filter (where hubo_bot or hubo_asesor),
+    'sin_atencion', count(*) filter (where not hubo_bot and not hubo_asesor)
   ) into v_conv
   from (
     -- coalesce OBLIGATORIO: `m.model = 'human-agent'` con model NULL da NULL, y bool_or de puros NULL

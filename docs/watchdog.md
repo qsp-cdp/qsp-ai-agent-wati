@@ -38,7 +38,7 @@ hueco que estamos tapando, un piso más arriba. Con el correo diario, **la ausen
 
 Contenido del resumen (RPC `resumen_diario`, migración `20260817160000_resumen_diario.sql`):
 
-- **Clientes atendidos**, desglosados: por el bot / por un asesor / sin atención.
+- **Clientes atendidos** (cuántos de los que escribieron recibieron respuesta; no distingue si fue el bot o un asesor).
 - Mensajes del día (cliente · bot · asesor) y **silencio máximo** (sirve para calibrar el umbral).
 - Incidencias: respuestas de respaldo, envíos fallidos, fallos de STT o de búsqueda.
 - **⚠️ Sin responder:** teléfono, nombre, hora, minutos de espera y las primeras palabras de lo que

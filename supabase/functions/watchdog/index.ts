@@ -101,7 +101,7 @@ async function estadoCopiloto(): Promise<string> {
 const ESPERA_SIN_RESPONDER = intEnv("WATCHDOG_ESPERA_SIN_RESPONDER", 45, 5, 480);
 
 function htmlResumen(r: ResumenDiario, salud: string): string {
-  const c = r.conversaciones ?? { total: 0, por_bot: 0, por_asesor: 0, sin_atencion: 0 };
+  const c = r.conversaciones ?? { total: 0, atendidos: 0, sin_atencion: 0 };
   const inc = r.incidencias ?? {};
   const incidencias = Object.entries(inc).filter(([, v]) => Number(v) > 0)
     .map(([k, v]) => `${k.replaceAll("_", " ")}: <strong>${v}</strong>`).join(" · ") || "ninguna";
@@ -117,10 +117,9 @@ function htmlResumen(r: ResumenDiario, salud: string): string {
           hace más de ${ESPERA_SIN_RESPONDER} min.</p>`
     : `<p>✅ <strong>Nadie quedó sin responder.</strong></p>`;
   return `<h2 style="margin:0 0 10px">Copiloto — resumen del día</h2>
-    <p><strong>Clientes atendidos: ${c.total}</strong> · ${c.por_bot} por el bot · ${c.por_asesor} por un asesor
+    <p><strong>Clientes atendidos: ${c.atendidos} de ${c.total}</strong> que escribieron
        ${c.sin_atencion > 0 ? `· <strong style="color:#b00">${c.sin_atencion} sin atención</strong>` : ""}</p>
-    <p>Mensajes: ${r.mensajes?.cliente ?? 0} de clientes · ${r.mensajes?.bot ?? 0} del bot ·
-       ${r.mensajes?.asesor ?? 0} de asesores<br>
+    <p>Mensajes: ${r.mensajes?.cliente ?? 0} de clientes · ${(r.mensajes?.bot ?? 0) + (r.mensajes?.asesor ?? 0)} de respuesta<br>
        Silencio máximo del día: ${r.silencio_max_min} min<br>
        Incidencias: ${incidencias}<br>
        Estado: ${salud}</p>
@@ -138,8 +137,8 @@ async function correrResumen(): Promise<Record<string, unknown>> {
   const salud = await estadoCopiloto();
   const c = r.conversaciones ?? { total: 0 };
   const asunto = r.sin_responder_n > 0
-    ? `Copiloto — ${c.total} clientes atendidos, ${r.sin_responder_n} SIN responder`
-    : `Copiloto — ${c.total} clientes atendidos, todo respondido ✅`;
+    ? `Copiloto — ${c.atendidos} clientes atendidos, ${r.sin_responder_n} SIN responder`
+    : `Copiloto — ${c.atendidos} clientes atendidos, todo respondido ✅`;
   const resumenLog = { mode: MODE, conversaciones: c, mensajes: r.mensajes, sin_responder_n: r.sin_responder_n, silencio_max_min: r.silencio_max_min };
   if (MODE !== "live") {
     await logJob(FN, "watchdog_resumen", true, { ...resumenLog, shadow: true, asunto });
