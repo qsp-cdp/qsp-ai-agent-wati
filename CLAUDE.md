@@ -20,7 +20,14 @@ con certeza, y calla/deriva cuando es mejor que responda un humano. Tienda:
 **quickservicepanama.com** (suministros de impresión y tecnología en Panamá).
 
 ## Estado actual (2026-08-13)
-## Estado actual (2026-08-15)
+## Estado actual (2026-08-17)
+- **🚀 v68.1 (`v68.1-stt-fondo`) EN VIVO Y VERIFICADO (17-ago, `COPILOT_STT=live` de vuelta).** Prueba con
+  el CASO PESADO (nota de voz larga, varios productos): el bot transcribió y respondió perfecto, acertando
+  los TRES códigos hablados (CF283A, PG-145XL, HP M283 → juego 206A con los 4 W211xA correctos) con
+  precios+ITBMS, stock y links. De regalo, v66 discriminó bien sola: NO usó burbujas porque eran varios
+  productos (la regla es solo para UN producto). Falta confirmar a los ~20 min que hay UNA sola fila
+  `audio_transcrito` (que el bucle de reintentos no vuelva).
+## Estado histórico (2026-08-15)
 - **🔴 INCIDENTE Y FIX — v68.1 (`v68.1-stt-fondo`), EN EL REPO, DESPLEGAR YA.** Reporte del 15-ago ("el
   agente no está trabajando"): el `job_log` mostró **el MISMO audio transcrito 18 veces, cada 10 minutos
   exactos** (mismo waId/bytes/chars, 23:50→02:40 del 14→15-ago). Causa: v68 llamaba al STT **ANTES** de
