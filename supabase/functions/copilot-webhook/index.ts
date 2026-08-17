@@ -2591,6 +2591,8 @@ Deno.serve(async (req) => {
         throw new Error(`insert audio msg: ${insU.error.message}`);
       }
       if (conv.status === "handoff") { await log("audio_puente", true, { waId, enviado: false, motivo: "handoff" }); return Response.json({ ok: true, skipped: "audio_en_handoff" }); }
+      // v70.1 — un contacto marcado 'cerrada' (proveedor, etc.) tampoco recibe el puente de audio.
+      if (conv.status === "cerrada") { await log("audio_puente", true, { waId, enviado: false, motivo: "cerrada" }); return Response.json({ ok: true, skipped: "conversacion_cerrada" }); }
       if (conv.turns_today > MAX_TURNS_DIA) { await log("tope_turnos", true, { waId, tipo: "audio" }); return Response.json({ ok: true, skipped: "tope_diario" }); }
       const desdeAntiSpam = new Date(Date.now() - 10 * 60 * 1000).toISOString();
       const { data: puenteReciente } = await sb.from("messages").select("id").eq("conversation_id", conv.id).eq("model", "audio-puente").gte("created_at", desdeAntiSpam).limit(1);
@@ -2670,6 +2672,17 @@ Deno.serve(async (req) => {
     //  · si no aplica (asesor activo hace poco, o no es pregunta básica): se calla (como v30).
     // Si NUNCA escribió un humano (handoff por keyword HANDOFF_RE), se mantiene el comportamiento v30
     // (no se retoma solo): el bot solo gestiona el ciclo cuando de verdad hubo un asesor en el chat.
+    // v70.1 — CONTACTO QUE NO ES CLIENTE (proveedor, contador, mensajero, personal interno). El estado
+    // 'cerrada' ya existía en el esquema y el cron de re-enganche lo respetaba, pero el copiloto NUNCA lo
+    // miraba: solo distinguía 'handoff'. Resultado: no había forma de decirle "a este número no lo
+    // atiendas". Ahora 'cerrada' = SIEMPRE humano — el bot guarda el mensaje (contexto para el asesor) y
+    // se calla, sin cold-return que lo resucite a las 24 h. Se marca a mano y es reversible:
+    //   update conversations set status='cerrada' where wa_id='507…';  -- el bot no vuelve a responder
+    //   update conversations set status='bot'     where wa_id='507…';  -- vuelve a atender
+    if (conv.status === "cerrada") {
+      await log("conversacion_cerrada", true, { waId, motivo: "no_es_cliente" });
+      return Response.json({ ok: true, skipped: "conversacion_cerrada" });
+    }
     if (conv.status === "handoff") {
       const { data: ha } = await sb.from("messages").select("created_at")
         .eq("conversation_id", conv.id).eq("model", "human-agent")

@@ -1098,6 +1098,18 @@ caso("v65: pareceFuncionEnTexto conoce las 8 tools", pareceFuncionEnTexto('llamo
 // #13 — sin voseo residual
 caso("v65: sin voseo residual (sabés)", !/sabés/.test(SYSTEM_PROMPT));
 
+// --- v70.1: contactos que NO son clientes (proveedores) — 'cerrada' = siempre humano ------------
+console.log("v70.1 contacto no-cliente");
+// El estado 'cerrada' existía en el esquema y el cron de re-enganche lo respetaba, pero el copiloto solo
+// miraba 'handoff' → no había forma de excluir a un proveedor. Caso real 17-ago (Oneyda, proveedora).
+caso("v70.1: status 'cerrada' → el bot se calla (y lo registra)", /if \(conv\.status === "cerrada"\) \{\s*\n\s*await log\("conversacion_cerrada"/.test(src) && /skipped: "conversacion_cerrada"/.test(src));
+caso("v70.1: se evalúa ANTES del ciclo de handoff (ningún cold-return lo resucita)", (() => {
+  const iCerrada = src.indexOf('if (conv.status === "cerrada") {');
+  const iHandoff = src.indexOf('if (conv.status === "handoff") {\n      const { data: ha }');
+  return iCerrada > -1 && iHandoff > -1 && iCerrada < iHandoff;
+})());
+caso("v70.1: el puente de audio también respeta 'cerrada'", /motivo: "cerrada"/.test(src));
+
 // --- v70: "depósito de mantenimiento" es un PRODUCTO, no un depósito bancario --------------------
 console.log("v70 falso positivo del depósito");
 // 🔴 caso real 17-ago: "Tiene el depósito de mantenimiento para la Canon maxify gx4010 mc-g03" → el

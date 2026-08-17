@@ -21,6 +21,34 @@ con certeza, y calla/deriva cuando es mejor que responda un humano. Tienda:
 
 ## Estado actual (2026-08-13)
 ## Estado actual (2026-08-17)
+- **EN EL REPO, DESPLEGAR: v70 + v70.1 — dos huecos que destapó el PRIMER resumen del watchdog.** La
+  feature nueva se pagó sola el mismo día: de los 9 "sin responder" salieron dos hallazgos reales.
+  **v70 — 🔴 FALSO POSITIVO CARO de la anti-interrupción:** el patrón suelto `dep[oó]sit` tomaba por
+  depósito BANCARIO al **"DEPÓSITO DE MANTENIMIENTO"**, que es un PRODUCTO del catálogo (caja de residuos
+  de las Canon MAXIFY / Epson EcoTank). Caso real: *"Tiene el depósito de mantenimiento para la Canon
+  maxify gx4010 mc-g03"* → `abstencion_interrupcion` con `por_rafaga:false` (matcheó su propio texto) y el
+  cliente esperó 77 min por una venta directa, con la conversación en `status:'bot'` (ni siquiera había
+  asesor). Ahora el patrón exige sentido bancario (verbo de pago cerca, o `depósito bancario|a la cuenta|
+  por yappy`); 8 locks nuevos cubren producto vs pago.
+  **v70.1 — CONTACTOS QUE NO SON CLIENTES:** el estado `cerrada` existía en el esquema y el cron de
+  re-enganche lo respetaba, pero **el copiloto NUNCA lo miraba** (solo distinguía `handoff`) → no había
+  forma de excluir a un proveedor/contador/mensajero. Pedido de Isaac (Oneyda es proveedora). Ahora
+  `cerrada` = SIEMPRE humano: guarda el mensaje como contexto y calla, sin cold-return que lo resucite, y
+  el puente de audio también lo respeta. Se marca a mano y es reversible:
+  `update conversations set status='cerrada' where wa_id='507…';` (volver: `status='bot'`).
+  626 golden tests. **Deploy:** `.\deploy.ps1 copilot-webhook`.
+- **📌 PENDIENTE DE DISEÑO — el hueco ESTRUCTURAL del modo asistencia (el hallazgo más grande del día).**
+  4 de los 5 casos sin responder tenían el MISMO patrón: el cliente escribió 0-10 min después del asesor
+  (Delia 10, Helen 0, Oneyda 3, Marlius 7) → por debajo de los 15 min que exige la asistencia (v50), así
+  que el bot calló BIEN en ese instante. Pero **la asistencia es REACTIVA: solo se evalúa cuando llega un
+  mensaje nuevo del cliente**. Como ninguno volvió a escribir, la ventana se abrió sola a los 15 min y no
+  había nada que la disparara → quedaron colgados 2-4 HORAS. El bot está diseñado exactamente para ese
+  caso y la mecánica del disparador se lo impide. **Fix natural ahora que hay cron:** un barrido cada
+  15-30 min que busque conversaciones en handoff con mensaje del cliente sin responder pasado el umbral y
+  dispare la asistencia — la consulta YA existe (`sin_responder` de `resumen_diario`). ⚠️ Debe respetar
+  los mismos guardrails: Ida y Yaritza mandaron RUC/datos fiscales y ahí el bot debe seguir callado, y los
+  `cerrada` (proveedores) quedan fuera por definición.
+
 - **EN EL REPO, LISTO PARA DESPLEGAR (SHADOW-FIRST): v69 — `watchdog`, la alarma que faltó el 15-ago.**
   Edge Function NUEVA + `pg_cron` cada 30 min en horario hábil. **Señal: `messages`, NO `job_log`** (un
   turno normal exitoso no siempre escribe en job_log → no sirve de latido): si el mensaje más reciente
