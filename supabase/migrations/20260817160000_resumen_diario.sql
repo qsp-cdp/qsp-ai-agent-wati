@@ -103,7 +103,7 @@ begin
     where m.role = 'user'
       and m.created_at >= v_desde
       and m.created_at <= now() - make_interval(mins => p_min_espera)
-      and btrim(m.content) !~* '^(ok|oka?y|listo|dale|perfecto|excelente|bueno|buenas|no|si|sí|claro|correcto|entiendo|de acuerdo|(muchas |mil |ok |listo )?gracias|thanks?|thank you|ty|👍|🙏|👌|😊|❤️)[\s\.\!,👍🙏👌😊❤️😉🤝]*$'
+      and btrim(m.content) !~* '^(ok|okis|oka?y|listo|dale|perfecto|excelente|bueno|buenas|no|si|sí|claro|correcto|entiendo|de acuerdo|(muchas |mil |ok |listo )?gracias|thanks?|thank you|ty|👍|🙏|👌|😊|❤️)[\s\.\!,👍🙏👌😊❤️😉🤝]*$'
   ) s;
 
   return jsonb_build_object(
