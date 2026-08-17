@@ -45,12 +45,16 @@ begin
   ) into v_inc
   from job_log where created_at >= v_desde;
 
-  -- Silencio MÁXIMO entre mensajes consecutivos del día: sirve para calibrar el umbral del watchdog
-  -- (si el pico legítimo de un día normal es 40 min, un umbral de 90 no dará falsos positivos).
+  -- Silencio MÁXIMO entre mensajes consecutivos, SOLO dentro del horario hábil (9-17 hora de Panamá).
+  -- Sin ese filtro la métrica mide el hueco de la NOCHE (probado con datos reales: daba 299 min) y no
+  -- sirve para calibrar el umbral del watchdog, que es su único propósito.
+  -- (Si cambia el horario de la tienda, actualizar también WATCHDOG_HORA_INICIO/FIN en la función.)
   select coalesce(max(gap_min), 0)::int into v_silencio
   from (
     select extract(epoch from (created_at - lag(created_at) over (order by created_at))) / 60 as gap_min
-    from messages where created_at >= v_desde
+    from messages
+    where created_at >= v_desde
+      and extract(hour from (created_at at time zone 'America/Panama')) between 9 and 16
   ) g;
 
   -- CLIENTES ATENDIDOS hoy. Se cuenta por CONVERSACIÓN (cliente único), no por mensaje: lo que interesa
@@ -77,6 +81,12 @@ begin
   -- SIN RESPONDER: conversaciones cuyo ÚLTIMO mensaje es del CLIENTE y ya pasaron p_min_espera minutos.
   -- Si el último es del cliente, no contestó nadie —ni el bot ni un asesor—; el margen de espera evita
   -- listar a quien acaba de escribir hace un minuto.
+  --
+  -- ⚠️ SE EXCLUYEN LOS ACKS ("gracias", "ok", "listo", "👍"…): el bot calla ante ellos A PROPÓSITO (regla
+  -- de anti-interrupción), así que reportarlos sería gritar que falló algo que funcionó bien. Medido con
+  -- tráfico real el 17-ago: de 9 "sin responder", 6 eran acks — con ese ruido el correo se vuelve
+  -- ignorable en dos semanas y la lista pierde su valor. El patrón exige que el mensaje sea SOLO el ack:
+  -- "gracias, y tienen la 664 negra?" SÍ se reporta (lleva pregunta).
   select coalesce(jsonb_agg(jsonb_build_object(
            'wa_id', wa_id, 'nombre', sender_name,
            'hora', to_char(ultimo at time zone 'America/Panama', 'HH24:MI'),
@@ -93,6 +103,7 @@ begin
     where m.role = 'user'
       and m.created_at >= v_desde
       and m.created_at <= now() - make_interval(mins => p_min_espera)
+      and btrim(m.content) !~* '^(ok|oka?y|listo|dale|perfecto|excelente|bueno|buenas|no|si|sí|claro|correcto|entiendo|de acuerdo|(muchas |mil |ok |listo )?gracias|thanks?|thank you|ty|👍|🙏|👌|😊|❤️)[\s\.\!,👍🙏👌😊❤️😉🤝]*$'
   ) s;
 
   return jsonb_build_object(
