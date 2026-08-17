@@ -25,8 +25,9 @@ con certeza, y calla/deriva cuando es mejor que responda un humano. Tienda:
   el CASO PESADO (nota de voz larga, varios productos): el bot transcribió y respondió perfecto, acertando
   los TRES códigos hablados (CF283A, PG-145XL, HP M283 → juego 206A con los 4 W211xA correctos) con
   precios+ITBMS, stock y links. De regalo, v66 discriminó bien sola: NO usó burbujas porque eran varios
-  productos (la regla es solo para UN producto). Falta confirmar a los ~20 min que hay UNA sola fila
-  `audio_transcrito` (que el bucle de reintentos no vuelva).
+  productos (la regla es solo para UN producto). **CONFIRMADO sin bucle:** UNA sola fila
+  `audio_transcrito` (5.196 ms — el mismo rango que antes disparaba los reintentos) y cero repeticiones a
+  los 10/20/30 min. El modo de falla del 14-15 ago queda cerrado.
 ## Estado histórico (2026-08-15)
 - **🔴 INCIDENTE Y FIX — v68.1 (`v68.1-stt-fondo`), EN EL REPO, DESPLEGAR YA.** Reporte del 15-ago ("el
   agente no está trabajando"): el `job_log` mostró **el MISMO audio transcrito 18 veces, cada 10 minutos
