@@ -37,7 +37,30 @@ con certeza, y calla/deriva cuando es mejor que responda un humano. Tienda:
   el puente de audio también lo respeta. Se marca a mano y es reversible:
   `update conversations set status='cerrada' where wa_id='507…';` (volver: `status='bot'`).
   626 golden tests. **Deploy:** `.\deploy.ps1 copilot-webhook`.
-- **📌 PENDIENTE DE DISEÑO — el hueco ESTRUCTURAL del modo asistencia (el hallazgo más grande del día).**
+- **EN EL REPO, DESPLEGAR (SHADOW-FIRST): v71 — BARRIDO DE ASISTENCIA, el despertador que faltaba.**
+  Cierra el hueco estructural que destapó el resumen del watchdog: la asistencia de v50 es **REACTIVA**
+  (solo se evalúa cuando llega un mensaje NUEVO del cliente, y exige 15 min de silencio del asesor). Los 4
+  casos del 17-ago escribieron **0-10 min DESPUÉS del asesor** (Delia 10, Helen 0, Oneyda 3, Marlius 7) →
+  el bot calló BIEN en ese instante, pero como ninguno volvió a insistir, la ventana se abrió sola y NADA
+  la disparó → colgados 2-4 HORAS. **Agravante que aclaró Isaac:** "resuelto" en WATI significa
+  "límpiame la pantalla", NO "terminé con el cliente" — y no existe evento de cierre en su lista de
+  webhooks (verificado) → esos chats quedan FUERA DE LA VISTA de todos. **Diseño:** `pg_cron` cada 20 min
+  → `copilot-webhook?key=…&sweep=1` → RPC **`asistencia_pendientes`** (migración
+  `20260817180000_asistencia_pendientes.sql`: SOLO filtro de TIEMPO/ESTADO — handoff, último mensaje del
+  CLIENTE, espera ≥25 min, asesor callado ≥15 min, no frío >24 h, tope de turnos; `cerrada` queda fuera por
+  definición) → los guardrails SEMÁNTICOS se evalúan en TS con los **MISMOS regex** del camino reactivo
+  (INTERRUPT_RE, HANDOFF_RE, BASIC_INFO_RE||NEEDS_TOOL_RE) para que no haya dos versiones de la regla.
+  **NO duplica lógica:** la asistencia inline de v50 se extrajo a **`ejecutarAsistencia`** y la usan LOS DOS
+  caminos; solo cambia quién la dispara. La conversación SIGUE en handoff (no hay cold-return aquí): el
+  asesor no pierde la venta. Con los datos del 17-ago habría rescatado a Marlius (*"Tienes la Epson
+  L15150"*) y Helen (color equivocado), y NO habría tocado a Ida ni Yaritza (RUC) ni a Oneyda (proveedora).
+  **Env `COPILOT_SWEEP`** (off|shadow|live, default **off**) + `COPILOT_SWEEP_ESPERA_MIN` (25) +
+  `COPILOT_SWEEP_MAX` (10). RPC validado en PG local con los 4 escenarios (aparece el que espera; NO
+  aparecen el ya atendido, el de asesor activo hace 5 min, ni el proveedor `cerrada`). 637 golden + 29 node.
+  **Puesta en marcha:** `.\deploy.ps1 copilot-webhook` + aplicar la migración → `COPILOT_SWEEP=shadow` →
+  cron `*/20 14-21 * * 1-5` a `?key=…&sweep=1` → revisar `sweep_run` en job_log unos días (¿a quién habría
+  asistido? ¿tiene sentido?) → `COPILOT_SWEEP=live`.
+- **📌 (RESUELTO POR v71) el hueco ESTRUCTURAL del modo asistencia — hallazgo del 17-ago.**
   4 de los 5 casos sin responder tenían el MISMO patrón: el cliente escribió 0-10 min después del asesor
   (Delia 10, Helen 0, Oneyda 3, Marlius 7) → por debajo de los 15 min que exige la asistencia (v50), así
   que el bot calló BIEN en ese instante. Pero **la asistencia es REACTIVA: solo se evalúa cuando llega un

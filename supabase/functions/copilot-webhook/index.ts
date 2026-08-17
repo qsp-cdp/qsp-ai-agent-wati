@@ -2357,6 +2357,126 @@ async function descargarMediaWati(dataUrl: string): Promise<{ b64: string; media
   } catch { return null; }
 }
 
+// v71 — ASISTENCIA reutilizable. Antes vivía inline en la rama de handoff, disparada SOLO por un mensaje
+// nuevo del cliente. Ahora es una función invocable también desde el BARRIDO por cron (?sweep=1): la misma
+// lógica y los mismos guardrails, cambiando únicamente QUIÉN la dispara. `conDebounce` es false en el
+// barrido (el cliente ya lleva rato esperando; no hay ráfaga que asentar).
+async function ejecutarAsistencia(
+  conv: { id: string; turns_today: number },
+  waId: string,
+  texto: string,
+  contenido: string,
+  userCreatedAt: string,
+  ultHumano: string,
+  minsSinHumano: number,
+  t0: number,
+  conDebounce = true,
+  origen = "reactiva",
+): Promise<void> {
+  try {
+    if (conDebounce && DEBOUNCE_MS > 0) await new Promise((res) => setTimeout(res, DEBOUNCE_MS)); // v49: misma espera de ráfaga
+                    if (await hayMensajeClienteMasNuevo(conv.id, userCreatedAt)) { await log("descartado_superado", true, { waId, fase: "asist-pre" }); return; }
+          const { data: hist } = await sb.from("messages").select("role,content,model,created_at").eq("conversation_id", conv.id).in("role", ["user", "assistant"]).order("created_at", { ascending: false }).limit(10);
+          const history = (hist ?? []).reverse();
+          // v50 — asistencia hace preventa grounded. forceTool=FALSE a propósito (revisión adversarial):
+          // aquí la respuesta correcta suele ser CALLARSE (el humano lleva el caso), así que NO forzamos una
+          // tool — el modelo puede devolver vacío ante un pago/descuento/cotización/reclamo (guiado por
+          // ASSIST_SUFFIX) en vez de ser empujado a cotizar. El grounding se mantiene por la REGLA DE ORO +
+          // ASSIST_SUFFIX ("todo debe salir de una herramienta, nunca de memoria"). modoAsistencia=true acota
+          // las tools. linksTracked + reaplicarTracking reponen el tracking de buscar_producto (v29).
+          const linksTracked: Record<string, string> = {};
+          const r = await responderLLM(history as any, false, null, false, waId, {}, linksTracked, true);
+          let salida = r.text ? reaplicarTracking(limpiarWhatsApp(r.text), linksTracked) : null;
+          // v66 — en ASISTENCIA no hay burbujas (la regla lo prohíbe, pero si el modelo igual marcara
+          // cortes, el marcador se re-une aquí: JAMÁS debe llegar [[---]] al cliente).
+          if (salida) salida = partirMensaje(salida).join("\n\n");
+          // v44 guard anti-fuga: si la tool-call se filtró como texto, no la enviamos (aquí un humano ya
+          // tiene el caso → basta con no responder). Loggea para telemetría.
+          if (salida && pareceFuncionEnTexto(salida)) { await log("fuga_tool_texto", false, { waId, fase: "asistencia", muestra: (r.text ?? "").slice(0, 200) }); salida = null; }
+          if (!salida) { await log("asistencia_handoff", true, { waId, enviado: false, motivo: "sin_respuesta" }); return; }
+          // anti-duplicado (llegó otro mensaje del cliente) + anti-carrera (el asesor volvió a escribir
+          // durante el LLM → reseteó el reloj → él sigue; o la conversación dejó de estar en handoff).
+          if (await hayMensajeClienteMasNuevo(conv.id, userCreatedAt)) { await log("descartado_superado", true, { waId, fase: "asist-post" }); return; }
+          const { data: hNuevo } = await sb.from("messages").select("id").eq("conversation_id", conv.id).eq("model", "human-agent").gt("created_at", ultHumano as string).limit(1);
+          if (hNuevo && hNuevo.length) { await log("asistencia_handoff", true, { waId, enviado: false, motivo: "asesor_volvio" }); return; }
+          const { data: cAhora } = await sb.from("conversations").select("status").eq("id", conv.id).maybeSingle();
+          if (cAhora?.status !== "handoff") { await log("asistencia_handoff", true, { waId, enviado: false, motivo: "status_cambio" }); return; }
+          // Anti-eco: model != 'human-agent' → cuando WATI rebote el eco (owner=true), se reconoce como
+          // envío propio y NO se guarda como asesor (no resetea el reloj ni dispara handoff falso).
+          const quiereEnviar = liveAllowed(waId);
+          const insA = await sb.from("messages").insert({ conversation_id: conv.id, role: "assistant", content: salida, tool_calls: r.toolCalls.length ? r.toolCalls : null, mode: quiereEnviar ? "live" : "shadow", model: "assist-handoff", tokens_in: r.tokensIn || null, tokens_out: r.tokensOut || null, cache_read_input_tokens: r.cacheRead || null, cache_creation_input_tokens: r.cacheWrite || null, latency_ms: Date.now() - t0 }).select("id");
+          // v65 — sin la fila no hay anti-eco: insert fallido → no enviar (mismo invariante que el flujo normal).
+          if (insA.error) { await log("error", false, { waId, fase: "asistencia_insert", error: String(insA.error.message ?? "").slice(0, 150) }); return; }
+          let enviado = false;
+          if (quiereEnviar) { enviado = await enviarWati(waId, salida); if (!enviado) await sb.from("messages").update({ mode: "shadow" }).eq("id", (insA.data?.[0] as any)?.id); }
+          // v52 — mismo ticket de promesa que el flujo normal: la asistencia también puede dejar algo
+          // sin resolver ("no encontré / sin stock… un asesor confirma") mientras el humano está ausente.
+          if (enviado && salida && prometeSeguimientoSinResolver(salida)) {
+            // v52: `contenido` (fallback "[imagen]"), no `texto` crudo. v54: dedup + motivo enriquecido
+            // con el historial (el "Si" de una ráfaga hereda la pregunta real que lo precedió).
+            await insertarTicketPromesa(conv.id, waId, `seguimiento_bot(asistencia): ${motivoTicket(contenido, history as any)}`, "bot_promise");
+          }
+          await log("asistencia_handoff", true, { waId, enviado, mins_sin_humano: Math.round(minsSinHumano), origen });
+  } catch (e) { await log("error", false, { waId, fase: "asistencia", error: String(e).slice(0, 300) }); }
+}
+
+// v71 — BARRIDO DE ASISTENCIA (lo dispara pg_cron cada 20 min en horario hábil, vía ?sweep=1).
+//
+// EL PROBLEMA QUE RESUELVE: la asistencia de v50 es REACTIVA — solo se evalúa cuando llega un mensaje
+// NUEVO del cliente, y exige 15 min de silencio del asesor. Medido el 17-ago con el resumen del watchdog:
+// 4 de 5 clientes sin responder habían escrito 0-10 min DESPUÉS del asesor, así que el bot calló BIEN en
+// ese instante… y como ninguno volvió a insistir, la ventana se abrió sola y NADIE la miró. Colgados 2-4
+// horas. Peor: el asesor suele marcar el chat "resuelto" en WATI para despejar su pantalla, así que esos
+// chats ya no están a la vista de nadie. Este barrido es el despertador que faltaba.
+//
+// NO cambia ninguna regla: reusa `ejecutarAsistencia` (la misma de v50) y los MISMOS guardrails en TS
+// (anti-interrupción por pago/RUC, reclamos, y que sea una pregunta que el bot pueda responder). Lo único
+// que cambia es QUIÉN la dispara. La conversación SIGUE en handoff: el asesor no pierde la venta.
+const SWEEP_RAW = (Deno.env.get("COPILOT_SWEEP") ?? "off").trim().toLowerCase();
+const SWEEP_MODE = ["shadow", "live"].includes(SWEEP_RAW) ? SWEEP_RAW : "off";
+const SWEEP_ESPERA_MIN = (() => { const n = parseInt((Deno.env.get("COPILOT_SWEEP_ESPERA_MIN") ?? "").trim(), 10); return Number.isFinite(n) && n >= 5 ? Math.min(n, 480) : 25; })();
+const SWEEP_MAX = (() => { const n = parseInt((Deno.env.get("COPILOT_SWEEP_MAX") ?? "").trim(), 10); return Number.isFinite(n) && n >= 1 ? Math.min(n, 50) : 10; })();
+
+interface PendienteAsistencia {
+  conversation_id: string; wa_id: string; sender_name: string | null; turns_today: number;
+  texto: string; ultimo_cliente_at: string; ultimo_asesor_at: string; mins_espera: number; mins_sin_asesor: number;
+}
+
+async function barridoAsistencia(force: boolean): Promise<Record<string, unknown>> {
+  if (SWEEP_MODE === "off") return { sweep: "off" };
+  // Solo en horario hábil: fuera de él, el cliente no espera respuesta humana inmediata y el bot ya se lo
+  // aclara en el flujo normal. (`?force=1` lo salta para pruebas manuales.)
+  if (!force && !horarioPanama().dentro) return { sweep: "fuera_de_horario" };
+  const { data, error } = await sb.rpc("asistencia_pendientes", {
+    p_espera_min: SWEEP_ESPERA_MIN, p_asesor_min: HANDOFF_ASSIST_MIN, p_frio_horas: HANDOFF_COLD_HOURS, p_max: SWEEP_MAX,
+  });
+  if (error) { await log("sweep_error", false, { error: String(error.message ?? error).slice(0, 200) }); return { error: "rpc" }; }
+  const pendientes = (data ?? []) as PendienteAsistencia[];
+  if (!pendientes.length) { await log("sweep_run", true, { mode: SWEEP_MODE, candidatos: 0 }); return { mode: SWEEP_MODE, candidatos: 0 }; }
+
+  const atendidos: string[] = [], omitidos: Array<Record<string, unknown>> = [];
+  for (const p of pendientes) {
+    // GUARDRAILS SEMÁNTICOS, los mismos del camino reactivo (v50/v61.3) — se evalúan aquí en TS, con los
+    // MISMOS regex, para que no existan dos versiones de la regla que se desincronicen.
+    const rafaga = await textoDeRafagaSinResponder(p.conversation_id, p.texto);
+    if (INTERRUPT_RE.test(rafaga)) { omitidos.push({ wa_id: p.wa_id, motivo: "interrupcion" }); continue; }   // pago/RUC/factura → humano
+    if (HANDOFF_RE.test(rafaga)) { omitidos.push({ wa_id: p.wa_id, motivo: "handoff_keyword" }); continue; }  // reclamo/garantía → humano
+    if (!(BASIC_INFO_RE.test(p.texto) || NEEDS_TOOL_RE.test(p.texto))) { omitidos.push({ wa_id: p.wa_id, motivo: "nada_que_aportar" }); continue; }
+    if (SWEEP_MODE !== "live") { atendidos.push(p.wa_id); continue; }  // shadow: se registra, no se responde
+    await ejecutarAsistencia(
+      { id: p.conversation_id, turns_today: p.turns_today }, p.wa_id, p.texto, p.texto,
+      p.ultimo_cliente_at, p.ultimo_asesor_at, p.mins_sin_asesor, Date.now(), false, "barrido",
+    );
+    atendidos.push(p.wa_id);
+  }
+  await log("sweep_run", true, {
+    mode: SWEEP_MODE, candidatos: pendientes.length, atendidos: atendidos.length, omitidos: omitidos.length,
+    detalle_omitidos: omitidos.slice(0, 10),
+    muestra: pendientes.slice(0, 10).map((p) => ({ wa_id: p.wa_id, mins_espera: p.mins_espera, texto: p.texto.slice(0, 60) })),
+  });
+  return { mode: SWEEP_MODE, candidatos: pendientes.length, atendidos: atendidos.length, omitidos: omitidos.length };
+}
+
 async function log(action: string, ok: boolean, detail: unknown) {
   try { await sb.from("job_log").insert({ function_name: "copilot-webhook", action, ok, detail }); } catch { /* nunca romper */ }
 }
@@ -2438,10 +2558,17 @@ Deno.serve(async (req) => {
         texto: tr?.texto ?? null, ts: new Date().toISOString(),
       });
     }
-    return Response.json({ status: "ok", function: "copilot-webhook", version: "v68.1-stt-fondo", mode: MODE, mode_raw: MODE_RAW, model: MODEL, llm_configured: !!anthropic, wati_send_configured: !!(WATI_API_TOKEN && WATI_API_BASE), inventario_configurado: !!(SHOPIFY_ADMIN_TOKEN && SHOPIFY_ADMIN_API_BASE), resolve_configured: !!RESOLVE_SECRET, webhook_key_es_default: WEBHOOK_KEY_ES_DEFAULT, handoff_assist_min: HANDOFF_ASSIST_MIN, handoff_cold_hours: HANDOFF_COLD_HOURS, debounce_ms: DEBOUNCE_MS, sesion_gap_dias: SESION_GAP_DIAS, burbujas: BURBUJAS, burbuja_ms: BURBUJA_MS, audio_puente: AUDIO_PUENTE, stt: STT_MODE, stt_raw: STT_RAW, stt_configurado: !!OPENAI_API_KEY, stt_model: STT_MODEL, busqueda_shadow: BUSQUEDA_SHADOW, busqueda_mcp: BUSQUEDA_MCP, busqueda_mcp_limit: BUSQUEDA_MCP_LIMIT, catalog_mcp_url: CATALOG_MCP_URL, ucp_profile_url: UCP_PROFILE_URL, live_targets: MODE === "live" ? (LIVE_ALL ? "all" : LIVE_ALLOWLIST.length) : 0, ts: new Date().toISOString() });
+    return Response.json({ status: "ok", function: "copilot-webhook", version: "v71-barrido-asistencia", mode: MODE, mode_raw: MODE_RAW, model: MODEL, llm_configured: !!anthropic, wati_send_configured: !!(WATI_API_TOKEN && WATI_API_BASE), inventario_configurado: !!(SHOPIFY_ADMIN_TOKEN && SHOPIFY_ADMIN_API_BASE), resolve_configured: !!RESOLVE_SECRET, webhook_key_es_default: WEBHOOK_KEY_ES_DEFAULT, handoff_assist_min: HANDOFF_ASSIST_MIN, handoff_cold_hours: HANDOFF_COLD_HOURS, debounce_ms: DEBOUNCE_MS, sesion_gap_dias: SESION_GAP_DIAS, burbujas: BURBUJAS, burbuja_ms: BURBUJA_MS, audio_puente: AUDIO_PUENTE, sweep: SWEEP_MODE, sweep_espera_min: SWEEP_ESPERA_MIN, stt: STT_MODE, stt_raw: STT_RAW, stt_configurado: !!OPENAI_API_KEY, stt_model: STT_MODEL, busqueda_shadow: BUSQUEDA_SHADOW, busqueda_mcp: BUSQUEDA_MCP, busqueda_mcp_limit: BUSQUEDA_MCP_LIMIT, catalog_mcp_url: CATALOG_MCP_URL, ucp_profile_url: UCP_PROFILE_URL, live_targets: MODE === "live" ? (LIVE_ALL ? "all" : LIVE_ALLOWLIST.length) : 0, ts: new Date().toISOString() });
   }
   if (req.method !== "POST") return Response.json({ error: "method_not_allowed" }, { status: 405 });
   if (url.searchParams.get("key") !== WEBHOOK_KEY) return Response.json({ error: "forbidden" }, { status: 403 });
+
+  // v71 — BARRIDO DE ASISTENCIA (pg_cron). No es un evento de WATI: se intercepta antes de parsear el
+  // payload. Ver barridoAsistencia() para el porqué y los guardrails.
+  if (url.searchParams.get("sweep") === "1") {
+    const r = await barridoAsistencia(url.searchParams.get("force") === "1");
+    return Response.json({ ok: true, ...r, ts: new Date().toISOString() });
+  }
 
   // v45: tope de tamaño del payload — los webhooks de WATI son chicos (el media llega como URL, no como
   // bytes); un body enorme es un error o abuso. Se chequea el header (fast path) Y el body real (el
@@ -2716,54 +2843,7 @@ Deno.serve(async (req) => {
         // ASISTENCIA: tarea aparte en segundo plano. v50 — el bot hace PREVENTA grounded (precio/stock vía
         // buscar_producto, info de tienda, puntos del interior, estado de pedido), pero NO saca la
         // conversación de handoff, NO cierra/coordina la venta y NO le quita el caso al asesor.
-        const asistir = (async () => {
-          try {
-            if (DEBOUNCE_MS > 0) await new Promise((res) => setTimeout(res, DEBOUNCE_MS)); // v49: misma espera de ráfaga
-            if (await hayMensajeClienteMasNuevo(conv.id, userCreatedAt)) { await log("descartado_superado", true, { waId, fase: "asist-pre" }); return; }
-            const { data: hist } = await sb.from("messages").select("role,content,model,created_at").eq("conversation_id", conv.id).in("role", ["user", "assistant"]).order("created_at", { ascending: false }).limit(10);
-            const history = (hist ?? []).reverse();
-            // v50 — asistencia hace preventa grounded. forceTool=FALSE a propósito (revisión adversarial):
-            // aquí la respuesta correcta suele ser CALLARSE (el humano lleva el caso), así que NO forzamos una
-            // tool — el modelo puede devolver vacío ante un pago/descuento/cotización/reclamo (guiado por
-            // ASSIST_SUFFIX) en vez de ser empujado a cotizar. El grounding se mantiene por la REGLA DE ORO +
-            // ASSIST_SUFFIX ("todo debe salir de una herramienta, nunca de memoria"). modoAsistencia=true acota
-            // las tools. linksTracked + reaplicarTracking reponen el tracking de buscar_producto (v29).
-            const linksTracked: Record<string, string> = {};
-            const r = await responderLLM(history as any, false, null, false, waId, {}, linksTracked, true);
-            let salida = r.text ? reaplicarTracking(limpiarWhatsApp(r.text), linksTracked) : null;
-            // v66 — en ASISTENCIA no hay burbujas (la regla lo prohíbe, pero si el modelo igual marcara
-            // cortes, el marcador se re-une aquí: JAMÁS debe llegar [[---]] al cliente).
-            if (salida) salida = partirMensaje(salida).join("\n\n");
-            // v44 guard anti-fuga: si la tool-call se filtró como texto, no la enviamos (aquí un humano ya
-            // tiene el caso → basta con no responder). Loggea para telemetría.
-            if (salida && pareceFuncionEnTexto(salida)) { await log("fuga_tool_texto", false, { waId, fase: "asistencia", muestra: (r.text ?? "").slice(0, 200) }); salida = null; }
-            if (!salida) { await log("asistencia_handoff", true, { waId, enviado: false, motivo: "sin_respuesta" }); return; }
-            // anti-duplicado (llegó otro mensaje del cliente) + anti-carrera (el asesor volvió a escribir
-            // durante el LLM → reseteó el reloj → él sigue; o la conversación dejó de estar en handoff).
-            if (await hayMensajeClienteMasNuevo(conv.id, userCreatedAt)) { await log("descartado_superado", true, { waId, fase: "asist-post" }); return; }
-            const { data: hNuevo } = await sb.from("messages").select("id").eq("conversation_id", conv.id).eq("model", "human-agent").gt("created_at", ultHumano as string).limit(1);
-            if (hNuevo && hNuevo.length) { await log("asistencia_handoff", true, { waId, enviado: false, motivo: "asesor_volvio" }); return; }
-            const { data: cAhora } = await sb.from("conversations").select("status").eq("id", conv.id).maybeSingle();
-            if (cAhora?.status !== "handoff") { await log("asistencia_handoff", true, { waId, enviado: false, motivo: "status_cambio" }); return; }
-            // Anti-eco: model != 'human-agent' → cuando WATI rebote el eco (owner=true), se reconoce como
-            // envío propio y NO se guarda como asesor (no resetea el reloj ni dispara handoff falso).
-            const quiereEnviar = liveAllowed(waId);
-            const insA = await sb.from("messages").insert({ conversation_id: conv.id, role: "assistant", content: salida, tool_calls: r.toolCalls.length ? r.toolCalls : null, mode: quiereEnviar ? "live" : "shadow", model: "assist-handoff", tokens_in: r.tokensIn || null, tokens_out: r.tokensOut || null, cache_read_input_tokens: r.cacheRead || null, cache_creation_input_tokens: r.cacheWrite || null, latency_ms: Date.now() - t0 }).select("id");
-            // v65 — sin la fila no hay anti-eco: insert fallido → no enviar (mismo invariante que el flujo normal).
-            if (insA.error) { await log("error", false, { waId, fase: "asistencia_insert", error: String(insA.error.message ?? "").slice(0, 150) }); return; }
-            let enviado = false;
-            if (quiereEnviar) { enviado = await enviarWati(waId, salida); if (!enviado) await sb.from("messages").update({ mode: "shadow" }).eq("id", (insA.data?.[0] as any)?.id); }
-            // v52 — mismo ticket de promesa que el flujo normal: la asistencia también puede dejar algo
-            // sin resolver ("no encontré / sin stock… un asesor confirma") mientras el humano está ausente.
-            if (enviado && salida && prometeSeguimientoSinResolver(salida)) {
-              // v52: `contenido` (fallback "[imagen]"), no `texto` crudo. v54: dedup + motivo enriquecido
-              // con el historial (el "Si" de una ráfaga hereda la pregunta real que lo precedió).
-              await insertarTicketPromesa(conv.id, waId, `seguimiento_bot(asistencia): ${motivoTicket(contenido, history as any)}`, "bot_promise");
-            }
-            await log("asistencia_handoff", true, { waId, enviado, mins_sin_humano: Math.round(minsSinHumano) });
-          } catch (e) { await log("error", false, { waId, fase: "asistencia", error: String(e).slice(0, 300) }); }
-        })();
-        correrEnSegundoPlano(asistir);
+        correrEnSegundoPlano(ejecutarAsistencia(conv, waId, texto, contenido, userCreatedAt, ultHumano as string, minsSinHumano, t0));
         return Response.json({ ok: true, asistencia: true });
       } else {
         // Asesor activo hace poco (<umbral), no es pregunta básica, o handoff sin asesor → callar (v30).

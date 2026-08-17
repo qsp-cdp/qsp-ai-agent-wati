@@ -1209,7 +1209,7 @@ caso("v68: fallo de STT → puente v67 (nunca silencio)", (() => {
 })());
 caso("v68: la nota transcrita conserva la URL del audio original", /\(esImagenCliente \|\| esAudioTranscrito\)/.test(src));
 caso("v68: SYSTEM_PROMPT — la transcripción puede errar en códigos: confirmar, no inventar", /\[nota de voz\] …" = lo que el cliente DIJO/.test(SYSTEM_PROMPT) && /confirma en una línea el modelo con el cliente ANTES de cotizar/.test(SYSTEM_PROMPT) && /aplica la regla anti-interrupción igual que si lo hubiera escrito/.test(SYSTEM_PROMPT));
-caso("v68: healthcheck expone stt/stt_configurado y versión v68", /stt: STT_MODE/.test(src) && /stt_configurado: !!OPENAI_API_KEY/.test(src) && /version: "v68\.1-stt-fondo"/.test(src));
+caso("v68: healthcheck expone stt/stt_configurado", /stt: STT_MODE/.test(src) && /stt_configurado: !!OPENAI_API_KEY/.test(src) && /version: "v71-barrido-asistencia"/.test(src));
 // autotest ?selftest=stt — permite medir calidad con audios REALES ya recibidos, sin esperar el shadow.
 // 🔴 caso real 13-ago: la visión de ráfaga (v49) agarraba el media_url de las notas de voz y mandaba un
 // .opus a Claude como imagen → 400 "Could not process image", turno muerto y respuesta de respaldo.
@@ -1222,6 +1222,29 @@ caso("v68: autotest ?selftest=stt gated por key (patrón v44/v45)", /url\.search
   const cuerpo = src.slice(i, i + 900);
   return /k !== WEBHOOK_KEY && !\(DIAG_KEY && k === DIAG_KEY\)/.test(cuerpo) && /falta_openai_api_key/.test(cuerpo);
 })());
+
+// --- v71: barrido de asistencia (el despertador que faltaba) ------------------------------------
+console.log("v71 barrido de asistencia");
+// 🔴 hallazgo 17-ago (del resumen del watchdog): la asistencia v50 es REACTIVA — 4 de 5 clientes sin
+// responder escribieron 0-10 min DESPUÉS del asesor (bajo el umbral de 15), el bot calló bien, y como
+// nadie volvió a insistir la ventana se abrió sola sin que nada la disparara → colgados 2-4 horas.
+caso("v71: gateado por COPILOT_SWEEP (off/shadow/live, default off)", /const SWEEP_MODE = \["shadow", "live"\]\.includes\(SWEEP_RAW\) \? SWEEP_RAW : "off"/.test(src));
+caso("v71: ruta ?sweep=1 detrás de la key, antes de parsear el payload de WATI", /url\.searchParams\.get\("sweep"\) === "1"/.test(src) && (() => {
+  const iKey = src.indexOf('if (url.searchParams.get("key") !== WEBHOOK_KEY)');
+  const iSweep = src.indexOf('url.searchParams.get("sweep") === "1"');
+  const iBody = src.indexOf("const rawBody = await req.text()");
+  return iKey > -1 && iSweep > iKey && (iBody === -1 || iSweep < iBody);
+})());
+caso("v71: REUSA ejecutarAsistencia (no duplica la lógica de v50)", /async function ejecutarAsistencia\(/.test(src) && /await ejecutarAsistencia\(\s*\n?\s*\{ id: p\.conversation_id/.test(src));
+caso("v71: el camino reactivo también pasa por ejecutarAsistencia", /correrEnSegundoPlano\(ejecutarAsistencia\(conv, waId, texto, contenido, userCreatedAt/.test(src));
+// los guardrails del barrido son los MISMOS del camino reactivo, evaluados con los MISMOS regex
+caso("v71: pago/RUC en la ráfaga → NO se asiste (anti-interrupción intacta)", /if \(INTERRUPT_RE\.test\(rafaga\)\) \{ omitidos\.push\(\{ wa_id: p\.wa_id, motivo: "interrupcion" \}\)/.test(src));
+caso("v71: reclamo/garantía → NO se asiste (lo lleva el humano)", /if \(HANDOFF_RE\.test\(rafaga\)\) \{ omitidos\.push\(\{ wa_id: p\.wa_id, motivo: "handoff_keyword" \}\)/.test(src));
+caso("v71: solo asiste si hay algo que aportar (BASIC_INFO o NEEDS_TOOL)", /!\(BASIC_INFO_RE\.test\(p\.texto\) \|\| NEEDS_TOOL_RE\.test\(p\.texto\)\)/.test(src) && /motivo: "nada_que_aportar"/.test(src));
+caso("v71: shadow registra pero NO responde", /if \(SWEEP_MODE !== "live"\) \{ atendidos\.push\(p\.wa_id\); continue; \}/.test(src));
+caso("v71: solo corre en horario hábil (force=1 lo salta para pruebas)", /if \(!force && !horarioPanama\(\)\.dentro\) return \{ sweep: "fuera_de_horario" \}/.test(src));
+caso("v71: el barrido NO hace cold-return (la conversación sigue en handoff)", !/status: "bot"/.test(src.slice(src.indexOf("async function barridoAsistencia"), src.indexOf("async function log("))));
+caso("v71: healthcheck expone sweep", /sweep: SWEEP_MODE/.test(src) && /version: "v71-barrido-asistencia"/.test(src));
 
 // --- resumen --------------------------------------------------------------------------------------
 console.log(`\n${ok} OK, ${mal} FALLA${mal === 1 ? "" : "S"}`);
