@@ -49,6 +49,16 @@ con certeza, y calla/deriva cuando es mejor que responda un humano. Tienda:
   mensajes, **silencio máximo del día** (calibra el umbral), incidencias (respaldo/envío fallido/STT/MCP) y
   la lista **⚠️ SIN RESPONDER** (teléfono, nombre, hora, minutos de espera y qué escribieron): clientes que
   hablaron y no les contestó NADIE, ni bot ni asesor — la lista para rescatar ventas antes de cerrar.
+  **Afinado con TRÁFICO REAL (17-ago, 3 iteraciones):** (a) de 9 "sin responder", 6 eran ACKS
+  ("gracias", "ok, gracias", "listo gracias") ante los que el bot calla A PROPÓSITO → con ese ruido el
+  correo se vuelve ignorable en dos semanas; se filtran por VOCABULARIO (todas las palabras del mensaje
+  son de cortesía), no por frases exactas, así los compuestos caen solos y "gracias, y tienen la 664
+  negra?" SÍ se reporta; (b) `silencio_max_min` medía el hueco de la NOCHE (299 min) → solo cuenta huecos
+  en horario hábil; (c) nombres renombrados porque "cliente: 387" se leía como 387 clientes cuando eran
+  mensajes (los clientes eran 59) → ahora `clientes.escribieron` vs `mensajes.de_clientes`.
+  **📏 DATO DE CALIBRACIÓN (17-ago, día normal): el silencio máximo en horario hábil fue de 2 MINUTOS.**
+  Con eso el umbral de 90 min es ultra-conservador; tras unos días de shadow (incluyendo un viernes flojo)
+  conviene bajarlo a 30-45 para detectar una caída mucho antes sin riesgo de falsas alarmas.
   **Bug hallado y corregido al probar en PG local:** `bool_or(model = 'human-agent')` con `model` NULL
   devuelve NULL (no false) → la conversación sin atender se perdía del conteo (1+1+0 ≠ 3); va con
   `coalesce`. Validada con datos representativos: atendida-por-bot, atendida-por-asesor y sin-responder
