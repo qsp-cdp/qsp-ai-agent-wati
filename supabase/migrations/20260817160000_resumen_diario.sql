@@ -103,7 +103,7 @@ begin
     where m.role = 'user'
       and m.created_at >= v_desde
       and m.created_at <= now() - make_interval(mins => p_min_espera)
-      and btrim(m.content) !~* '^(ok|okis|oka?y|listo|dale|perfecto|excelente|bueno|buenas|no|si|sí|claro|correcto|entiendo|de acuerdo|(muchas |mil |ok |listo )?gracias|thanks?|thank you|ty|👍|🙏|👌|😊|❤️)[\s\.\!,👍🙏👌😊❤️😉🤝]*$'
+      and btrim(m.content) !~* '^(ok|okis|okay|oki|listo|dale|perfecto|excelente|bueno|buenas|buenos|dias|tardes|no|si|sí|claro|correcto|entiendo|entendido|acuerdo|de|muy|amable|gracias|muchas|mil|muchisimas|thanks|thank|you|ty|reviso|revisando|revisare|ya|vale|bien|igualmente|saludos|atento|atenta|nada|👍|🙏|👌|😊|❤️|😉|🤝)([\s,\.\!¡]+(ok|okis|okay|oki|listo|dale|perfecto|excelente|bueno|buenas|buenos|dias|tardes|no|si|sí|claro|correcto|entiendo|entendido|acuerdo|de|muy|amable|gracias|muchas|mil|muchisimas|thanks|thank|you|ty|reviso|revisando|revisare|ya|vale|bien|igualmente|saludos|atento|atenta|nada|👍|🙏|👌|😊|❤️|😉|🤝))*[\s,\.\!👍🙏👌😊❤️😉🤝]*$'
   ) s;
 
   return jsonb_build_object(
