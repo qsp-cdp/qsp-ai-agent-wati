@@ -39,7 +39,7 @@ con certeza, y calla/deriva cuando es mejor que responda un humano. Tienda:
   `.\deploy.ps1 watchdog` (importa `_shared` → solo CLI) → `WATCHDOG_KEY` + cron → **una semana en shadow**
   (mide y registra lo que HABRÍA alertado, sin mandar correo) para calibrar el umbral con datos reales →
   Resend + `WATCHDOG_MODE=live`, probando que el correo NO caiga en spam.
-- **v69.1 — RESUMEN DIARIO (`?resumen=1`, cron aparte 5:30pm) + migración `20260817160000_resumen_diario.sql`
+- **v69.1 — RESUMEN DIARIO (`?resumen=1`, cron aparte 5:00pm) + migración `20260817160000_resumen_diario.sql`
   (RPC `resumen_diario`).** Pedido de Isaac tras preguntar si el watchdog solo avisa fallos: **hacen falta
   los dos correos.** La alerta solo habla cuando algo falla → si el watchdog MISMO muere (cron
   desprogramado, función rota, key vencida) no llega nada y nadie lo nota (el mismo hueco un piso arriba).

@@ -225,7 +225,7 @@ Deno.serve(async (req) => {
 
   const force = url.searchParams.get("force") === "1"; // salta el gate de horario, para pruebas manuales
   try {
-    // ?resumen=1 → correo de cierre del día (cron aparte, 5:30pm). Sin el parámetro, vigilancia normal.
+    // ?resumen=1 → correo de cierre del día (cron aparte, 5:00pm). Sin el parámetro, vigilancia normal.
     const r = url.searchParams.get("resumen") === "1" ? await correrResumen() : await correr(force);
     return Response.json({ ok: true, ...r, ts: new Date().toISOString() });
   } catch (e) {

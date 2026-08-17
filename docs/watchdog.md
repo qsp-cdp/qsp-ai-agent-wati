@@ -30,7 +30,7 @@ plantilla aprobada por Meta.
 | | cuándo | para qué |
 |---|---|---|
 | **Alerta** | solo cuando falla (silencio > umbral) | reaccionar YA |
-| **Resumen diario** | todos los días hábiles a las 5:30 p.m. | **prueba de vida** + pulso del negocio |
+| **Resumen diario** | todos los días hábiles a las 5:00 p.m. | **prueba de vida** + pulso del negocio |
 
 El resumen no es adorno: la alerta solo habla cuando algo falla, así que **si el watchdog mismo se muere**
 (cron desprogramado, función rota, key de Resend vencida) no llegaría nada y nadie lo notaría — el mismo
@@ -80,10 +80,10 @@ select cron.schedule(
      ) $$
 );
 
--- RESUMEN DIARIO: 22:30 UTC = 5:30pm Panamá, Lun-Vie (después del cierre, cubre el día completo).
+-- RESUMEN DIARIO: 22:00 UTC = 5:00pm Panamá, Lun-Vie (hora de cierre, cubre el día completo).
 select cron.schedule(
-  'watchdog-resumen-530pm-pa',
-  '30 22 * * 1-5',
+  'watchdog-resumen-5pm-pa',
+  '0 22 * * 1-5',
   $$ select net.http_post(
        url    := 'https://jbigmlcalcwiphqeudxd.functions.supabase.co/watchdog?key=REEMPLAZA_WATCHDOG_KEY&resumen=1',
        headers:= '{"Content-Type":"application/json"}'::jsonb,
@@ -92,7 +92,7 @@ select cron.schedule(
 );
 
 -- Desprogramar:  select cron.unschedule('watchdog-30min-habil-pa');
---                select cron.unschedule('watchdog-resumen-530pm-pa');
+--                select cron.unschedule('watchdog-resumen-5pm-pa');
 -- Ver los jobs:  select * from cron.job;
 ```
 
