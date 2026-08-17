@@ -217,6 +217,30 @@ export async function ultimoMensajeAt(): Promise<string | null> {
   } catch { return null; }
 }
 
+// Resumen del día (RPC `resumen_diario`): volumen, incidencias, silencio máximo y —lo importante— las
+// conversaciones que quedaron SIN RESPONDER (ni bot ni asesor). Alimenta el correo de cierre.
+export interface ResumenDiario {
+  desde: string;
+  mensajes: { cliente: number; bot: number; asesor: number };
+  incidencias: Record<string, number>;
+  silencio_max_min: number;
+  sin_responder: Array<{ wa_id: string; nombre: string | null; hora: string; espera_min: number; texto: string }>;
+  sin_responder_n: number;
+}
+
+export async function resumenDiario(minEspera = 45): Promise<ResumenDiario | null> {
+  try {
+    const res = await fetch(restUrl('/rpc/resumen_diario'), {
+      method: 'POST',
+      headers: serviceHeaders(),
+      body: JSON.stringify({ p_min_espera: minEspera }),
+      signal: AbortSignal.timeout(15000),
+    });
+    if (!res.ok) return null;
+    return await res.json() as ResumenDiario;
+  } catch { return null; }
+}
+
 // Última fila de job_log con esta `action` (para el anti-spam de alertas y el aviso de recuperación).
 export async function ultimoJobLog(action: string, desdeIso: string): Promise<{ created_at: string; detail: any } | null> {
   try {

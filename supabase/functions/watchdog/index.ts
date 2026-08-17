@@ -20,7 +20,7 @@
 // Disparo: pg_cron cada 30 min en horario hábil (ver docs/watchdog.md).
 // Importa ../_shared → SOLO se despliega por CLI (deploy.ps1), nunca por dashboard.
 
-import { logJob, ultimoJobLog, ultimoMensajeAt } from "../_shared/db.ts";
+import { logJob, resumenDiario, ultimoJobLog, ultimoMensajeAt, type ResumenDiario } from "../_shared/db.ts";
 import { enviarCorreo } from "../_shared/resend.ts";
 import { ahoraPanama, esDiaHabilPanama } from "../_shared/panama.ts";
 
@@ -90,6 +90,64 @@ async function estadoCopiloto(): Promise<string> {
   } catch {
     return "NO RESPONDE ⚠️ (la función está caída, no es solo el webhook)";
   }
+}
+
+// --- RESUMEN DIARIO (v69.1) ----------------------------------------------------------------------
+// La alerta por silencio solo habla cuando algo falla, y eso deja un hueco: si el watchdog MISMO se muere
+// (cron desprogramado, función rota, key de Resend vencida) no llega nada y nadie lo nota — el mismo
+// agujero que estamos tapando, un piso más arriba. El correo diario es la PRUEBA DE VIDA: si un día no
+// llega, esa ausencia ES la alarma. Y de paso da el pulso del negocio (a cuánta gente se atendió y, sobre
+// todo, quién quedó SIN respuesta — dinero sobre la mesa).
+const ESPERA_SIN_RESPONDER = intEnv("WATCHDOG_ESPERA_SIN_RESPONDER", 45, 5, 480);
+
+function htmlResumen(r: ResumenDiario, salud: string): string {
+  const c = r.conversaciones ?? { total: 0, por_bot: 0, por_asesor: 0, sin_atencion: 0 };
+  const inc = r.incidencias ?? {};
+  const incidencias = Object.entries(inc).filter(([, v]) => Number(v) > 0)
+    .map(([k, v]) => `${k.replaceAll("_", " ")}: <strong>${v}</strong>`).join(" · ") || "ninguna";
+  const filas = (r.sin_responder ?? []).map((s) =>
+    `<tr><td style="padding:4px 10px 4px 0">${s.hora}</td>
+         <td style="padding:4px 10px 4px 0"><strong>${s.wa_id}</strong>${s.nombre ? ` (${s.nombre})` : ""}</td>
+         <td style="padding:4px 10px 4px 0">${s.espera_min} min</td>
+         <td style="padding:4px 0;color:#444">${(s.texto ?? "").replace(/[<>]/g, "")}</td></tr>`).join("");
+  const bloqueSin = r.sin_responder_n > 0
+    ? `<h3 style="margin:18px 0 6px">⚠️ Sin responder (${r.sin_responder_n})</h3>
+       <table style="border-collapse:collapse;font-size:13px">${filas}</table>
+       <p style="color:#666;font-size:12px">Escribieron y no contestó nadie —ni el bot ni un asesor—
+          hace más de ${ESPERA_SIN_RESPONDER} min.</p>`
+    : `<p>✅ <strong>Nadie quedó sin responder.</strong></p>`;
+  return `<h2 style="margin:0 0 10px">Copiloto — resumen del día</h2>
+    <p><strong>Clientes atendidos: ${c.total}</strong> · ${c.por_bot} por el bot · ${c.por_asesor} por un asesor
+       ${c.sin_atencion > 0 ? `· <strong style="color:#b00">${c.sin_atencion} sin atención</strong>` : ""}</p>
+    <p>Mensajes: ${r.mensajes?.cliente ?? 0} de clientes · ${r.mensajes?.bot ?? 0} del bot ·
+       ${r.mensajes?.asesor ?? 0} de asesores<br>
+       Silencio máximo del día: ${r.silencio_max_min} min<br>
+       Incidencias: ${incidencias}<br>
+       Estado: ${salud}</p>
+    ${bloqueSin}
+    <p style="color:#666;font-size:12px">Watchdog QSP · este correo llega todos los días hábiles:
+       si algún día NO llega, el vigilante está caído.</p>`;
+}
+
+async function correrResumen(): Promise<Record<string, unknown>> {
+  const r = await resumenDiario(ESPERA_SIN_RESPONDER);
+  if (!r) {
+    await logJob(FN, "watchdog_resumen", false, { error: "rpc_resumen_diario_fallo" });
+    return { error: "rpc_resumen_diario_fallo" };
+  }
+  const salud = await estadoCopiloto();
+  const c = r.conversaciones ?? { total: 0 };
+  const asunto = r.sin_responder_n > 0
+    ? `Copiloto — ${c.total} clientes atendidos, ${r.sin_responder_n} SIN responder`
+    : `Copiloto — ${c.total} clientes atendidos, todo respondido ✅`;
+  const resumenLog = { mode: MODE, conversaciones: c, mensajes: r.mensajes, sin_responder_n: r.sin_responder_n, silencio_max_min: r.silencio_max_min };
+  if (MODE !== "live") {
+    await logJob(FN, "watchdog_resumen", true, { ...resumenLog, shadow: true, asunto });
+    return { ...resumenLog, shadow: true, asunto };
+  }
+  const envio = await enviarCorreo(asunto, htmlResumen(r, salud), DESTINATARIOS);
+  await logJob(FN, "watchdog_resumen", envio.ok, { ...resumenLog, asunto, email_id: envio.id ?? null, error: envio.error ?? null });
+  return { ...resumenLog, enviado: envio.ok, error: envio.error ?? null };
 }
 
 async function correr(force: boolean): Promise<Record<string, unknown>> {
@@ -168,7 +226,8 @@ Deno.serve(async (req) => {
 
   const force = url.searchParams.get("force") === "1"; // salta el gate de horario, para pruebas manuales
   try {
-    const r = await correr(force);
+    // ?resumen=1 → correo de cierre del día (cron aparte, 5:30pm). Sin el parámetro, vigilancia normal.
+    const r = url.searchParams.get("resumen") === "1" ? await correrResumen() : await correr(force);
     return Response.json({ ok: true, ...r, ts: new Date().toISOString() });
   } catch (e) {
     await logJob(FN, "watchdog_error", false, { error: String(e).slice(0, 300) });

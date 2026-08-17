@@ -39,6 +39,19 @@ con certeza, y calla/deriva cuando es mejor que responda un humano. Tienda:
   `.\deploy.ps1 watchdog` (importa `_shared` → solo CLI) → `WATCHDOG_KEY` + cron → **una semana en shadow**
   (mide y registra lo que HABRÍA alertado, sin mandar correo) para calibrar el umbral con datos reales →
   Resend + `WATCHDOG_MODE=live`, probando que el correo NO caiga en spam.
+- **v69.1 — RESUMEN DIARIO (`?resumen=1`, cron aparte 5:30pm) + migración `20260817160000_resumen_diario.sql`
+  (RPC `resumen_diario`).** Pedido de Isaac tras preguntar si el watchdog solo avisa fallos: **hacen falta
+  los dos correos.** La alerta solo habla cuando algo falla → si el watchdog MISMO muere (cron
+  desprogramado, función rota, key vencida) no llega nada y nadie lo nota (el mismo hueco un piso arriba).
+  El correo diario es la **PRUEBA DE VIDA: su ausencia ES la alarma**. Contenido (todo calculado en SQL, un
+  solo viaje): **clientes atendidos** desglosados (bot / asesor / sin atención — pedido de Isaac),
+  mensajes, **silencio máximo del día** (calibra el umbral), incidencias (respaldo/envío fallido/STT/MCP) y
+  la lista **⚠️ SIN RESPONDER** (teléfono, nombre, hora, minutos de espera y qué escribieron): clientes que
+  hablaron y no les contestó NADIE, ni bot ni asesor — la lista para rescatar ventas antes de cerrar.
+  **Bug hallado y corregido al probar en PG local:** `bool_or(model = 'human-agent')` con `model` NULL
+  devuelve NULL (no false) → la conversación sin atender se perdía del conteo (1+1+0 ≠ 3); va con
+  `coalesce`. Validada con datos representativos: atendida-por-bot, atendida-por-asesor y sin-responder
+  clasifican bien. 29 node tests.
 - **🚀 v68.1 (`v68.1-stt-fondo`) EN VIVO Y VERIFICADO (17-ago, `COPILOT_STT=live` de vuelta).** Prueba con
   el CASO PESADO (nota de voz larga, varios productos): el bot transcribió y respondió perfecto, acertando
   los TRES códigos hablados (CF283A, PG-145XL, HP M283 → juego 206A con los 4 W211xA correctos) con

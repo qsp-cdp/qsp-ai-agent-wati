@@ -25,6 +25,26 @@ hábil es anómalo.
 WATI de que WATI no responde es apostar a que el sistema caído funcione. Además evita depender de una
 plantilla aprobada por Meta.
 
+## Dos correos distintos (y por qué hacen falta los dos)
+
+| | cuándo | para qué |
+|---|---|---|
+| **Alerta** | solo cuando falla (silencio > umbral) | reaccionar YA |
+| **Resumen diario** | todos los días hábiles a las 5:30 p.m. | **prueba de vida** + pulso del negocio |
+
+El resumen no es adorno: la alerta solo habla cuando algo falla, así que **si el watchdog mismo se muere**
+(cron desprogramado, función rota, key de Resend vencida) no llegaría nada y nadie lo notaría — el mismo
+hueco que estamos tapando, un piso más arriba. Con el correo diario, **la ausencia del correo ES la alarma**.
+
+Contenido del resumen (RPC `resumen_diario`, migración `20260817160000_resumen_diario.sql`):
+
+- **Clientes atendidos**, desglosados: por el bot / por un asesor / sin atención.
+- Mensajes del día (cliente · bot · asesor) y **silencio máximo** (sirve para calibrar el umbral).
+- Incidencias: respuestas de respaldo, envíos fallidos, fallos de STT o de búsqueda.
+- **⚠️ Sin responder:** teléfono, nombre, hora, minutos de espera y las primeras palabras de lo que
+  escribieron — clientes que hablaron y **no les contestó nadie**, ni el bot ni un asesor. Es la lista
+  para rescatar ventas antes de cerrar el día.
+
 ## Secretos
 
 | secreto | qué es | default |
@@ -60,7 +80,19 @@ select cron.schedule(
      ) $$
 );
 
+-- RESUMEN DIARIO: 22:30 UTC = 5:30pm Panamá, Lun-Vie (después del cierre, cubre el día completo).
+select cron.schedule(
+  'watchdog-resumen-530pm-pa',
+  '30 22 * * 1-5',
+  $$ select net.http_post(
+       url    := 'https://jbigmlcalcwiphqeudxd.functions.supabase.co/watchdog?key=REEMPLAZA_WATCHDOG_KEY&resumen=1',
+       headers:= '{"Content-Type":"application/json"}'::jsonb,
+       body   := '{}'::jsonb
+     ) $$
+);
+
 -- Desprogramar:  select cron.unschedule('watchdog-30min-habil-pa');
+--                select cron.unschedule('watchdog-resumen-530pm-pa');
 -- Ver los jobs:  select * from cron.job;
 ```
 
@@ -69,12 +101,16 @@ select cron.schedule(
 
 ## Puesta en marcha segura (shadow → live)
 
-1. **Deploy:** `.\deploy.ps1 watchdog` (importa `_shared` → SOLO por CLI, nunca por dashboard).
-2. Setear `WATCHDOG_KEY` y programar el cron. Dejar `WATCHDOG_MODE` en `shadow` (default).
-3. **Dispararlo a mano** para ver que mide bien (`?force=1` salta el gate de horario):
+1. **Deploy:** `.\deploy.ps1 watchdog` (importa `_shared` → SOLO por CLI, nunca por dashboard) **+ aplicar
+   la migración** `20260817160000_resumen_diario.sql` en el SQL Editor.
+2. Setear `WATCHDOG_KEY` y programar los DOS crons. Dejar `WATCHDOG_MODE` en `shadow` (default).
+3. **Dispararlos a mano** para ver que miden bien (`?force=1` salta el gate de horario):
    ```
    https://jbigmlcalcwiphqeudxd.functions.supabase.co/watchdog?key=<WATCHDOG_KEY>&force=1
+   https://jbigmlcalcwiphqeudxd.functions.supabase.co/watchdog?key=<WATCHDOG_KEY>&resumen=1
    ```
+   El segundo devuelve el resumen del día en JSON — revisa que los "clientes atendidos" y la lista de
+   "sin responder" cuadren con lo que ves en WATI antes de que empiece a mandarse por correo.
 4. **Una semana en shadow** para calibrar el umbral con datos reales:
    ```sql
    select to_char(created_at at time zone 'America/Panama','DD/MM HH24:MI') as hora,
