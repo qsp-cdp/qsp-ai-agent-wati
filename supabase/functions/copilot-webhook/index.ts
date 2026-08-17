@@ -925,7 +925,14 @@ const INTERRUPT_RE = new RegExp([
   // pago"); ahora el artículo es opcional. + "pago realizado/hecho/efectuado" (sustantivo+participio, caso
   // real) + urgencia de transacción en curso ("¿demoran para la transacción? me urge") + "hacer el pago
   // antes de que venza" (planificando el pago de una cotización activa). Ninguno toca preguntas de método.
-  "le adjunto", "adjunto (el |la |mi )?(pago|comprobante|transferencia|recibo)", "comprobante", "ya (le |te )?(hice|mand[eé]|envi[eé]|pagu[eé])", "dep[oó]sit",
+  // v70 — "dep[oó]sit" a secas causaba un FALSO POSITIVO carísimo: el "DEPÓSITO DE MANTENIMIENTO" es un
+  // PRODUCTO del catálogo (la caja de mantenimiento de las Canon MAXIFY / Epson EcoTank). Caso real
+  // 17-ago: "Tiene el depósito de mantenimiento para la Canon maxify gx4010 mc-g03" → el bot se ABSTUVO
+  // creyendo que era un depósito bancario y el cliente quedó 77 min sin respuesta. Ahora el patrón exige
+  // sentido BANCARIO (verbo de pago cerca, o "depósito bancario/a la cuenta"), y se excluye explícitamente
+  // el del producto. Los depósitos de pago reales siguen cubiertos por los patrones de abajo.
+  "le adjunto", "adjunto (el |la |mi )?(pago|comprobante|transferencia|recibo)", "comprobante", "ya (le |te )?(hice|mand[eé]|envi[eé]|pagu[eé])",
+  "dep[oó]sit\\w* (bancari|en efectivo|a (la |su )?cuenta|por (banca|yappy|ach))", "(hago|hice|hacer|realic[eé]|realizar|mand[eé]|envi[eé]) (un |el |mi )?dep[oó]sito",
   // (revisión adversarial v54: "el pago antes" a secas bloqueaba preguntas de método — "¿puedo hacer el
   // pago antes de recoger?" — se acota a "antes de que" [el caso real: "antes de que venza el plazo"];
   // + formas PASIVAS/impersonales que escapaban: "el pago fue realizado", "ya se realizó la

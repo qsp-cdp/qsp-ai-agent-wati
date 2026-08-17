@@ -1098,6 +1098,25 @@ caso("v65: pareceFuncionEnTexto conoce las 8 tools", pareceFuncionEnTexto('llamo
 // #13 — sin voseo residual
 caso("v65: sin voseo residual (sabés)", !/sabés/.test(SYSTEM_PROMPT));
 
+// --- v70: "depósito de mantenimiento" es un PRODUCTO, no un depósito bancario --------------------
+console.log("v70 falso positivo del depósito");
+// 🔴 caso real 17-ago: "Tiene el depósito de mantenimiento para la Canon maxify gx4010 mc-g03" → el
+// patrón suelto "dep[oó]sit" lo tomó por pago y el bot se abstuvo; el cliente esperó 77 min por un
+// producto que vendemos (caja de mantenimiento MC-G03). Detectado por el resumen diario del watchdog.
+for (const t of [
+  "Tiene el depósito de mantenimiento para la Canon maxify gx4010 mc-g03",
+  "necesito el deposito de mantenimiento mc-g03",
+  "tienen depósito de residuos para la Epson L15150?",
+]) caso(`v70: producto con "depósito" NO interrumpe — ${t.slice(0, 40)}…`, !INTERRUPT_RE.test(t));
+// El depósito BANCARIO real sigue bloqueando (la anti-interrupción es sagrada).
+for (const t of [
+  "ya hice el depósito",
+  "le hice un deposito a la cuenta",
+  "hice el depósito bancario esta mañana",
+  "acabo de hacer el deposito",
+  "le mandé el depósito por yappy",
+]) caso(`v70: depósito de PAGO sigue interrumpiendo — ${t}`, INTERRUPT_RE.test(t));
+
 // --- v66: respuesta en partes (burbujas) ----------------------------------------------------------
 console.log("v66 burbujas");
 const partirMensaje = extraerFuncion("partirMensaje");
