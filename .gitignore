@@ -20,3 +20,7 @@ npm-debug.log*
 data/contacts.json
 data/*.csv
 !data/ejemplo-tookan-export.csv
+
+# Lienzo de diseño sembrado (~2 MB del editor, se regenera desde los .dc.html)
+design/*.html
+!design/*.dc.html
