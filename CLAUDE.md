@@ -20,7 +20,28 @@ con certeza, y calla/deriva cuando es mejor que responda un humano. Tienda:
 **quickservicepanama.com** (suministros de impresión y tecnología en Panamá).
 
 ## Estado actual (2026-08-13)
-## Estado actual (2026-08-17)
+## Estado actual (2026-08-18)
+- **EN EL REPO, DESPLEGAR: v72 — AVISO DE DESATENCIÓN por correo a los asesores.** Pedido de Isaac tras ver
+  el barrido en vivo: los casos que el barrido OMITE a propósito (comprobante de pago, RUC/factura,
+  intención de pagar, reclamos) son los de MAYOR valor —el bot no debe tocarlos, pero hasta hoy quedaban
+  esperando sin que NADIE se enterara (17-ago: Ida y Yaritza, 2-3 h con datos de facturación en la mano)—.
+  **Misma lógica del barrido, distinta acción:** en vez de responder el bot, se manda un correo al equipo
+  con teléfono, nombre, minutos de espera, qué escribieron y por qué el bot no puede ayudar. Reusa los
+  secretos del watchdog (`RESEND_API_KEY`/`ALERTA_EMAILS`/`ALERTA_FROM`) con un envío propio inline —
+  copilot-webhook NO importa `_shared` a propósito (para poder desplegarse suelto) y eso se conserva.
+  **Anti-spam:** un aviso por cliente cada `COPILOT_AVISO_REPETIR_MIN` (default 240) + UN solo correo por
+  corrida con todos los casos. En `COPILOT_SWEEP=shadow` registra `desatencion_correo` sin enviar.
+  649 golden. **Deploy:** `.\deploy.ps1 copilot-webhook` (sin migración).
+- **🚀 v71 EN VIVO Y VALIDADO (18-ago) + v71.2/v71.3 de ajuste.** El barrido salió a producción y el mismo
+  día **rescató a Héctor**: preguntó por papel fotográfico a las 10:31, nadie contestó, a las 11:20 el
+  barrido respondió (honesto: no lo tenemos en carta, manejamos rollos), **el cliente revivió a los 2 min**
+  y a las 11:28 Miguel Cabrera cerró — y confirmó lo MISMO que el bot (cero contradicción, que era el
+  riesgo grande). Guardrails perfectos: a Yaritza (trámite de pago) el bot le dijo que el asesor le
+  confirma, sin tocar el tema. **v71.2** (gate por acks, no por palabras de catálogo — ver abajo) y
+  **v71.3** (en el barrido, CALLAR si no hay nada concreto que aportar: 3 de 4 asistencias fueron cortesía
+  vacía tipo "quedamos atentos" a clientes de hacía 18 h → suena a robot; ahora devuelve vacío).
+
+## Estado histórico (2026-08-17)
 - **EN EL REPO, DESPLEGAR: v70 + v70.1 — dos huecos que destapó el PRIMER resumen del watchdog.** La
   feature nueva se pagó sola el mismo día: de los 9 "sin responder" salieron dos hallazgos reales.
   **v70 — 🔴 FALSO POSITIVO CARO de la anti-interrupción:** el patrón suelto `dep[oó]sit` tomaba por

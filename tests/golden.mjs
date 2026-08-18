@@ -1254,6 +1254,19 @@ caso("v71.2: esAck filtra por VOCABULARIO (compuestos caen solos)", [
 // v71.3 — con tráfico real (18-ago) 3 de 4 asistencias del barrido fueron cortesía vacía ("quedamos
 // atentos") a clientes cuyo último mensaje era de HACE HORAS. Ahora el barrido le dice al modelo que si no
 // tiene algo concreto que aportar, calle (el camino ya existía: devolver vacío → sin_respuesta).
+// --- v72: aviso por correo cuando el bot NO puede atender (pago, factura, reclamo) ---------------
+// Los casos que el barrido omite a propósito son los de MAYOR valor (un comprobante de pago esperando).
+// Misma lógica, distinta acción: en vez de responder el bot, se le avisa a un asesor.
+caso("v72: los omitidos por pago/factura y reclamo alimentan el aviso", /urgentes\.push\(\{ wa_id: p\.wa_id, nombre: p\.sender_name, texto: p\.texto, mins_espera: p\.mins_espera, motivo: "interrupcion" \}\)/.test(src) && /motivo: "handoff_keyword" \}\);/.test(src));
+caso("v72: el bot NO responde esos casos (el guardrail sigue intacto)", (() => {
+  const i = src.indexOf('if (INTERRUPT_RE.test(rafaga))');
+  return /continue; \}/.test(src.slice(i, i + 400)); // sigue saltándose la asistencia
+})());
+caso("v72: anti-spam — un aviso por cliente cada COPILOT_AVISO_REPETIR_MIN", /COPILOT_AVISO_REPETIR_MIN/.test(src) && /\.eq\("action", "desatencion_avisada"\)\s*\n?\s*\.eq\("detail->>waId", c\.wa_id\)/.test(src));
+caso("v72: UN solo correo por corrida con todos los casos", /const asunto = nuevos\.length === 1/.test(src) && /\$\{nuevos\.length\} clientes esperando/.test(src));
+caso("v72: en shadow registra pero NO manda correo", /if \(SWEEP_MODE !== "live"\) \{\s*\n\s*await log\("desatencion_correo", true, \{ shadow: true/.test(src));
+caso("v72: la API key de Resend se enmascara en los errores", /replaceAll\(key, "\*\*\*"\)/.test(src));
+caso("v72: reusa los secretos del watchdog (no inventa otros)", /RESEND_API_KEY/.test(src) && /ALERTA_EMAILS/.test(src) && /ALERTA_FROM/.test(src));
 caso("v71.3: el barrido pide callar si no hay nada concreto que aportar", /NO respondas NADA\. Devuelve una respuesta vacía/.test(src) && /RESPUESTA TARDÍA/.test(src));
 caso("v71.3: el sufijo SOLO se aplica al barrido, no a la asistencia reactiva", /origen === "barrido" \? SWEEP_SUFFIX : ""/.test(src));
 caso("v71.3: advierte que pasó tiempo (no saludar como si fuera de este instante)", /no saludes como si la conversación fuera de este instante/.test(src));

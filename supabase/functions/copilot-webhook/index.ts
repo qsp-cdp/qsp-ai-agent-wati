@@ -2460,6 +2460,75 @@ RESPUESTA TARDÍA (esta conversación lleva rato sin atención y estás retomán
 - Si el último mensaje del cliente era un agradecimiento, una confirmación, un "quedo pendiente" o cualquier cosa que ya no requiere acción, NO respondas NADA. Devuelve una respuesta vacía. Escribir "quedamos atentos" o "cualquier cosa aquí estoy" horas después no aporta y molesta.
 - Recuerda que pasó tiempo: no saludes como si la conversación fuera de este instante ni des por hecho que el cliente sigue esperando en el chat.`;
 
+// v72 — AVISO DE DESATENCIÓN a los asesores (por correo).
+//
+// Los casos que el barrido OMITE a propósito —comprobante de pago, RUC/factura, intención de pagar,
+// reclamos— son justo los de mayor valor: el bot no debe tocarlos, pero hoy quedaban esperando sin que
+// NADIE se enterara (el 17-ago, Ida y Yaritza esperaron 2-3 h con datos de facturación en la mano).
+// Misma lógica del barrido, distinta acción: en vez de que responda el bot, se avisa al humano.
+//
+// Reusa los secretos del watchdog (RESEND_API_KEY / ALERTA_EMAILS / ALERTA_FROM). Anti-spam: un aviso por
+// cliente cada COPILOT_AVISO_REPETIR_MIN (default 4 h), y UN solo correo por corrida con todos los casos.
+const AVISO_REPETIR_MIN = (() => { const n = parseInt((Deno.env.get("COPILOT_AVISO_REPETIR_MIN") ?? "").trim(), 10); return Number.isFinite(n) && n >= 30 ? Math.min(n, 1440) : 240; })();
+
+async function enviarCorreoResend(asunto: string, html: string): Promise<{ ok: boolean; error?: string }> {
+  const key = (Deno.env.get("RESEND_API_KEY") ?? "").trim();
+  const to = (Deno.env.get("ALERTA_EMAILS") ?? "").split(",").map((x) => x.trim()).filter(Boolean);
+  const from = (Deno.env.get("ALERTA_FROM") ?? "alertas@notify.quickservicepanama.com").trim();
+  if (!key) return { ok: false, error: "falta_resend_api_key" };
+  if (!to.length) return { ok: false, error: "sin_destinatarios" };
+  try {
+    const r = await fetch("https://api.resend.com/emails", {
+      method: "POST",
+      headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ from, to, subject: asunto, html }),
+      signal: AbortSignal.timeout(15000),
+    });
+    if (!r.ok) return { ok: false, error: `http_${r.status}:${(await r.text()).replaceAll(key, "***").slice(0, 160)}` };
+    return { ok: true };
+  } catch (e) { return { ok: false, error: `excepcion:${String(e).slice(0, 160)}` }; }
+}
+
+interface CasoDesatendido { wa_id: string; nombre: string | null; texto: string; mins_espera: number; motivo: string }
+
+async function avisarDesatencion(casos: CasoDesatendido[]): Promise<Record<string, unknown>> {
+  if (!casos.length) return { avisados: 0 };
+  // Anti-spam: no repetir el aviso del mismo cliente dentro de la ventana.
+  const desde = new Date(Date.now() - AVISO_REPETIR_MIN * 60000).toISOString();
+  const nuevos: CasoDesatendido[] = [];
+  for (const c of casos) {
+    const { data } = await sb.from("job_log").select("id").eq("action", "desatencion_avisada")
+      .eq("detail->>waId", c.wa_id).gte("created_at", desde).limit(1);
+    if (!data || !data.length) nuevos.push(c);
+  }
+  if (!nuevos.length) return { avisados: 0, motivo: "ya_avisados" };
+  const etiqueta = (m: string) => m === "interrupcion" ? "💰 pago o datos de factura" : "⚠️ reclamo o pide asesor";
+  const filas = nuevos.map((c) => `<tr>
+      <td style="padding:6px 12px 6px 0;white-space:nowrap"><strong>${c.wa_id}</strong>${c.nombre ? `<br><span style="color:#666">${c.nombre}</span>` : ""}</td>
+      <td style="padding:6px 12px 6px 0;white-space:nowrap">${c.mins_espera} min</td>
+      <td style="padding:6px 12px 6px 0;white-space:nowrap">${etiqueta(c.motivo)}</td>
+      <td style="padding:6px 0;color:#444">${(c.texto ?? "").replace(/[<>]/g, "").slice(0, 120)}</td>
+    </tr>`).join("");
+  const asunto = nuevos.length === 1
+    ? `⚠️ Cliente esperando con pago o reclamo sin atender (${nuevos[0].mins_espera} min)`
+    : `⚠️ ${nuevos.length} clientes esperando con pago o reclamo sin atender`;
+  const html = `<h2 style="margin:0 0 10px">Clientes que necesitan un asesor</h2>
+    <p>Escribieron y llevan rato sin respuesta. <strong>El copiloto NO puede ayudarlos</strong> — son temas de
+       pago, facturación o reclamo, que por diseño maneja siempre una persona.</p>
+    <table style="border-collapse:collapse;font-size:13px">${filas}</table>
+    <p style="color:#666;font-size:12px">Búsquelos por el número en el inbox de WATI. Este aviso no se repite
+       para el mismo cliente antes de ${Math.round(AVISO_REPETIR_MIN / 60)} h.</p>`;
+
+  if (SWEEP_MODE !== "live") {
+    await log("desatencion_correo", true, { shadow: true, casos: nuevos.length, asunto });
+    return { avisados: nuevos.length, shadow: true };
+  }
+  const envio = await enviarCorreoResend(asunto, html);
+  for (const c of nuevos) await log("desatencion_avisada", envio.ok, { waId: c.wa_id, motivo: c.motivo, mins_espera: c.mins_espera });
+  await log("desatencion_correo", envio.ok, { casos: nuevos.length, asunto, error: envio.error ?? null });
+  return { avisados: nuevos.length, enviado: envio.ok, error: envio.error ?? null };
+}
+
 interface PendienteAsistencia {
   conversation_id: string; wa_id: string; sender_name: string | null; turns_today: number;
   texto: string; ultimo_cliente_at: string; ultimo_asesor_at: string; mins_espera: number; mins_sin_asesor: number;
@@ -2478,12 +2547,14 @@ async function barridoAsistencia(force: boolean): Promise<Record<string, unknown
   if (!pendientes.length) { await log("sweep_run", true, { mode: SWEEP_MODE, candidatos: 0 }); return { mode: SWEEP_MODE, candidatos: 0 }; }
 
   const atendidos: string[] = [], omitidos: Array<Record<string, unknown>> = [];
+  const urgentes: CasoDesatendido[] = []; // v72: los que el bot NO puede atender → avisan a un humano
   for (const p of pendientes) {
     // GUARDRAILS SEMÁNTICOS, los mismos del camino reactivo (v50/v61.3) — se evalúan aquí en TS, con los
     // MISMOS regex, para que no existan dos versiones de la regla que se desincronicen.
     const rafaga = await textoDeRafagaSinResponder(p.conversation_id, p.texto);
-    if (INTERRUPT_RE.test(rafaga)) { omitidos.push({ wa_id: p.wa_id, motivo: "interrupcion" }); continue; }   // pago/RUC/factura → humano
-    if (HANDOFF_RE.test(rafaga)) { omitidos.push({ wa_id: p.wa_id, motivo: "handoff_keyword" }); continue; }  // reclamo/garantía → humano
+    // pago/RUC/factura y reclamos: el bot NO los toca (guardrail sagrado), pero SÍ se avisa a un asesor (v72).
+    if (INTERRUPT_RE.test(rafaga)) { omitidos.push({ wa_id: p.wa_id, motivo: "interrupcion" }); urgentes.push({ wa_id: p.wa_id, nombre: p.sender_name, texto: p.texto, mins_espera: p.mins_espera, motivo: "interrupcion" }); continue; }
+    if (HANDOFF_RE.test(rafaga)) { omitidos.push({ wa_id: p.wa_id, motivo: "handoff_keyword" }); urgentes.push({ wa_id: p.wa_id, nombre: p.sender_name, texto: p.texto, mins_espera: p.mins_espera, motivo: "handoff_keyword" }); continue; }
     if (esAck(p.texto)) { omitidos.push({ wa_id: p.wa_id, motivo: "ack" }); continue; }
     if (SWEEP_MODE !== "live") { atendidos.push(p.wa_id); continue; }  // shadow: se registra, no se responde
     await ejecutarAsistencia(
@@ -2492,12 +2563,13 @@ async function barridoAsistencia(force: boolean): Promise<Record<string, unknown
     );
     atendidos.push(p.wa_id);
   }
+  const aviso = await avisarDesatencion(urgentes);
   await log("sweep_run", true, {
-    mode: SWEEP_MODE, candidatos: pendientes.length, atendidos: atendidos.length, omitidos: omitidos.length,
+    mode: SWEEP_MODE, candidatos: pendientes.length, atendidos: atendidos.length, omitidos: omitidos.length, aviso,
     detalle_omitidos: omitidos.slice(0, 10),
     muestra: pendientes.slice(0, 10).map((p) => ({ wa_id: p.wa_id, mins_espera: p.mins_espera, texto: p.texto.slice(0, 60) })),
   });
-  return { mode: SWEEP_MODE, candidatos: pendientes.length, atendidos: atendidos.length, omitidos: omitidos.length };
+  return { mode: SWEEP_MODE, candidatos: pendientes.length, atendidos: atendidos.length, omitidos: omitidos.length, aviso };
 }
 
 async function log(action: string, ok: boolean, detail: unknown) {
