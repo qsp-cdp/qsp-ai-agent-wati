@@ -20,7 +20,7 @@
 // Disparo: pg_cron cada 30 min en horario hábil (ver docs/watchdog.md).
 // Importa ../_shared → SOLO se despliega por CLI (deploy.ps1), nunca por dashboard.
 
-import { logJob, resumenDiario, ultimoJobLog, ultimoMensajeAt, type ResumenDiario } from "../_shared/db.ts";
+import { jobLogRecientes, logJob, resumenDiario, ultimoJobLog, ultimoMensajeAt, type ResumenDiario } from "../_shared/db.ts";
 import { enviarCorreo } from "../_shared/resend.ts";
 import { ahoraPanama, esDiaHabilPanama } from "../_shared/panama.ts";
 
@@ -100,32 +100,55 @@ async function estadoCopiloto(): Promise<string> {
 // todo, quién quedó SIN respuesta — dinero sobre la mesa).
 const ESPERA_SIN_RESPONDER = intEnv("WATCHDOG_ESPERA_SIN_RESPONDER", 45, 5, 480);
 
-function htmlResumen(r: ResumenDiario, salud: string): string {
+// v72.1 — SEMÁFORO. El asunto tiene que decir en un vistazo si hay que abrir el correo o no:
+//   🔴 algo roto (silencio anómalo del sistema, envíos fallidos, errores)
+//   🟡 hay clientes esperando respuesta
+//   🟢 todo atendido y funcionando
+function semaforo(r: ResumenDiario, minutosSinMensajes: number, saludOk: boolean): { icono: string; estado: string } {
+  const inc = r.incidencias ?? {};
+  const roto = !saludOk || minutosSinMensajes >= UMBRAL_MIN
+    || Number(inc.envio_fallido ?? 0) > 0 || Number(inc.errores ?? 0) > 0;
+  if (roto) return { icono: "🔴", estado: "revisar el sistema" };
+  if ((r.sin_responder_n ?? 0) > 0) return { icono: "🟡", estado: `${r.sin_responder_n} esperando` };
+  return { icono: "🟢", estado: "todo al día" };
+}
+
+function htmlResumen(r: ResumenDiario, salud: string, minutosSinMensajes: number, urgentes: Set<string>): string {
   const c = r.clientes ?? { escribieron: 0, atendidos: 0, sin_atencion: 0 };
   const inc = r.incidencias ?? {};
   const incidencias = Object.entries(inc).filter(([, v]) => Number(v) > 0)
     .map(([k, v]) => `${k.replaceAll("_", " ")}: <strong>${v}</strong>`).join(" · ") || "ninguna";
-  const filas = (r.sin_responder ?? []).map((s) =>
-    `<tr><td style="padding:4px 10px 4px 0">${s.hora}</td>
-         <td style="padding:4px 10px 4px 0"><strong>${s.wa_id}</strong>${s.nombre ? ` (${s.nombre})` : ""}</td>
-         <td style="padding:4px 10px 4px 0">${s.espera_min} min</td>
-         <td style="padding:4px 0;color:#444">${(s.texto ?? "").replace(/[<>]/g, "")}</td></tr>`).join("");
+  // Los marcados 💰 son los que el copiloto NO puede atender (pago, factura, reclamo): necesitan a una
+  // persona sí o sí. Salen primero porque son los de mayor valor.
+  const lista = [...(r.sin_responder ?? [])].sort((a, b) =>
+    (urgentes.has(b.wa_id) ? 1 : 0) - (urgentes.has(a.wa_id) ? 1 : 0) || b.espera_min - a.espera_min);
+  const filas = lista.map((s) => {
+    const urge = urgentes.has(s.wa_id);
+    return `<tr style="${urge ? "background:#fff4f4" : ""}">
+      <td style="padding:5px 10px 5px 0;white-space:nowrap">${urge ? "💰 " : ""}${s.hora}</td>
+      <td style="padding:5px 10px 5px 0;white-space:nowrap"><strong>${s.wa_id}</strong>${s.nombre ? `<br><span style="color:#666">${s.nombre}</span>` : ""}</td>
+      <td style="padding:5px 10px 5px 0;white-space:nowrap">${s.espera_min} min</td>
+      <td style="padding:5px 0;color:#444">${(s.texto ?? "").replace(/[<>]/g, "")}</td></tr>`;
+  }).join("");
   const bloqueSin = r.sin_responder_n > 0
-    ? `<h3 style="margin:18px 0 6px">⚠️ Sin responder (${r.sin_responder_n})</h3>
+    ? `<h3 style="margin:18px 0 6px">⚠️ Esperando respuesta (${r.sin_responder_n})</h3>
        <table style="border-collapse:collapse;font-size:13px">${filas}</table>
-       <p style="color:#666;font-size:12px">Escribieron y no contestó nadie —ni el bot ni un asesor—
-          hace más de ${ESPERA_SIN_RESPONDER} min.</p>`
-    : `<p>✅ <strong>Nadie quedó sin responder.</strong></p>`;
-  return `<h2 style="margin:0 0 10px">Copiloto — resumen del día</h2>
-    <p><strong>Clientes atendidos: ${c.atendidos} de ${c.escribieron}</strong> que escribieron hoy
+       <p style="color:#666;font-size:12px">Escribieron y no contestó nadie —ni el bot ni un asesor— hace
+          más de ${ESPERA_SIN_RESPONDER} min. Los marcados 💰 son de <strong>pago, factura o reclamo</strong>:
+          el copiloto no puede atenderlos por diseño, necesitan a una persona.</p>`
+    : `<p style="font-size:15px">✅ <strong>Nadie está esperando respuesta.</strong></p>`;
+  return `<h2 style="margin:0 0 10px">Copiloto — cómo va el día</h2>
+    <p style="font-size:15px"><strong>Clientes atendidos: ${c.atendidos} de ${c.escribieron}</strong> que han escrito hoy
        ${c.sin_atencion > 0 ? `· <strong style="color:#b00">${c.sin_atencion} sin atención</strong>` : ""}</p>
-    <p>Mensajes: ${r.mensajes?.de_clientes ?? 0} de clientes · ${(r.mensajes?.del_bot ?? 0) + (r.mensajes?.de_asesores ?? 0)} de respuesta<br>
-       Silencio máximo del día: ${r.silencio_max_min} min<br>
-       Incidencias: ${incidencias}<br>
-       Estado: ${salud}</p>
     ${bloqueSin}
-    <p style="color:#666;font-size:12px">Watchdog QSP · este correo llega todos los días hábiles:
-       si algún día NO llega, el vigilante está caído.</p>`;
+    <h3 style="margin:18px 0 6px">Salud del sistema</h3>
+    <p>Mensajes hoy: ${r.mensajes?.de_clientes ?? 0} de clientes · ${(r.mensajes?.del_bot ?? 0) + (r.mensajes?.de_asesores ?? 0)} de respuesta
+       (${r.mensajes?.del_bot ?? 0} del bot, ${r.mensajes?.de_asesores ?? 0} de asesores)<br>
+       Último mensaje: hace ${minutosSinMensajes} min · Silencio máximo del día: ${r.silencio_max_min} min<br>
+       Incidencias: ${incidencias}<br>
+       Copiloto: ${salud}</p>
+    <p style="color:#666;font-size:12px">Watchdog QSP · llega 3 veces al día (11:00, 2:30pm y 4:00pm) en días
+       hábiles: si algún día NO llega, el vigilante está caído. Las caídas del sistema se avisan aparte y al instante.</p>`;
 }
 
 async function correrResumen(): Promise<Record<string, unknown>> {
@@ -135,16 +158,22 @@ async function correrResumen(): Promise<Record<string, unknown>> {
     return { error: "rpc_resumen_diario_fallo" };
   }
   const salud = await estadoCopiloto();
+  const ultimo = await ultimoMensajeAt();
+  const minutos = ultimo ? Math.round((Date.now() - new Date(ultimo).getTime()) / 60000) : 99999;
+  // Los casos que el barrido marcó como "el bot no puede" (pago/factura/reclamo) — los escribe
+  // copilot-webhook en job_log; aquí solo se leen para destacarlos en la lista.
+  const desde = new Date(Date.now() - 14 * 3600 * 1000).toISOString();
+  const av = await jobLogRecientes("desatencion_avisada", desde, 100);
+  const urgentes = new Set<string>(av.map((x) => String(x?.detail?.waId ?? "")).filter(Boolean));
+  const sem = semaforo(r, minutos, !salud.includes("NO RESPONDE") && !salud.includes("⚠️"));
   const c = r.clientes ?? { escribieron: 0, atendidos: 0 };
-  const asunto = r.sin_responder_n > 0
-    ? `Copiloto — ${c.atendidos} clientes atendidos, ${r.sin_responder_n} SIN responder`
-    : `Copiloto — ${c.atendidos} clientes atendidos, todo respondido ✅`;
-  const resumenLog = { mode: MODE, clientes: c, mensajes: r.mensajes, sin_responder_n: r.sin_responder_n, silencio_max_min: r.silencio_max_min };
+  const asunto = `${sem.icono} Copiloto — ${c.atendidos}/${c.escribieron} atendidos · ${sem.estado}`;
+  const resumenLog = { mode: MODE, semaforo: sem.icono, clientes: c, mensajes: r.mensajes, sin_responder_n: r.sin_responder_n, urgentes: urgentes.size, silencio_max_min: r.silencio_max_min };
   if (MODE !== "live") {
     await logJob(FN, "watchdog_resumen", true, { ...resumenLog, shadow: true, asunto });
     return { ...resumenLog, shadow: true, asunto };
   }
-  const envio = await enviarCorreo(asunto, htmlResumen(r, salud), DESTINATARIOS);
+  const envio = await enviarCorreo(asunto, htmlResumen(r, salud, minutos, urgentes), DESTINATARIOS);
   await logJob(FN, "watchdog_resumen", envio.ok, { ...resumenLog, asunto, email_id: envio.id ?? null, error: envio.error ?? null });
   return { ...resumenLog, enviado: envio.ok, error: envio.error ?? null };
 }

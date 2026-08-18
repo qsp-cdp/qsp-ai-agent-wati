@@ -30,7 +30,7 @@ plantilla aprobada por Meta.
 | | cuándo | para qué |
 |---|---|---|
 | **Alerta** | solo cuando falla (silencio > umbral) | reaccionar YA |
-| **Resumen diario** | todos los días hábiles a las 5:00 p.m. | **prueba de vida** + pulso del negocio |
+| **Resumen** | 3 veces al día: **11:00, 2:30 p.m. y 4:00 p.m.** | **prueba de vida** + pulso del negocio + lista para rescatar |
 
 El resumen no es adorno: la alerta solo habla cuando algo falla, así que **si el watchdog mismo se muere**
 (cron desprogramado, función rota, key de Resend vencida) no llegaría nada y nadie lo notaría — el mismo
@@ -38,12 +38,15 @@ hueco que estamos tapando, un piso más arriba. Con el correo diario, **la ausen
 
 Contenido del resumen (RPC `resumen_diario`, migración `20260817160000_resumen_diario.sql`):
 
+- **Semáforo en el asunto:** 🟢 todo al día · 🟡 hay clientes esperando · 🔴 algo roto (silencio anómalo,
+  envíos fallidos o errores). Se lee sin abrir el correo.
 - **Clientes atendidos** (cuántos de los que escribieron recibieron respuesta; no distingue si fue el bot o un asesor).
 - Mensajes del día (cliente · bot · asesor) y **silencio máximo** (sirve para calibrar el umbral).
 - Incidencias: respuestas de respaldo, envíos fallidos, fallos de STT o de búsqueda.
-- **⚠️ Sin responder:** teléfono, nombre, hora, minutos de espera y las primeras palabras de lo que
-  escribieron — clientes que hablaron y **no les contestó nadie**, ni el bot ni un asesor. Es la lista
-  para rescatar ventas antes de cerrar el día.
+- **⚠️ Esperando respuesta:** teléfono, nombre, hora, minutos de espera y las primeras palabras de lo que
+  escribieron — clientes que hablaron y **no les contestó nadie**, ni el bot ni un asesor. Los marcados
+  **💰 van primero**: son de pago, factura o reclamo, donde el copiloto no puede ayudar por diseño y hace
+  falta una persona (los marca el barrido de v72 vía `desatencion_avisada`).
 
 ## Secretos
 
@@ -80,10 +83,24 @@ select cron.schedule(
      ) $$
 );
 
--- RESUMEN DIARIO: 22:00 UTC = 5:00pm Panamá, Lun-Vie (hora de cierre, cubre el día completo).
+-- RESUMEN 3 VECES AL DÍA: 16:00 / 19:30 / 21:00 UTC = 11:00am / 2:30pm / 4:00pm Panamá, Lun-Vie.
+-- Un solo correo a las 5pm avisa de un cliente colgado cuando ya no hay nada que hacer; tres cortes
+-- durante el día permiten rescatarlo el mismo día (11:00 antes del almuerzo, 2:30 al retomar, 4:00
+-- última llamada antes de cerrar).
 select cron.schedule(
-  'watchdog-resumen-5pm-pa',
-  '0 22 * * 1-5',
+  'watchdog-resumen-3x-pa',
+  '0 16,21 * * 1-5',
+  $$ select net.http_post(
+       url    := 'https://jbigmlcalcwiphqeudxd.functions.supabase.co/watchdog?key=REEMPLAZA_WATCHDOG_KEY&resumen=1',
+       headers:= '{"Content-Type":"application/json"}'::jsonb,
+       body   := '{}'::jsonb
+     ) $$
+);
+
+-- El de las 2:30pm va aparte porque cron no soporta minutos distintos en la misma línea:
+select cron.schedule(
+  'watchdog-resumen-230-pa',
+  '30 19 * * 1-5',
   $$ select net.http_post(
        url    := 'https://jbigmlcalcwiphqeudxd.functions.supabase.co/watchdog?key=REEMPLAZA_WATCHDOG_KEY&resumen=1',
        headers:= '{"Content-Type":"application/json"}'::jsonb,
@@ -92,7 +109,8 @@ select cron.schedule(
 );
 
 -- Desprogramar:  select cron.unschedule('watchdog-30min-habil-pa');
---                select cron.unschedule('watchdog-resumen-5pm-pa');
+--                select cron.unschedule('watchdog-resumen-3x-pa');
+--                select cron.unschedule('watchdog-resumen-230-pa');
 -- Ver los jobs:  select * from cron.job;
 ```
 

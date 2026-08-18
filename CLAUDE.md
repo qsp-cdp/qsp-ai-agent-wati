@@ -32,6 +32,18 @@ con certeza, y calla/deriva cuando es mejor que responda un humano. Tienda:
   **Anti-spam:** un aviso por cliente cada `COPILOT_AVISO_REPETIR_MIN` (default 120 — 2 h, decisión de Isaac) + UN solo correo por
   corrida con todos los casos. En `COPILOT_SWEEP=shadow` registra `desatencion_correo` sin enviar.
   649 golden. **Deploy:** `.\deploy.ps1 copilot-webhook` (sin migración).
+- **EN EL REPO, DESPLEGAR: v72.1 — el resumen se FUSIONA y sale 3 veces al día con SEMÁFORO.** Pedido de
+  Isaac: un solo correo a las 5pm avisa de un cliente colgado cuando ya no hay nada que hacer. Ahora sale a
+  las **11:00, 2:30pm y 4:00pm** (antes del almuerzo · al retomar · última llamada antes de cerrar), y el
+  ASUNTO lleva semáforo para leerlo sin abrirlo: **🔴** algo roto (salud del copiloto, silencio ≥ umbral,
+  envíos fallidos o errores) · **🟡** hay clientes esperando · **🟢** todo al día. Ejemplo:
+  `🟡 Copiloto — 61/62 atendidos · 3 esperando`. El cuerpo pone PRIMERO lo accionable (quién espera, con los
+  **💰 arriba** —pago/factura/reclamo, que el bot no puede atender y marca el barrido v72 vía
+  `desatencion_avisada`—) y debajo la salud del sistema. **Lo que NO se fusiona:** la alerta de sistema
+  caído sigue siendo inmediata (el sábado, esperar a las 2:30 habría significado medio día muerto) y el
+  aviso de pago de v72 también (un comprobante que llega a las 11:05 no puede esperar a las 2:30). Crons:
+  `0 16,21 * * 1-5` + `30 19 * * 1-5` (cron no admite minutos distintos en la misma línea). **Deploy:**
+  `.\deploy.ps1 watchdog` + reprogramar el cron de las 5pm.
 - **🚀 v71 EN VIVO Y VALIDADO (18-ago) + v71.2/v71.3 de ajuste.** El barrido salió a producción y el mismo
   día **rescató a Héctor**: preguntó por papel fotográfico a las 10:31, nadie contestó, a las 11:20 el
   barrido respondió (honesto: no lo tenemos en carta, manejamos rollos), **el cliente revivió a los 2 min**

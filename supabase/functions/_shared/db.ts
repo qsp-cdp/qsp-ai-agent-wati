@@ -242,6 +242,17 @@ export async function resumenDiario(minEspera = 45): Promise<ResumenDiario | nul
   } catch { return null; }
 }
 
+// Filas recientes de job_log con esta `action` (el resumen las usa para marcar 💰 los casos que el
+// copiloto NO puede atender — los escribe el barrido en copilot-webhook como `desatencion_avisada`).
+export async function jobLogRecientes(action: string, desdeIso: string, limite = 100): Promise<Array<{ created_at: string; detail: any }>> {
+  try {
+    const url = `/job_log?select=created_at,detail&action=eq.${encodeURIComponent(action)}&created_at=gte.${encodeURIComponent(desdeIso)}&order=created_at.desc&limit=${limite}`;
+    const res = await fetch(restUrl(url), { headers: serviceHeaders(), signal: AbortSignal.timeout(10000) });
+    if (!res.ok) return [];
+    return await res.json();
+  } catch { return []; }
+}
+
 // Última fila de job_log con esta `action` (para el anti-spam de alertas y el aviso de recuperación).
 export async function ultimoJobLog(action: string, desdeIso: string): Promise<{ created_at: string; detail: any } | null> {
   try {
