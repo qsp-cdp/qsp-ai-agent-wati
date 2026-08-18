@@ -1194,11 +1194,21 @@ caso("v68: modelo de STT configurable (default whisper-1)", /Deno\.env\.get\("OP
 caso("v68: en live la transcripción reescribe el mensaje (pipeline normal)", /texto = `\[nota de voz\] \$\{tr\.texto\}`/.test(src) && /let texto = \(p\.text \?\? ""\)/.test(src));
 // 🔴 caso real 14-ago: el STT corría ANTES del 200 a WATI (4-6 s) → timeout → WATI reintentó el MISMO
 // webhook cada 10 min durante 3 h (18 transcripciones pagadas del mismo audio). Es la lección de v14.
-caso("v68.1: el STT corre en la tarea de FONDO, nunca antes del ACK a WATI", (() => {
-  const iAck = src.indexOf('audioUrlPendiente = String(p.data ?? "")');
-  const iStt = src.indexOf("const tr = await transcribirAudio(audioUrlPendiente)");
-  const iDebounce = src.indexOf("if (DEBOUNCE_MS > 0) await new Promise");
-  return iAck > -1 && iStt > -1 && iDebounce > -1 && iAck < iDebounce && iDebounce < iStt;
+caso("v68.1/v72.4: TODA transcripción corre en segundo plano, nunca antes del ACK a WATI", (() => {
+  // El invariante (lección de v14, que costó el canal el 15-ago): nada lento entre recibir el webhook y
+  // devolver el 200. Se verifica por CONTEXTO, no por orden de líneas: cada llamada al STT del camino
+  // live debe estar dentro de una tarea de fondo (correrEnSegundoPlano) o después del debounce.
+  if (!/audioUrlPendiente = String\(p\.data \?\? ""\)/.test(src)) return false;
+  const llamadas = [...src.matchAll(/transcribirAudio\(audioUrlPendiente\)/g)].map((m) => m.index);
+  if (!llamadas.length) return false;
+  return llamadas.every((i) => {
+    const antes = src.slice(0, i);
+    // la marca de "estoy dentro de una tarea de fondo" más cercana hacia atrás
+    const fondo = Math.max(antes.lastIndexOf("correrEnSegundoPlano"), antes.lastIndexOf("const procesar = (async () =>"));
+    // ...debe venir DESPUÉS del insert del mensaje del cliente (que es lo último antes del 200 a WATI)
+    const insert = antes.lastIndexOf('.insert({ conversation_id: conv.id, role: "user"');
+    return fondo > -1 && fondo > insert;
+  });
 })());
 caso("v68.1: la fila entra como '[audio]' (dedup corta los reintentos sin gastar STT)", /texto = "\[audio\]";\s*\n\s*tipo = "text";/.test(src));
 caso("v68.1: tras transcribir se REPITEN los guardrails sobre lo que dijo el cliente", /if \(INTERRUPT_RE\.test\(texto\)\) \{ await log\("abstencion_interrupcion", true, \{ waId, por_audio: true \}\)/.test(src) && /handoff_por_audio/.test(src));
@@ -1254,6 +1264,17 @@ caso("v71.2: esAck filtra por VOCABULARIO (compuestos caen solos)", [
 // v71.3 — con tráfico real (18-ago) 3 de 4 asistencias del barrido fueron cortesía vacía ("quedamos
 // atentos") a clientes cuyo último mensaje era de HACE HORAS. Ahora el barrido le dice al modelo que si no
 // tiene algo concreto que aportar, calle (el camino ya existía: devolver vacío → sin_respuesta).
+// --- v72.4: las notas de voz también se transcriben en conversaciones con asesor ----------------
+// 🔴 hallazgo 18-ago (visto en el resumen): un "[audio]" llevaba 2h45 sin respuesta y NUNCA se transcribió
+// — la transcripción vive en la tarea de fondo del flujo normal, que no se alcanza estando en handoff.
+// Ni el bot lo entendía, ni el asesor veía el texto, ni el barrido podía asistir.
+caso("v72.4: en handoff la nota de voz se transcribe igual (en segundo plano)", /if \(audioUrlPendiente\) \{[\s\S]{0,400}?correrEnSegundoPlano/.test(src) && /en_handoff: true/.test(src));
+caso("v72.4: la transcripción reescribe la fila del mensaje (el asesor la lee en el hilo)", /await sb\.from\("messages"\)\.update\(\{ content: transcrito\.slice\(0, 4000\) \}\)\.eq\("id", idFila\)/.test(src));
+caso("v72.4: los guardrails corren sobre lo que DIJO, no sobre '[audio]'", /INTERRUPT_RE\.test\(rafagaAudio\) \|\| HANDOFF_RE\.test\(rafagaAudio\) \|\| esAck\(transcrito\)/.test(src));
+caso("v72.4: si el asesor está activo NO se responde (pero la transcripción queda)", /if \(!ultHumano \|\| minsSinHumano < HANDOFF_ASSIST_MIN\) return;/.test(src));
+// v72.4 — el vocabulario de acks cubre las cortesías con pronombre ("Gracias a ustedes", caso real).
+caso("v72.4: 'Gracias a ustedes' se reconoce como ack", esAck("Gracias a ustedes") && esAck("muchas gracias a todos") && !esAck("Al menos una respuesta para ver que no es una estafa"));
+
 // --- v72: aviso por correo cuando el bot NO puede atender (pago, factura, reclamo) ---------------
 // Los casos que el barrido omite a propósito son los de MAYOR valor (un comprobante de pago esperando).
 // Misma lógica, distinta acción: en vez de responder el bot, se le avisa a un asesor.

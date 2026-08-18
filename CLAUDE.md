@@ -35,6 +35,18 @@ con certeza, y calla/deriva cuando es mejor que responda un humano. Tienda:
   ESCAPADO antes de ir al correo. Maquetas versionadas en `design/` (fuentes `.dc.html` + `canvas.json`;
   el lienzo sembrado de 2 MB queda gitignored). 652 golden + 29 node. **Deploy:**
   `.\deploy.ps1 copilot-webhook watchdog`.
+- **v72.4 — dos hallazgos del PRIMER correo con formato nuevo (Isaac los leyó y los cazó).** (a) **"Gracias
+  a ustedes" no debía listarse:** el vocabulario de acks no tenía pronombres ni conectores → se agregan
+  `a|ustedes|usted|todos|toda|super` en el RPC Y en el TS (deben coincidir: el resumen LISTA y el barrido
+  ATIENDE el mismo conjunto). (b) 🔴 **HUECO REAL — las notas de voz NO se transcribían en conversaciones
+  con asesor:** la transcripción (v68.1) vive en la tarea de fondo del flujo NORMAL, que **no se alcanza
+  estando en handoff** → el mensaje quedaba como `"[audio]"` para siempre. Caso real: 2h45 esperando; ni el
+  bot lo entendía, ni el asesor veía el texto en el hilo, ni el barrido podía asistir (para él "[audio]" no
+  dice nada). Ahora en handoff se transcribe IGUAL en segundo plano, se reescribe la fila (el asesor lee lo
+  que dijo el cliente) y con el texto real se reevalúa si corresponde asistir — con los MISMOS guardrails.
+  Si el asesor está activo (<15 min) NO se responde, pero la transcripción queda y el barrido puede usarla.
+  El lock del invariante v14 (nada lento antes del ACK a WATI) se reescribió: ahora verifica por CONTEXTO
+  —cada llamada al STT vive dentro de una tarea de fondo— en vez de por orden de líneas. 657 golden.
 - **v72.3 — SEMÁFORO recalibrado (1ª corrida real).** El primer resumen con el formato nuevo salió 🔴 con
   el sistema funcionando perfecto (332 mensajes fluyendo, silencio máximo 25 min): la regla pintaba de rojo
   con UNA sola fila de `error` en el día. Un error transitorio capturado a las 9 a.m. no puede teñir la

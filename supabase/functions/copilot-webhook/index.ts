@@ -2442,7 +2442,7 @@ const SWEEP_MAX = (() => { const n = parseInt((Deno.env.get("COPILOT_SWEEP_MAX")
 // y una pregunta real sobrevive aunque empiece con cortesía ("gracias, y tienen la 664 negra?").
 // Es el mismo criterio del resumen diario (RPC resumen_diario) — conviene que ambos coincidan: el resumen
 // LISTA a quien espera, el barrido ATIENDE a ese mismo conjunto.
-const ACK_PALABRAS = "ok|okis|okay|oki|listo|dale|perfecto|excelente|bueno|buenas|buenos|dias|tardes|no|si|s[ií]|claro|correcto|entiendo|entendido|acuerdo|de|muy|amable|gracias|graciass+|muchas|mil|1000|100|much[ií]simas|thanks|thank|you|ty|reviso|revisando|revisar[eé]|ya|vale|bien|igualmente|saludos|atento|atenta|nada|voy|hacerla|hacerlo";
+const ACK_PALABRAS = "ok|okis|okay|oki|listo|dale|perfecto|excelente|bueno|buenas|buenos|dias|tardes|no|si|s[ií]|claro|correcto|entiendo|entendido|acuerdo|de|muy|amable|gracias|graciass+|muchas|mil|1000|100|much[ií]simas|thanks|thank|you|ty|reviso|revisando|revisar[eé]|ya|vale|bien|igualmente|saludos|atento|atenta|nada|voy|hacerla|hacerlo|a|ustedes|usted|todos|toda|super";
 const ACK_RE = new RegExp(`^(${ACK_PALABRAS})([\\s,\\.!¡]+(${ACK_PALABRAS}))*[\\s,\\.!👍🙏👌😊❤️😉🤝]*$`, "i");
 function esAck(t: string): boolean {
   const s = String(t ?? "").trim().replace(/[👍🙏👌😊❤️😉🤝]/g, "").trim();
@@ -2958,6 +2958,32 @@ Deno.serve(async (req) => {
       // v65 — el guard evalúa TODA la ráfaga sin responder, igual que el flujo normal (v61.3): con el
       // debounce, un "adjunto el pago"/RUC seguido de un mensaje inocente evadía la anti-interrupción justo
       // en handoff — donde un humano está coordinando ese pago.
+      // v72.4 — NOTA DE VOZ EN UNA CONVERSACIÓN CON ASESOR. La transcripción (v68.1) vive en la tarea de
+      // fondo del flujo NORMAL, y ese flujo no se alcanza cuando la conversación está en handoff: el
+      // mensaje quedaba como "[audio]" para siempre. Consecuencias reales (18-ago): ni el bot podía
+      // entenderlo, ni el asesor veía el texto en el hilo, ni el barrido podía asistir (para él "[audio]"
+      // no dice nada). Ahora se transcribe IGUAL, en segundo plano, y con el texto real se reevalúa si
+      // corresponde asistir. Si el asesor está activo (<HANDOFF_ASSIST_MIN) NO se responde —él lleva el
+      // caso—, pero la transcripción igual queda escrita: el asesor la lee y el barrido puede usarla luego.
+      if (audioUrlPendiente) {
+        const idFila = (ins.data?.[0] as any)?.id;
+        correrEnSegundoPlano((async () => {
+          try {
+            const tr = await transcribirAudio(audioUrlPendiente);
+            if (!tr) return; // transcribirAudio ya registró el motivo
+            const transcrito = `[nota de voz] ${tr.texto}`;
+            await sb.from("messages").update({ content: transcrito.slice(0, 4000) }).eq("id", idFila);
+            await log("audio_transcrito", true, { waId, modo: STT_MODE, ms: tr.ms, bytes: tr.bytes, chars: tr.texto.length, modelo: STT_MODEL, en_handoff: true });
+            // Los guardrails corren sobre lo que el cliente DIJO, igual que en el flujo normal.
+            const rafagaAudio = await textoDeRafagaSinResponder(conv.id, transcrito);
+            if (INTERRUPT_RE.test(rafagaAudio) || HANDOFF_RE.test(rafagaAudio) || esAck(transcrito)) return;
+            if (!ultHumano || minsSinHumano < HANDOFF_ASSIST_MIN) return; // asesor activo → lo toma el barrido si sigue esperando
+            if (conv.turns_today > MAX_TURNS_DIA) return;
+            await ejecutarAsistencia(conv, waId, transcrito, transcrito, userCreatedAt, ultHumano, minsSinHumano, Date.now(), false, "audio_handoff");
+          } catch (e) { await log("error", false, { waId, fase: "audio_handoff", error: String(e).slice(0, 200) }); }
+        })());
+        return Response.json({ ok: true, audio_en_handoff: true });
+      }
       const rafagaHandoff = await textoDeRafagaSinResponder(conv.id, texto);
       const interrumpe = INTERRUPT_RE.test(rafagaHandoff); // trámite/pago/fiscal en curso → nunca tocar
       const frio = !!ultHumano && minsSinHumano > HANDOFF_COLD_HOURS * 60 && !interrumpe;
