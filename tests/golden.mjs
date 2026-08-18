@@ -381,7 +381,7 @@ caso('v50: "a qué cuenta te transfiero por el tóner" NO asiste (INTERRUPT gana
 // finding 2: un reclamo/devolución/garantía (HANDOFF_RE) NO activa la asistencia (→ humano).
 caso('v50: reclamo "el toner que compré salió dañado" es HANDOFF_RE (excluido de asistencia)', HANDOFF_RE.test("el toner que compré salió dañado"));
 // findings 3/4: la asistencia NO fuerza tool → el modelo puede CALLARSE ante pago/descuento/cotización.
-caso("v50: asistencia NO fuerza tool (forceTool=false, deja elegir silencio)", /const r = await responderLLM\(history as any, false, null, false, waId, \{\}, linksTracked, true\)/.test(src));
+caso("v50: asistencia NO fuerza tool (forceTool=false, deja elegir silencio)", /const r = await responderLLM\(history as any, false, null, false, waId, \{\}, linksTracked, true,/.test(src));
 // la asistencia repone el tracking de links de buscar_producto (v29) — igual que el flujo normal.
 caso("v50: asistencia reaplica tracking (linksTracked) en ambos flujos", (src.match(/reaplicarTracking\(limpiarWhatsApp\(r\.text\), linksTracked\)/g) || []).length >= 2);
 
@@ -1251,6 +1251,12 @@ caso("v71.2: el barrido descarta acks, no exige palabras de catálogo", /if \(es
 caso("v71.2: esAck filtra por VOCABULARIO (compuestos caen solos)", [
   "gracias", "ok, gracias", "Muchas gracias", "1000 graciasss", "Vale, gracias", "No voy hacerla", "👍",
 ].every((t) => esAck(t)));
+// v71.3 — con tráfico real (18-ago) 3 de 4 asistencias del barrido fueron cortesía vacía ("quedamos
+// atentos") a clientes cuyo último mensaje era de HACE HORAS. Ahora el barrido le dice al modelo que si no
+// tiene algo concreto que aportar, calle (el camino ya existía: devolver vacío → sin_respuesta).
+caso("v71.3: el barrido pide callar si no hay nada concreto que aportar", /NO respondas NADA\. Devuelve una respuesta vacía/.test(src) && /RESPUESTA TARDÍA/.test(src));
+caso("v71.3: el sufijo SOLO se aplica al barrido, no a la asistencia reactiva", /origen === "barrido" \? SWEEP_SUFFIX : ""/.test(src));
+caso("v71.3: advierte que pasó tiempo (no saludar como si fuera de este instante)", /no saludes como si la conversación fuera de este instante/.test(src));
 caso("v71.2: una consulta real NO se descarta aunque empiece con cortesía", [
   "disculpa es el color amarillo me cotizo color magenta",
   "Tienes la Epson L15150",

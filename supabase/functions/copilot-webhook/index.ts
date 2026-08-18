@@ -1884,7 +1884,7 @@ async function estadoPedido(waId: string = ""): Promise<string> {
   }
 }
 
-async function responderLLM(history: { role: string; content: string; model?: string | null; created_at?: string | null }[], forceTool: boolean, imagenes?: { b64: string; mediaType: string }[] | null, imagenFallo?: boolean, waId: string = "", atributos: Record<string, string> = {}, linksTracked: Record<string, string> = {}, modoAsistencia: boolean = false): Promise<{ text: string | null; toolCalls: unknown[]; tokensIn: number; tokensOut: number; cacheRead: number; cacheWrite: number; agotado?: boolean }> {
+async function responderLLM(history: { role: string; content: string; model?: string | null; created_at?: string | null }[], forceTool: boolean, imagenes?: { b64: string; mediaType: string }[] | null, imagenFallo?: boolean, waId: string = "", atributos: Record<string, string> = {}, linksTracked: Record<string, string> = {}, modoAsistencia: boolean = false, sufijoExtra: string = ""): Promise<{ text: string | null; toolCalls: unknown[]; tokensIn: number; tokensOut: number; cacheRead: number; cacheWrite: number; agotado?: boolean }> {
   if (!anthropic) return { text: null, toolCalls: [], tokensIn: 0, tokensOut: 0, cacheRead: 0, cacheWrite: 0 };
   // La API exige que el primer mensaje sea del usuario: descarta "assistant" al inicio
   // (puede pasar si un asesor escribió primero).
@@ -1933,7 +1933,7 @@ async function responderLLM(history: { role: string; content: string; model?: st
   // invalidar el caché. Render order de la API: tools → system → messages; con el breakpoint al
   // final de SYSTEM_PROMPT, tools + SYSTEM_PROMPT quedan cacheados (lectura 0.1×). Resultado: ~misma
   // salida, input mucho más barato en turnos con cache-hit (verificar con usage.cache_read_input_tokens).
-  const systemDinamico = ctx + ctxAhora + ctxHorario + (modoAsistencia ? ASSIST_SUFFIX : ctxDatos);
+  const systemDinamico = ctx + ctxAhora + ctxHorario + (modoAsistencia ? ASSIST_SUFFIX + sufijoExtra : ctxDatos);
   const system: Anthropic.TextBlockParam[] = [
     { type: "text", text: SYSTEM_PROMPT, cache_control: { type: "ephemeral" } },
     { type: "text", text: systemDinamico },
@@ -2385,7 +2385,7 @@ async function ejecutarAsistencia(
           // ASSIST_SUFFIX ("todo debe salir de una herramienta, nunca de memoria"). modoAsistencia=true acota
           // las tools. linksTracked + reaplicarTracking reponen el tracking de buscar_producto (v29).
           const linksTracked: Record<string, string> = {};
-          const r = await responderLLM(history as any, false, null, false, waId, {}, linksTracked, true);
+          const r = await responderLLM(history as any, false, null, false, waId, {}, linksTracked, true, origen === "barrido" ? SWEEP_SUFFIX : "");
           let salida = r.text ? reaplicarTracking(limpiarWhatsApp(r.text), linksTracked) : null;
           // v66 — en ASISTENCIA no hay burbujas (la regla lo prohíbe, pero si el modelo igual marcara
           // cortes, el marcador se re-une aquí: JAMÁS debe llegar [[---]] al cliente).
@@ -2448,6 +2448,17 @@ function esAck(t: string): boolean {
   const s = String(t ?? "").trim().replace(/[👍🙏👌😊❤️😉🤝]/g, "").trim();
   return !s || ACK_RE.test(s);
 }
+
+// v71.3 — instrucción EXTRA solo para la asistencia disparada por el BARRIDO. Con tráfico real (18-ago)
+// 3 de 4 asistencias del barrido fueron cortesía vacía ("quedamos atentos por aquí") a clientes cuyo
+// último mensaje era de hace HORAS — no aportan nada y suenan a robot. El camino para callar ya existe
+// (devolver vacío → `sin_respuesta`); solo faltaba decirle al modelo que aquí ESO es lo correcto.
+const SWEEP_SUFFIX = `
+
+RESPUESTA TARDÍA (esta conversación lleva rato sin atención y estás retomándola tú, no el cliente escribió recién)
+- Responde SOLO si tienes algo CONCRETO y útil que aportar AHORA: un precio con su ITBMS, disponibilidad, un dato de la tienda, el estado de un pedido o un punto de retiro — siempre traído de una herramienta.
+- Si el último mensaje del cliente era un agradecimiento, una confirmación, un "quedo pendiente" o cualquier cosa que ya no requiere acción, NO respondas NADA. Devuelve una respuesta vacía. Escribir "quedamos atentos" o "cualquier cosa aquí estoy" horas después no aporta y molesta.
+- Recuerda que pasó tiempo: no saludes como si la conversación fuera de este instante ni des por hecho que el cliente sigue esperando en el chat.`;
 
 interface PendienteAsistencia {
   conversation_id: string; wa_id: string; sender_name: string | null; turns_today: number;
