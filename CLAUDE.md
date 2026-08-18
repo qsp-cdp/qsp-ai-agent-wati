@@ -35,6 +35,13 @@ con certeza, y calla/deriva cuando es mejor que responda un humano. Tienda:
   ESCAPADO antes de ir al correo. Maquetas versionadas en `design/` (fuentes `.dc.html` + `canvas.json`;
   el lienzo sembrado de 2 MB queda gitignored). 652 golden + 29 node. **Deploy:**
   `.\deploy.ps1 copilot-webhook watchdog`.
+- **v72.3 — SEMÁFORO recalibrado (1ª corrida real).** El primer resumen con el formato nuevo salió 🔴 con
+  el sistema funcionando perfecto (332 mensajes fluyendo, silencio máximo 25 min): la regla pintaba de rojo
+  con UNA sola fila de `error` en el día. Un error transitorio capturado a las 9 a.m. no puede teñir la
+  tarde — si el rojo se vuelve común deja de significar algo. Ahora **🔴 = roto AHORA o cliente sin su
+  mensaje**: healthcheck caído · silencio ≥ umbral · `envio_fallido` > 0 · `errores` ≥ 5. **🟡** = clientes
+  esperando, o incidencias sueltas (1-4 errores, respaldo, STT, MCP). **🟢** = nada de lo anterior. El
+  `motivo` del color se guarda en job_log (`semaforo_motivo`) para auditar por qué salió cada uno.
 - **EN EL REPO, DESPLEGAR: v72 — AVISO DE DESATENCIÓN por correo a los asesores.** Pedido de Isaac tras ver
   el barrido en vivo: los casos que el barrido OMITE a propósito (comprobante de pago, RUC/factura,
   intención de pagar, reclamos) son los de MAYOR valor —el bot no debe tocarlos, pero hasta hoy quedaban

@@ -142,13 +142,23 @@ const PIE_VIGILANTE = "Si algún día dejan de llegar estos correos, el vigilant
 //   🔴 algo roto (silencio anómalo del sistema, envíos fallidos, errores)
 //   🟡 hay clientes esperando respuesta
 //   🟢 todo atendido y funcionando
-function semaforo(r: ResumenDiario, minutosSinMensajes: number, saludOk: boolean): { icono: string; estado: string } {
+function semaforo(r: ResumenDiario, minutosSinMensajes: number, saludOk: boolean): { icono: string; estado: string; motivo: string } {
   const inc = r.incidencias ?? {};
-  const roto = !saludOk || minutosSinMensajes >= UMBRAL_MIN
-    || Number(inc.envio_fallido ?? 0) > 0 || Number(inc.errores ?? 0) > 0;
-  if (roto) return { icono: "🔴", estado: "revisar el sistema" };
-  if ((r.sin_responder_n ?? 0) > 0) return { icono: "🟡", estado: `${r.sin_responder_n} esperando` };
-  return { icono: "🟢", estado: "todo al día" };
+  const n = (k: string) => Number(inc[k] ?? 0);
+  // 🔴 = "abra esto y avise a Gerencia". Solo cosas que están rotas AHORA o que dejaron a un cliente sin
+  // su mensaje. Un error transitorio capturado a las 9 a.m. NO pinta de rojo el resto del día: si el rojo
+  // se vuelve común deja de significar algo (medido el 18-ago: una sola fila de `error` lo disparaba con
+  // el sistema funcionando perfecto).
+  if (!saludOk) return { icono: "🔴", estado: "copiloto caído", motivo: "healthcheck" };
+  if (minutosSinMensajes >= UMBRAL_MIN) return { icono: "🔴", estado: "sin mensajes", motivo: "silencio" };
+  if (n("envio_fallido") > 0) return { icono: "🔴", estado: "envíos fallidos", motivo: "envio_fallido" };
+  if (n("errores") >= 5) return { icono: "🔴", estado: "errores repetidos", motivo: "errores" };
+  // 🟡 = hay trabajo pendiente o algo que vigilar, pero nada roto.
+  if ((r.sin_responder_n ?? 0) > 0) return { icono: "🟡", estado: `${r.sin_responder_n} esperando`, motivo: "sin_responder" };
+  if (n("errores") > 0 || n("respuesta_respaldo") > 0 || n("audio_stt_fallo") > 0 || n("busqueda_mcp_fallo") > 0) {
+    return { icono: "🟡", estado: "incidencias del día", motivo: "incidencias" };
+  }
+  return { icono: "🟢", estado: "todo al día", motivo: "ok" };
 }
 
 function htmlResumen(r: ResumenDiario, salud: string, minutosSinMensajes: number, urgentes: Set<string>, franja: string): string {
@@ -225,7 +235,7 @@ async function correrResumen(): Promise<Record<string, unknown>> {
   const sem = semaforo(r, minutos, !salud.includes("NO RESPONDE") && !salud.includes("⚠️"));
   const c = r.clientes ?? { escribieron: 0, atendidos: 0 };
   const asunto = `${sem.icono} Copiloto — ${c.atendidos}/${c.escribieron} atendidos · ${sem.estado}`;
-  const resumenLog = { mode: MODE, semaforo: sem.icono, clientes: c, mensajes: r.mensajes, sin_responder_n: r.sin_responder_n, urgentes: urgentes.size, silencio_max_min: r.silencio_max_min };
+  const resumenLog = { mode: MODE, semaforo: sem.icono, semaforo_motivo: sem.motivo, clientes: c, mensajes: r.mensajes, sin_responder_n: r.sin_responder_n, urgentes: urgentes.size, silencio_max_min: r.silencio_max_min };
   if (MODE !== "live") {
     await logJob(FN, "watchdog_resumen", true, { ...resumenLog, shadow: true, asunto });
     return { ...resumenLog, shadow: true, asunto };
