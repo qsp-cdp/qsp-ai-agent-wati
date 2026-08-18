@@ -29,7 +29,7 @@ con certeza, y calla/deriva cuando es mejor que responda un humano. Tienda:
   con teléfono, nombre, minutos de espera, qué escribieron y por qué el bot no puede ayudar. Reusa los
   secretos del watchdog (`RESEND_API_KEY`/`ALERTA_EMAILS`/`ALERTA_FROM`) con un envío propio inline —
   copilot-webhook NO importa `_shared` a propósito (para poder desplegarse suelto) y eso se conserva.
-  **Anti-spam:** un aviso por cliente cada `COPILOT_AVISO_REPETIR_MIN` (default 240) + UN solo correo por
+  **Anti-spam:** un aviso por cliente cada `COPILOT_AVISO_REPETIR_MIN` (default 120 — 2 h, decisión de Isaac) + UN solo correo por
   corrida con todos los casos. En `COPILOT_SWEEP=shadow` registra `desatencion_correo` sin enviar.
   649 golden. **Deploy:** `.\deploy.ps1 copilot-webhook` (sin migración).
 - **🚀 v71 EN VIVO Y VALIDADO (18-ago) + v71.2/v71.3 de ajuste.** El barrido salió a producción y el mismo

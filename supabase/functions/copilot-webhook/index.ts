@@ -2468,8 +2468,9 @@ RESPUESTA TARDÍA (esta conversación lleva rato sin atención y estás retomán
 // Misma lógica del barrido, distinta acción: en vez de que responda el bot, se avisa al humano.
 //
 // Reusa los secretos del watchdog (RESEND_API_KEY / ALERTA_EMAILS / ALERTA_FROM). Anti-spam: un aviso por
-// cliente cada COPILOT_AVISO_REPETIR_MIN (default 4 h), y UN solo correo por corrida con todos los casos.
-const AVISO_REPETIR_MIN = (() => { const n = parseInt((Deno.env.get("COPILOT_AVISO_REPETIR_MIN") ?? "").trim(), 10); return Number.isFinite(n) && n >= 30 ? Math.min(n, 1440) : 240; })();
+// cliente cada COPILOT_AVISO_REPETIR_MIN (default 2 h — decisión de Isaac: un pago esperando merece un
+// segundo empujón dentro de la misma mañana), y UN solo correo por corrida con todos los casos.
+const AVISO_REPETIR_MIN = (() => { const n = parseInt((Deno.env.get("COPILOT_AVISO_REPETIR_MIN") ?? "").trim(), 10); return Number.isFinite(n) && n >= 30 ? Math.min(n, 1440) : 120; })();
 
 async function enviarCorreoResend(asunto: string, html: string): Promise<{ ok: boolean; error?: string }> {
   const key = (Deno.env.get("RESEND_API_KEY") ?? "").trim();
