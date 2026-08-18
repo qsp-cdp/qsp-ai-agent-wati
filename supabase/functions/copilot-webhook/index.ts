@@ -2503,22 +2503,49 @@ async function avisarDesatencion(casos: CasoDesatendido[]): Promise<Record<strin
     if (!data || !data.length) nuevos.push(c);
   }
   if (!nuevos.length) return { avisados: 0, motivo: "ya_avisados" };
-  const etiqueta = (m: string) => m === "interrupcion" ? "💰 pago o datos de factura" : "⚠️ reclamo o pide asesor";
-  const filas = nuevos.map((c) => `<tr>
-      <td style="padding:6px 12px 6px 0;white-space:nowrap"><strong>${c.wa_id}</strong>${c.nombre ? `<br><span style="color:#666">${c.nombre}</span>` : ""}</td>
-      <td style="padding:6px 12px 6px 0;white-space:nowrap">${c.mins_espera} min</td>
-      <td style="padding:6px 12px 6px 0;white-space:nowrap">${etiqueta(c.motivo)}</td>
-      <td style="padding:6px 0;color:#444">${(c.texto ?? "").replace(/[<>]/g, "").slice(0, 120)}</td>
-    </tr>`).join("");
-  const asunto = nuevos.length === 1
-    ? `⚠️ Cliente esperando con pago o reclamo sin atender (${nuevos[0].mins_espera} min)`
-    : `⚠️ ${nuevos.length} clientes esperando con pago o reclamo sin atender`;
-  const html = `<h2 style="margin:0 0 10px">Clientes que necesitan un asesor</h2>
-    <p>Escribieron y llevan rato sin respuesta. <strong>El copiloto NO puede ayudarlos</strong> — son temas de
-       pago, facturación o reclamo, que por diseño maneja siempre una persona.</p>
-    <table style="border-collapse:collapse;font-size:13px">${filas}</table>
-    <p style="color:#666;font-size:12px">Búsquelos por el número en el inbox de WATI. Este aviso no se repite
-       para el mismo cliente antes de ${Math.round(AVISO_REPETIR_MIN / 60)} h.</p>`;
+  // HTML apto para correo: tablas, estilos EN LÍNEA y tipografías del sistema (Gmail y Outlook descartan
+  // flexbox, grid y hojas de estilo). El color va en BORDES y fondos claros — el modo oscuro de Gmail
+  // invierte los fondos y una banda de color sólido quedaría ilegible. El teléfono va GRANDE y en su
+  // propia línea: se toca para copiarlo y buscar al cliente en WATI.
+  const FUENTE = "-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif";
+  const TINTA = "#15212B", SUAVE = "#55636F", TENUE = "#7A8894", LINEA = "#D9E1E7", HILO = "#EDF1F4";
+  const AMBAR = "#96690A", AMBAR_BG = "#FCF3E0", AMBAR_LINEA = "#EBD9AF";
+  const esc = (t: string) => String(t ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+  const espera = (m: number) => m >= 60 ? `${Math.floor(m / 60)}\u00a0h ${String(m % 60).padStart(2, "0")}\u00a0m` : `${m}\u00a0min`;
+  const motivoTexto = (m: string) => m === "interrupcion" ? "Pago o datos de factura" : "Reclamo o pide un asesor";
+
+  const tarjetas = nuevos.map((c) => `<table role="presentation" cellpadding="0" cellspacing="0" border="0" style="width:100%;border-collapse:collapse;background:${AMBAR_BG};border:1px solid ${AMBAR_LINEA};margin-bottom:12px"><tr><td style="padding:16px 18px">
+      <div style="font-size:21px;font-weight:700;color:${TINTA};letter-spacing:-.01em;line-height:1.2">${esc(c.wa_id)}</div>
+      ${c.nombre ? `<div style="font-size:14px;color:${SUAVE};margin-top:3px">${esc(c.nombre)}</div>` : ""}
+      <div style="margin-top:12px;font-size:13px;color:${AMBAR};font-weight:700;letter-spacing:.02em">${motivoTexto(c.motivo)} · esperando ${espera(c.mins_espera)}</div>
+      <div style="margin-top:10px;padding-top:12px;border-top:1px solid ${AMBAR_LINEA};font-size:14.5px;line-height:1.5;color:${TINTA}">«${esc(c.texto).slice(0, 160)}»</div>
+    </td></tr></table>`).join("");
+
+  const plural = nuevos.length === 1;
+  const asunto = plural
+    ? `⚠️ Cliente esperando con pago o reclamo (${espera(nuevos[0].mins_espera).replace(/\u00a0/g, " ")})`
+    : `⚠️ ${nuevos.length} clientes esperando con pago o reclamo`;
+  const html = `<div style="margin:0;padding:24px 12px;background:#EDF1F4;font-family:${FUENTE}">
+  <table role="presentation" cellpadding="0" cellspacing="0" border="0" align="center" style="width:540px;max-width:100%;border-collapse:collapse;background:#FFFFFF;border:1px solid ${LINEA};border-top:5px solid ${AMBAR}">
+    <tr><td style="padding:26px 26px 6px">
+      <div style="font-size:12px;letter-spacing:.1em;text-transform:uppercase;color:${AMBAR};font-weight:700;margin-bottom:10px">Necesitan un asesor</div>
+      <div style="font-size:27px;line-height:1.2;font-weight:700;color:${TINTA};letter-spacing:-.02em">${plural ? "1 cliente esperando" : `${nuevos.length} clientes esperando`}</div>
+      <div style="font-size:15px;line-height:1.55;color:${SUAVE};margin-top:10px">Escribieron sobre <strong>pago, factura o un reclamo</strong>. El copiloto no atiende esos temas por diseño: hace falta una persona.</div>
+    </td></tr>
+    <tr><td style="padding:20px 26px 0">${tarjetas}</td></tr>
+    <tr><td style="padding:8px 26px 0">
+      <div style="background:#F4F7F8;border:1px solid ${LINEA};padding:14px 16px;font-size:14.5px;line-height:1.55;color:${TINTA}">
+        Búsquelos por el número en el inbox de WATI. Son los casos de mayor valor: hay una venta a punto de cerrarse.
+      </div>
+    </td></tr>
+    <tr><td style="padding:22px 26px 26px">
+      <div style="border-top:1px solid ${HILO};padding-top:14px;font-size:12.5px;line-height:1.5;color:${TENUE}">
+        Vigilante del copiloto · no se repite el aviso del mismo cliente antes de ${Math.round(AVISO_REPETIR_MIN / 60)} horas.<br>
+        Si algún día dejan de llegar estos correos, el vigilante está caído.
+      </div>
+    </td></tr>
+  </table>
+</div>`;
 
   if (SWEEP_MODE !== "live") {
     await log("desatencion_correo", true, { shadow: true, casos: nuevos.length, asunto });

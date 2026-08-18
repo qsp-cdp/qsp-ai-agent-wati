@@ -1263,7 +1263,12 @@ caso("v72: el bot NO responde esos casos (el guardrail sigue intacto)", (() => {
   return /continue; \}/.test(src.slice(i, i + 400)); // sigue saltándose la asistencia
 })());
 caso("v72: anti-spam — un aviso por cliente cada COPILOT_AVISO_REPETIR_MIN", /COPILOT_AVISO_REPETIR_MIN/.test(src) && /\.eq\("action", "desatencion_avisada"\)\s*\n?\s*\.eq\("detail->>waId", c\.wa_id\)/.test(src));
-caso("v72: UN solo correo por corrida con todos los casos", /const asunto = nuevos\.length === 1/.test(src) && /\$\{nuevos\.length\} clientes esperando/.test(src));
+caso("v72: UN solo correo por corrida con todos los casos", /const plural = nuevos\.length === 1;/.test(src) && /\$\{nuevos\.length\} clientes esperando con pago o reclamo/.test(src));
+// v72.2 — plantilla aprobada: tarjeta por cliente con el teléfono grande (se toca para copiarlo), color
+// en bordes y fondos claros (el modo oscuro de Gmail invierte los fondos), tablas y estilos en línea.
+caso("v72.2: correo con tablas y estilos en línea (apto para Gmail/Outlook)", /role="presentation" cellpadding="0" cellspacing="0" border="0"/.test(src) && !/display:\s*flex/.test(src.slice(src.indexOf("async function avisarDesatencion"), src.indexOf("interface PendienteAsistencia"))));
+caso("v72.2: el teléfono va grande y en su propia línea", /font-size:21px;font-weight:700;color:\$\{TINTA\}/.test(src));
+caso("v72.2: el texto del cliente se escapa antes de ir al correo", /const esc = \(t: string\)/.test(src) && /«\$\{esc\(c\.texto\)/.test(src));
 caso("v72: en shadow registra pero NO manda correo", /if \(SWEEP_MODE !== "live"\) \{\s*\n\s*await log\("desatencion_correo", true, \{ shadow: true/.test(src));
 caso("v72: la API key de Resend se enmascara en los errores", /replaceAll\(key, "\*\*\*"\)/.test(src));
 caso("v72: reusa los secretos del watchdog (no inventa otros)", /RESEND_API_KEY/.test(src) && /ALERTA_EMAILS/.test(src) && /ALERTA_FROM/.test(src));

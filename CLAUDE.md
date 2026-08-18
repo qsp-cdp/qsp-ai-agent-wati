@@ -21,6 +21,20 @@ con certeza, y calla/deriva cuando es mejor que responda un humano. Tienda:
 
 ## Estado actual (2026-08-13)
 ## Estado actual (2026-08-18)
+- **EN EL REPO, DESPLEGAR: v72.2 — plantillas de correo rediseñadas (maquetas aprobadas por Isaac).** Los
+  tres correos (sistema caído, desatención, resumen) salen ahora con una plantilla común en
+  `watchdog/index.ts` (`marco`/`rotulo`/`filaDato`) y su gemela inline en el copiloto para el aviso de
+  desatención. **Restricciones que mandan sobre el diseño y NO deben deshacerse:** (a) HTML apto para
+  correo — tablas, estilos EN LÍNEA, tipografías del sistema, 540 px de ancho útil; Gmail y Outlook
+  descartan flexbox, grid, hojas de estilo y tipografías externas; (b) **el color vive en BORDES y fondos
+  claros, nunca en bandas oscuras** — el modo oscuro de Gmail invierte los fondos y un encabezado sólido
+  queda ilegible; (c) **el teléfono va GRANDE y en su propia línea** (se toca para copiarlo y buscar al
+  cliente en WATI; dentro de una tabla de 5 columnas no funciona en el celular) → tarjeta por cliente, no
+  tabla; (d) el resumen abre con **lo accionable** (quién espera, 💰 primero) y la salud del sistema va
+  ABAJO — un correo que arranca con estadísticas entrena al equipo a ignorarlo. Texto del cliente
+  ESCAPADO antes de ir al correo. Maquetas versionadas en `design/` (fuentes `.dc.html` + `canvas.json`;
+  el lienzo sembrado de 2 MB queda gitignored). 652 golden + 29 node. **Deploy:**
+  `.\deploy.ps1 copilot-webhook watchdog`.
 - **EN EL REPO, DESPLEGAR: v72 — AVISO DE DESATENCIÓN por correo a los asesores.** Pedido de Isaac tras ver
   el barrido en vivo: los casos que el barrido OMITE a propósito (comprobante de pago, RUC/factura,
   intención de pagar, reclamos) son los de MAYOR valor —el bot no debe tocarlos, pero hasta hoy quedaban

@@ -100,6 +100,44 @@ async function estadoCopiloto(): Promise<string> {
 // todo, quién quedó SIN respuesta — dinero sobre la mesa).
 const ESPERA_SIN_RESPONDER = intEnv("WATCHDOG_ESPERA_SIN_RESPONDER", 45, 5, 480);
 
+// --- PLANTILLAS DE CORREO ------------------------------------------------------------------------
+// HTML apto para correo: tablas, estilos EN LÍNEA y tipografías del sistema — Gmail y Outlook descartan
+// flexbox, grid, hojas de estilo y tipografías externas. Ancho útil 540 px (se lee en el teléfono).
+// El color vive en BORDES y fondos claros, nunca en bandas oscuras: el modo oscuro de Gmail invierte los
+// fondos sin avisar y un encabezado de color sólido queda ilegible.
+const FUENTE = "-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif";
+const TINTA = "#15212B", SUAVE = "#55636F", TENUE = "#7A8894", LINEA = "#D9E1E7", HILO = "#EDF1F4";
+const ROJO = "#B23A2B", ROJO_BG = "#FBEDEA", AMBAR = "#96690A", AMBAR_BG = "#FCF3E0", AMBAR_LINEA = "#EBD9AF", VERDE = "#146B52";
+
+function marco(colorFranja: string, cuerpo: string, pie: string): string {
+  return `<div style="margin:0;padding:24px 12px;background:#EDF1F4;font-family:${FUENTE}">
+  <table role="presentation" cellpadding="0" cellspacing="0" border="0" align="center" style="width:540px;max-width:100%;border-collapse:collapse;background:#FFFFFF;border:1px solid ${LINEA};border-top:5px solid ${colorFranja}">
+    ${cuerpo}
+    <tr><td style="padding:22px 26px 26px">
+      <div style="border-top:1px solid ${HILO};padding-top:14px;font-size:12.5px;line-height:1.5;color:${TENUE}">${pie}</div>
+    </td></tr>
+  </table>
+</div>`;
+}
+
+function rotulo(texto: string, color = SUAVE): string {
+  return `<div style="font-size:12px;letter-spacing:.1em;text-transform:uppercase;color:${color};font-weight:700;margin-bottom:10px">${texto}</div>`;
+}
+
+// Fila de dato: etiqueta a la izquierda, valor a la derecha.
+function filaDato(etiqueta: string, valor: string, color = TINTA, ultima = false): string {
+  const borde = ultima ? "" : `border-bottom:1px solid ${HILO};`;
+  return `<tr>
+    <td style="padding:10px 0;${borde}color:${SUAVE};width:52%">${etiqueta}</td>
+    <td style="padding:10px 0;${borde}color:${color};font-weight:600;text-align:right">${valor}</td></tr>`;
+}
+
+function escapar(t: string): string {
+  return String(t ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+}
+
+const PIE_VIGILANTE = "Si algún día dejan de llegar estos correos, el vigilante está caído.";
+
 // v72.1 — SEMÁFORO. El asunto tiene que decir en un vistazo si hay que abrir el correo o no:
 //   🔴 algo roto (silencio anómalo del sistema, envíos fallidos, errores)
 //   🟡 hay clientes esperando respuesta
@@ -113,42 +151,61 @@ function semaforo(r: ResumenDiario, minutosSinMensajes: number, saludOk: boolean
   return { icono: "🟢", estado: "todo al día" };
 }
 
-function htmlResumen(r: ResumenDiario, salud: string, minutosSinMensajes: number, urgentes: Set<string>): string {
+function htmlResumen(r: ResumenDiario, salud: string, minutosSinMensajes: number, urgentes: Set<string>, franja: string): string {
   const c = r.clientes ?? { escribieron: 0, atendidos: 0, sin_atencion: 0 };
   const inc = r.incidencias ?? {};
   const incidencias = Object.entries(inc).filter(([, v]) => Number(v) > 0)
-    .map(([k, v]) => `${k.replaceAll("_", " ")}: <strong>${v}</strong>`).join(" · ") || "ninguna";
-  // Los marcados 💰 son los que el copiloto NO puede atender (pago, factura, reclamo): necesitan a una
-  // persona sí o sí. Salen primero porque son los de mayor valor.
+    .map(([k, v]) => `${k.replaceAll("_", " ")}: ${v}`).join(" · ");
+  const saludOk = !salud.includes("NO RESPONDE") && !salud.includes("⚠️");
+  const pa = ahoraPanama();
+  const hh = pa.getHours() > 12 ? `${pa.getHours() - 12}:${String(pa.getMinutes()).padStart(2, "0")} p.m.` : `${pa.getHours()}:${String(pa.getMinutes()).padStart(2, "0")} a.m.`;
+
+  // Los 💰 (pago/factura/reclamo) van PRIMERO: el copiloto no puede atenderlos y son los de mayor valor.
   const lista = [...(r.sin_responder ?? [])].sort((a, b) =>
     (urgentes.has(b.wa_id) ? 1 : 0) - (urgentes.has(a.wa_id) ? 1 : 0) || b.espera_min - a.espera_min);
-  const filas = lista.map((s) => {
+  const tarjetas = lista.map((s) => {
     const urge = urgentes.has(s.wa_id);
-    return `<tr style="${urge ? "background:#fff4f4" : ""}">
-      <td style="padding:5px 10px 5px 0;white-space:nowrap">${urge ? "💰 " : ""}${s.hora}</td>
-      <td style="padding:5px 10px 5px 0;white-space:nowrap"><strong>${s.wa_id}</strong>${s.nombre ? `<br><span style="color:#666">${s.nombre}</span>` : ""}</td>
-      <td style="padding:5px 10px 5px 0;white-space:nowrap">${s.espera_min} min</td>
-      <td style="padding:5px 0;color:#444">${(s.texto ?? "").replace(/[<>]/g, "")}</td></tr>`;
+    const fondo = urge ? `background:${AMBAR_BG};border:1px solid ${AMBAR_LINEA}` : `border:1px solid ${LINEA}`;
+    const cinta = urge ? `<div style="font-size:12px;font-weight:700;color:${AMBAR};letter-spacing:.06em;text-transform:uppercase;margin-bottom:7px">💰 Pago o factura · el bot no puede</div>` : "";
+    return `<table role="presentation" cellpadding="0" cellspacing="0" border="0" style="width:100%;border-collapse:collapse;${fondo};margin-bottom:10px"><tr><td style="padding:14px 16px">
+      ${cinta}
+      <div style="font-size:18px;font-weight:700;color:${TINTA}">${escapar(s.wa_id)}${s.nombre ? ` <span style="font-size:14px;font-weight:400;color:${SUAVE}">· ${escapar(s.nombre)}</span>` : ""}</div>
+      <div style="font-size:14.5px;line-height:1.5;color:${TINTA};margin-top:7px">«${escapar(s.texto)}»</div>
+      <div style="font-size:13px;color:${urge ? AMBAR : SUAVE};font-weight:600;margin-top:7px">${escapar(s.hora)} · esperando ${fmtMin(s.espera_min)}</div>
+    </td></tr></table>`;
   }).join("");
-  const bloqueSin = r.sin_responder_n > 0
-    ? `<h3 style="margin:18px 0 6px">⚠️ Esperando respuesta (${r.sin_responder_n})</h3>
-       <table style="border-collapse:collapse;font-size:13px">${filas}</table>
-       <p style="color:#666;font-size:12px">Escribieron y no contestó nadie —ni el bot ni un asesor— hace
-          más de ${ESPERA_SIN_RESPONDER} min. Los marcados 💰 son de <strong>pago, factura o reclamo</strong>:
-          el copiloto no puede atenderlos por diseño, necesitan a una persona.</p>`
-    : `<p style="font-size:15px">✅ <strong>Nadie está esperando respuesta.</strong></p>`;
-  return `<h2 style="margin:0 0 10px">Copiloto — cómo va el día</h2>
-    <p style="font-size:15px"><strong>Clientes atendidos: ${c.atendidos} de ${c.escribieron}</strong> que han escrito hoy
-       ${c.sin_atencion > 0 ? `· <strong style="color:#b00">${c.sin_atencion} sin atención</strong>` : ""}</p>
-    ${bloqueSin}
-    <h3 style="margin:18px 0 6px">Salud del sistema</h3>
-    <p>Mensajes hoy: ${r.mensajes?.de_clientes ?? 0} de clientes · ${(r.mensajes?.del_bot ?? 0) + (r.mensajes?.de_asesores ?? 0)} de respuesta
-       (${r.mensajes?.del_bot ?? 0} del bot, ${r.mensajes?.de_asesores ?? 0} de asesores)<br>
-       Último mensaje: hace ${minutosSinMensajes} min · Silencio máximo del día: ${r.silencio_max_min} min<br>
-       Incidencias: ${incidencias}<br>
-       Copiloto: ${salud}</p>
-    <p style="color:#666;font-size:12px">Watchdog QSP · llega 3 veces al día (11:00, 2:30pm y 4:00pm) en días
-       hábiles: si algún día NO llega, el vigilante está caído. Las caídas del sistema se avisan aparte y al instante.</p>`;
+
+  const bloqueEsperando = r.sin_responder_n > 0
+    ? `<tr><td style="padding:22px 26px 0">${rotulo("Esperando respuesta")}${tarjetas}</td></tr>`
+    : `<tr><td style="padding:22px 26px 0"><div style="background:#E4F3EC;border:1px solid #BFE0D0;padding:14px 16px;font-size:15px;color:${TINTA}">✅ <strong>Nadie está esperando respuesta.</strong></div></td></tr>`;
+
+  const cuerpo = `<tr><td style="padding:26px 26px 4px">
+      ${rotulo(`Corte de las ${hh} · ${fmtPanama(new Date().toISOString())}`, TENUE)}
+      <table role="presentation" cellpadding="0" cellspacing="0" border="0" style="width:100%;border-collapse:collapse"><tr>
+        <td style="vertical-align:bottom">
+          <div style="font-size:34px;line-height:1;font-weight:700;color:${TINTA};letter-spacing:-.025em">${c.atendidos}<span style="color:${TENUE};font-weight:600"> / ${c.escribieron}</span></div>
+          <div style="font-size:14px;color:${SUAVE};margin-top:6px">clientes atendidos hoy</div>
+        </td>
+        <td style="vertical-align:bottom;text-align:right">
+          <div style="font-size:34px;line-height:1;font-weight:700;color:${r.sin_responder_n > 0 ? AMBAR : VERDE};letter-spacing:-.025em">${r.sin_responder_n}</div>
+          <div style="font-size:14px;color:${SUAVE};margin-top:6px">esperando respuesta</div>
+        </td>
+      </tr></table>
+    </td></tr>
+    ${bloqueEsperando}
+    <tr><td style="padding:26px 26px 0">
+      ${rotulo("Salud del sistema")}
+      <table role="presentation" cellpadding="0" cellspacing="0" border="0" style="width:100%;border-collapse:collapse;font-size:14.5px">
+        ${filaDato("Mensajes de clientes", String(r.mensajes?.de_clientes ?? 0))}
+        ${filaDato(`Respuestas <span style="color:${TENUE}">(bot / asesores)</span>`, `${r.mensajes?.del_bot ?? 0} / ${r.mensajes?.de_asesores ?? 0}`)}
+        ${filaDato("Silencio más largo del día", `${r.silencio_max_min} min`)}
+        ${filaDato("Incidencias", incidencias || "ninguna", incidencias ? AMBAR : VERDE)}
+        ${filaDato("Copiloto", saludOk ? "Funcionando" : escapar(salud), saludOk ? VERDE : ROJO, true)}
+      </table>
+    </td></tr>`;
+
+  return marco(franja, cuerpo,
+    `Vigilante del copiloto · llega a las 11:00, 2:30 p.m. y 4:00 p.m. en días hábiles.<br>${PIE_VIGILANTE}`);
 }
 
 async function correrResumen(): Promise<Record<string, unknown>> {
@@ -173,7 +230,8 @@ async function correrResumen(): Promise<Record<string, unknown>> {
     await logJob(FN, "watchdog_resumen", true, { ...resumenLog, shadow: true, asunto });
     return { ...resumenLog, shadow: true, asunto };
   }
-  const envio = await enviarCorreo(asunto, htmlResumen(r, salud, minutos, urgentes), DESTINATARIOS);
+  const franja = sem.icono === "🔴" ? ROJO : sem.icono === "🟡" ? AMBAR : VERDE;
+  const envio = await enviarCorreo(asunto, htmlResumen(r, salud, minutos, urgentes, franja), DESTINATARIOS);
   await logJob(FN, "watchdog_resumen", envio.ok, { ...resumenLog, asunto, email_id: envio.id ?? null, error: envio.error ?? null });
   return { ...resumenLog, enviado: envio.ok, error: envio.error ?? null };
 }
@@ -210,19 +268,54 @@ async function correr(force: boolean): Promise<Record<string, unknown>> {
   const asunto = esAlerta
     ? `🚨 Copiloto sin mensajes desde hace ${fmtMin(minutos)}`
     : `✅ Copiloto recuperado — ya están entrando mensajes`;
+  const saludOk = !salud.includes("NO RESPONDE") && !salud.includes("⚠️");
   const html = esAlerta
-    ? `<p><strong>El copiloto no registra ningún mensaje desde hace ${fmtMin(minutos)}.</strong></p>
-       <p>Último mensaje: <strong>${fmtPanama(ultimo)}</strong> (hora de Panamá)<br>
-          Estado de la función: ${salud}</p>
-       <p>Si la función responde OK, lo más probable es que <strong>WATI haya dejado de llamar al webhook</strong>
-          (pasó el 15-ago: lo desactivó tras una racha de fallos).</p>
-       <p><strong>Qué revisar:</strong> WATI → Configuración → Webhooks → que el webhook del copiloto siga
-          activo y con los eventos <em>Mensaje Recibido</em>, <em>Mensaje de sesión enviado</em> y
-          <em>Nuevo mensaje de contacto</em>. Si aparece defectuoso, reinstalarlo.</p>
-       <p style="color:#666;font-size:12px">Watchdog QSP · umbral ${UMBRAL_MIN} min · ${fmtPanama(new Date().toISOString())}</p>`
-    : `<p><strong>Ya están entrando mensajes de nuevo.</strong></p>
-       <p>Último mensaje: ${fmtPanama(ultimo)} (hora de Panamá)<br>Estado de la función: ${salud}</p>
-       <p style="color:#666;font-size:12px">Watchdog QSP · ${fmtPanama(new Date().toISOString())}</p>`;
+    ? marco(ROJO, `<tr><td style="padding:26px 26px 8px">
+          ${rotulo("Sistema sin actividad", ROJO)}
+          <div style="font-size:28px;line-height:1.15;font-weight:700;color:${TINTA};letter-spacing:-.02em">No entran mensajes<br>desde hace ${fmtMin(minutos)}</div>
+        </td></tr>
+        <tr><td style="padding:18px 26px 4px">
+          <table role="presentation" cellpadding="0" cellspacing="0" border="0" style="width:100%;border-collapse:collapse;font-size:15px">
+            ${filaDato("Último mensaje", fmtPanama(ultimo))}
+            ${filaDato("Copiloto", saludOk ? "Funcionando" : escapar(salud), saludOk ? VERDE : ROJO)}
+            ${filaDato("Conexión con WhatsApp", "Sin llamadas entrantes", ROJO, true)}
+          </table>
+        </td></tr>
+        <tr><td style="padding:20px 26px 0">
+          <div style="background:${ROJO_BG};border-left:4px solid ${ROJO};padding:14px 16px;font-size:15px;line-height:1.55;color:${TINTA}">
+            ${saludOk
+              ? "El copiloto está sano, pero <strong>WATI dejó de enviarle los mensajes</strong>. Los clientes escriben y aparecen en el inbox, pero nadie los está atendiendo automáticamente."
+              : "<strong>La función del copiloto no responde.</strong> No es solo la conexión con WATI: el servicio está caído."}
+          </div>
+        </td></tr>
+        <tr><td style="padding:22px 26px 6px">
+          ${rotulo("Qué hacer ahora")}
+          <table role="presentation" cellpadding="0" cellspacing="0" border="0" style="width:100%;border-collapse:collapse;font-size:15px;line-height:1.5">
+            <tr><td style="padding:0 12px 14px 0;vertical-align:top;width:26px;color:${ROJO};font-weight:700">1</td>
+                <td style="padding:0 0 14px;vertical-align:top;color:${TINTA}">Abra WATI y atienda a mano lo que haya entrado.</td></tr>
+            <tr><td style="padding:0 12px 14px 0;vertical-align:top;color:${ROJO};font-weight:700">2</td>
+                <td style="padding:0 0 14px;vertical-align:top;color:${TINTA}">Revise <strong>Configuración → Webhooks</strong>: si el webhook del copiloto aparece desactivado o defectuoso, reinstálelo con los eventos <em>Mensaje Recibido</em>, <em>Mensaje de sesión enviado</em> y <em>Nuevo mensaje de contacto</em>.</td></tr>
+            <tr><td style="padding:0 12px 0 0;vertical-align:top;color:${ROJO};font-weight:700">3</td>
+                <td style="padding:0;vertical-align:top;color:${TINTA}">Avise a Gerencia.</td></tr>
+          </table>
+        </td></tr>`,
+        `Vigilante del copiloto · revisa cada 30 minutos en horario de atención (umbral ${UMBRAL_MIN} min).<br>${PIE_VIGILANTE}`)
+    : marco(VERDE, `<tr><td style="padding:26px 26px 8px">
+          ${rotulo("Servicio restablecido", VERDE)}
+          <div style="font-size:28px;line-height:1.15;font-weight:700;color:${TINTA};letter-spacing:-.02em">Ya están entrando<br>mensajes de nuevo</div>
+        </td></tr>
+        <tr><td style="padding:18px 26px 4px">
+          <table role="presentation" cellpadding="0" cellspacing="0" border="0" style="width:100%;border-collapse:collapse;font-size:15px">
+            ${filaDato("Último mensaje", fmtPanama(ultimo))}
+            ${filaDato("Copiloto", saludOk ? "Funcionando" : escapar(salud), saludOk ? VERDE : ROJO, true)}
+          </table>
+        </td></tr>
+        <tr><td style="padding:20px 26px 0">
+          <div style="background:#E4F3EC;border-left:4px solid ${VERDE};padding:14px 16px;font-size:15px;line-height:1.55;color:${TINTA}">
+            Revise el inbox por si quedó alguien sin responder durante la interrupción.
+          </div>
+        </td></tr>`,
+        `Vigilante del copiloto.<br>${PIE_VIGILANTE}`);
 
   // SHADOW: se registra lo que se habría enviado, sin mandar nada.
   if (MODE !== "live") {
