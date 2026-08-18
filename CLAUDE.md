@@ -21,6 +21,19 @@ con certeza, y calla/deriva cuando es mejor que responda un humano. Tienda:
 
 ## Estado actual (2026-08-13)
 ## Estado actual (2026-08-18)
+- **EN EL REPO, APLICAR SQL: v73.1 — los acks se comían los 10 cupos del barrido.** Hallado al correr el
+  RPC a mano tras aplicar v73 (18-ago): devolvió 10 candidatos y **los 10 eran acks** ("Ok", "Gracias",
+  "OK LISTO"…). El `limit p_max` vive en SQL y ordena del **MÁS VIEJO al más nuevo**, pero el filtro de
+  acks vivía en TS, DESPUÉS → los acks de la mañana ocupaban los 10 cupos en **cada** corrida (una cada
+  20 min) hasta envejecer 24 h, y un cliente real de hace 40 min quedaba en la posición 11: **invisible
+  siempre**. Misma forma que v73 — dos reglas correctas que juntas esconden a la población que debían
+  encontrar. **Fix:** `and not es_ack(m.content)` ANTES del limit. De paso el vocabulario de cortesía
+  vivía copiado a mano en TRES lados (TS `ACK_PALABRAS`, `resumen_diario`, barrido) → se extrae a la
+  función SQL **`es_ack`** que usan los DOS RPC (si se desincronizan, el resumen LISTA a quien el barrido
+  IGNORA). La copia de TS se conserva como segunda barrera; un golden test compara ambos vocabularios
+  palabra por palabra. **Verificado en PG local con el escenario real** (10 acks viejos + 1 caso genuino
+  más nuevo): *antes 10 devueltos / el cliente real NO aparece · ahora 1 devuelto / SÍ aparece*.
+  667 golden + 29 node. **Sin deploy** — solo aplicar `20260818210000_es_ack_barrido.sql`.
 - **EN EL REPO, DESPLEGAR: v73 — el PUNTO CIEGO del "quiero hablar con un asesor".** Caso real que trajo
   Isaac (conv 50763782012, 18-ago): 14:44 *"Quiero hablar con un asesor"* → el bot promete uno; 14:50
   *"ok"*; **14:51 *"Quiero cotizar una impresora con conexión WIFI, que pueda copiar e imprimir hojas

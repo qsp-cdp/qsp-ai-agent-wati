@@ -1329,6 +1329,38 @@ caso("v71: solo corre en horario hábil (force=1 lo salta para pruebas)", /if \(
 caso("v71: el barrido NO hace cold-return (la conversación sigue en handoff)", !/status: "bot"/.test(src.slice(src.indexOf("async function barridoAsistencia"), src.indexOf("async function log("))));
 caso("v71: healthcheck expone sweep", /sweep: SWEEP_MODE/.test(src) && /version: "v71-barrido-asistencia"/.test(src));
 
+// --- v73.1: el ack se descarta en SQL, ANTES del limit -------------------------------------------
+// El barrido cortaba a 10 candidatos en SQL (del más viejo al más nuevo) y recién después filtraba
+// acks en TS. Medido con datos reales el 18-ago: los 10 cupos se los comían los "Ok"/"Gracias" de la
+// mañana, y un cliente real de hace 40 min quedaba en la posición 11 — invisible en CADA corrida
+// hasta envejecer 24 h. Reproducido en PG local: antes 10 devueltos / 0 el cliente real; ahora 1 / 1.
+console.log("v73.1 acks fuera del limit");
+const migAck = readFileSync(join(dirname(fileURLToPath(import.meta.url)), "..", "supabase", "migrations", "20260818210000_es_ack_barrido.sql"), "utf8");
+caso("v73.1: el RPC del barrido descarta acks ANTES del limit (no se gastan los cupos)", (() => {
+  const iFiltro = migAck.indexOf("and not es_ack(m.content)");
+  const iLimit = migAck.indexOf("limit p_max");
+  return iFiltro > -1 && iLimit > -1 && iFiltro < iLimit;
+})());
+caso("v73.1: el resumen usa la MISMA función (no un regex copiado a mano)", (() => {
+  const iRes = migAck.indexOf("function public.resumen_diario");
+  return iRes > -1 && migAck.indexOf("and not es_ack(m.content)", iRes) > -1;
+})());
+// El vocabulario vive en TS y en SQL. Si se separan, el resumen LISTA a quien el barrido IGNORA
+// (o al revés) — el bug que este lock existe para cazar.
+caso("v73.1: vocabulario de acks SQL == TS (palabra por palabra)", (() => {
+  const sql = (migAck.match(/v_pal text := '([^']+)';/) || [])[1] || "";
+  return sql !== "" && sql === ACK_PALABRAS_G;
+})());
+// Los mismos textos reales del 18-ago que ocupaban los 10 cupos, contra el vocabulario SQL.
+caso("v73.1: los 10 acks reales del 18-ago caen por vocabulario", [
+  "Ok", "Gracias", "OK LISTO", "Gracias!", "Muchas gracias", "gracias,", "Muchas gracias",
+].every((t) => esAck(t)));
+caso("v73.1: el caso genuino que quedaba sepultado SÍ pasa", [
+  "Tienes la Epson L15150?",
+  "Quiero cotizar una impresora con conexión WIFI, que pueda copiar e imprimir hojas tamaño carta y legal",
+  "disculpa es el color amarillo me cotizo color magenta",
+].every((t) => !esAck(t)));
+
 // --- resumen --------------------------------------------------------------------------------------
 console.log(`\n${ok} OK, ${mal} FALLA${mal === 1 ? "" : "S"}`);
 if (mal > 0) process.exit(1);
