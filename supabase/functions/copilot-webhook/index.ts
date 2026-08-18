@@ -2437,6 +2437,18 @@ const SWEEP_MODE = ["shadow", "live"].includes(SWEEP_RAW) ? SWEEP_RAW : "off";
 const SWEEP_ESPERA_MIN = (() => { const n = parseInt((Deno.env.get("COPILOT_SWEEP_ESPERA_MIN") ?? "").trim(), 10); return Number.isFinite(n) && n >= 5 ? Math.min(n, 480) : 25; })();
 const SWEEP_MAX = (() => { const n = parseInt((Deno.env.get("COPILOT_SWEEP_MAX") ?? "").trim(), 10); return Number.isFinite(n) && n >= 1 ? Math.min(n, 50) : 10; })();
 
+// v71.2 — ¿el mensaje es SOLO cortesía? Se filtra por VOCABULARIO (todas sus palabras son de cortesía),
+// no por frases exactas, así los compuestos caen solos ("ok, gracias", "listo gracias", "mil graciasss")
+// y una pregunta real sobrevive aunque empiece con cortesía ("gracias, y tienen la 664 negra?").
+// Es el mismo criterio del resumen diario (RPC resumen_diario) — conviene que ambos coincidan: el resumen
+// LISTA a quien espera, el barrido ATIENDE a ese mismo conjunto.
+const ACK_PALABRAS = "ok|okis|okay|oki|listo|dale|perfecto|excelente|bueno|buenas|buenos|dias|tardes|no|si|s[ií]|claro|correcto|entiendo|entendido|acuerdo|de|muy|amable|gracias|graciass+|muchas|mil|1000|100|much[ií]simas|thanks|thank|you|ty|reviso|revisando|revisar[eé]|ya|vale|bien|igualmente|saludos|atento|atenta|nada|voy|hacerla|hacerlo";
+const ACK_RE = new RegExp(`^(${ACK_PALABRAS})([\\s,\\.!¡]+(${ACK_PALABRAS}))*[\\s,\\.!👍🙏👌😊❤️😉🤝]*$`, "i");
+function esAck(t: string): boolean {
+  const s = String(t ?? "").trim().replace(/[👍🙏👌😊❤️😉🤝]/g, "").trim();
+  return !s || ACK_RE.test(s);
+}
+
 interface PendienteAsistencia {
   conversation_id: string; wa_id: string; sender_name: string | null; turns_today: number;
   texto: string; ultimo_cliente_at: string; ultimo_asesor_at: string; mins_espera: number; mins_sin_asesor: number;
@@ -2461,7 +2473,7 @@ async function barridoAsistencia(force: boolean): Promise<Record<string, unknown
     const rafaga = await textoDeRafagaSinResponder(p.conversation_id, p.texto);
     if (INTERRUPT_RE.test(rafaga)) { omitidos.push({ wa_id: p.wa_id, motivo: "interrupcion" }); continue; }   // pago/RUC/factura → humano
     if (HANDOFF_RE.test(rafaga)) { omitidos.push({ wa_id: p.wa_id, motivo: "handoff_keyword" }); continue; }  // reclamo/garantía → humano
-    if (!(BASIC_INFO_RE.test(p.texto) || NEEDS_TOOL_RE.test(p.texto))) { omitidos.push({ wa_id: p.wa_id, motivo: "nada_que_aportar" }); continue; }
+    if (esAck(p.texto)) { omitidos.push({ wa_id: p.wa_id, motivo: "ack" }); continue; }
     if (SWEEP_MODE !== "live") { atendidos.push(p.wa_id); continue; }  // shadow: se registra, no se responde
     await ejecutarAsistencia(
       { id: p.conversation_id, turns_today: p.turns_today }, p.wa_id, p.texto, p.texto,

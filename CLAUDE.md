@@ -57,6 +57,15 @@ con certeza, y calla/deriva cuando es mejor que responda un humano. Tienda:
   **Env `COPILOT_SWEEP`** (off|shadow|live, default **off**) + `COPILOT_SWEEP_ESPERA_MIN` (25) +
   `COPILOT_SWEEP_MAX` (10). RPC validado en PG local con los 4 escenarios (aparece el que espera; NO
   aparecen el ya atendido, el de asesor activo hace 5 min, ni el proveedor `cerrada`). 637 golden + 29 node.
+  **v71.2 (1ª corrida en SHADOW con tráfico real, 18-ago — 10 candidatos):** el gate
+  `BASIC_INFO_RE||NEEDS_TOOL_RE` resultó DEMASIADO LITERAL: 9 de 10 eran acks (bien omitidos) pero el
+  décimo era Helen —*"disculpa es el color amarillo me cotizo color magenta"*, una CORRECCIÓN DE
+  COTIZACIÓN esperando 23 h— y se descartó como `nada_que_aportar` porque la frase no trae ninguna palabra
+  de catálogo. Agregar "amarillo/magenta" a la lista sería parchar un síntoma. Se INVIRTIÓ la lógica: se
+  descarta solo lo que claramente no aporta (**`esAck`**, mismo criterio de vocabulario que el resumen
+  diario) y **decide el modelo**, que con `forceTool=false` + `ASSIST_SUFFIX` ya sabe callarse si no tiene
+  nada seguro que decir (devuelve vacío → `sin_respuesta`). Los guardrails DUROS (INTERRUPT_RE por
+  pago/RUC, HANDOFF_RE por reclamos) siguen intactos: son los que de verdad protegen. 639 golden.
   **Puesta en marcha:** `.\deploy.ps1 copilot-webhook` + aplicar la migración → `COPILOT_SWEEP=shadow` →
   cron `*/20 14-21 * * 1-5` a `?key=…&sweep=1` → revisar `sweep_run` en job_log unos días (¿a quién habría
   asistido? ¿tiene sentido?) → `COPILOT_SWEEP=live`.

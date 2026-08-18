@@ -1132,6 +1132,9 @@ for (const t of [
 // --- v66: respuesta en partes (burbujas) ----------------------------------------------------------
 console.log("v66 burbujas");
 const partirMensaje = extraerFuncion("partirMensaje");
+const ACK_PALABRAS_G = (src.match(/const ACK_PALABRAS = "([^"]+)";/) || [])[1] || "";
+const ACK_RE_G = new RegExp(`^(${ACK_PALABRAS_G})([\\s,\\.!¡]+(${ACK_PALABRAS_G}))*[\\s,\\.!👍🙏👌😊❤️😉🤝]*$`, "i");
+const esAck = (t) => { const x = String(t ?? "").trim().replace(/[👍🙏👌😊❤️😉🤝]/g, "").trim(); return !x || ACK_RE_G.test(x); };
 caso("v66: 3 partes con el marcador (título+link / precio / stock)", (() => {
   const p = partirMensaje("Claro 👍 *Tóner Brother TN-830XL*\nhttps://quickservicepanama.com/products/x\n[[---]]\n*$116.00 + ITBMS (7%) = $124.12*\n[[---]]\n✅ 7 unidades disponibles. ¿Se lo cotizo?");
   return p.length === 3 && p[0].includes("TN-830XL") && p[1].includes("124.12") && p[2].startsWith("✅");
@@ -1240,7 +1243,21 @@ caso("v71: el camino reactivo también pasa por ejecutarAsistencia", /correrEnSe
 // los guardrails del barrido son los MISMOS del camino reactivo, evaluados con los MISMOS regex
 caso("v71: pago/RUC en la ráfaga → NO se asiste (anti-interrupción intacta)", /if \(INTERRUPT_RE\.test\(rafaga\)\) \{ omitidos\.push\(\{ wa_id: p\.wa_id, motivo: "interrupcion" \}\)/.test(src));
 caso("v71: reclamo/garantía → NO se asiste (lo lleva el humano)", /if \(HANDOFF_RE\.test\(rafaga\)\) \{ omitidos\.push\(\{ wa_id: p\.wa_id, motivo: "handoff_keyword" \}\)/.test(src));
-caso("v71: solo asiste si hay algo que aportar (BASIC_INFO o NEEDS_TOOL)", /!\(BASIC_INFO_RE\.test\(p\.texto\) \|\| NEEDS_TOOL_RE\.test\(p\.texto\)\)/.test(src) && /motivo: "nada_que_aportar"/.test(src));
+// v71.2 — el gate NEEDS_TOOL_RE resultó DEMASIADO LITERAL con datos reales (1ª corrida en shadow,
+// 18-ago): descartó "disculpa es el color amarillo me cotizo color magenta" —una corrección de cotización,
+// venta viva— porque no traía ninguna palabra de catálogo. Se invierte: se descarta solo lo que
+// claramente no aporta (acks) y decide el modelo, que con forceTool=false y ASSIST_SUFFIX ya sabe callar.
+caso("v71.2: el barrido descarta acks, no exige palabras de catálogo", /if \(esAck\(p\.texto\)\) \{ omitidos\.push\(\{ wa_id: p\.wa_id, motivo: "ack" \}\)/.test(src) && !/motivo: "nada_que_aportar"/.test(src));
+caso("v71.2: esAck filtra por VOCABULARIO (compuestos caen solos)", [
+  "gracias", "ok, gracias", "Muchas gracias", "1000 graciasss", "Vale, gracias", "No voy hacerla", "👍",
+].every((t) => esAck(t)));
+caso("v71.2: una consulta real NO se descarta aunque empiece con cortesía", [
+  "disculpa es el color amarillo me cotizo color magenta",
+  "Tienes la Epson L15150",
+  "gracias, y tienen la 664 negra?",
+  "necesito 1000 hojas",
+  "[imagen]",
+].every((t) => !esAck(t)));
 caso("v71: shadow registra pero NO responde", /if \(SWEEP_MODE !== "live"\) \{ atendidos\.push\(p\.wa_id\); continue; \}/.test(src));
 caso("v71: solo corre en horario hábil (force=1 lo salta para pruebas)", /if \(!force && !horarioPanama\(\)\.dentro\) return \{ sweep: "fuera_de_horario" \}/.test(src));
 caso("v71: el barrido NO hace cold-return (la conversación sigue en handoff)", !/status: "bot"/.test(src.slice(src.indexOf("async function barridoAsistencia"), src.indexOf("async function log("))));
