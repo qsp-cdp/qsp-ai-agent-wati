@@ -1252,7 +1252,7 @@ caso("v71: REUSA ejecutarAsistencia (no duplica la lógica de v50)", /async func
 caso("v71: el camino reactivo también pasa por ejecutarAsistencia", /correrEnSegundoPlano\(ejecutarAsistencia\(conv, waId, texto, contenido, userCreatedAt/.test(src));
 // los guardrails del barrido son los MISMOS del camino reactivo, evaluados con los MISMOS regex
 caso("v71: pago/RUC en la ráfaga → NO se asiste (anti-interrupción intacta)", /if \(INTERRUPT_RE\.test\(rafaga\)\) \{ omitidos\.push\(\{ wa_id: p\.wa_id, motivo: "interrupcion" \}\)/.test(src));
-caso("v71: reclamo/garantía → NO se asiste (lo lleva el humano)", /if \(HANDOFF_RE\.test\(rafaga\)\) \{ omitidos\.push\(\{ wa_id: p\.wa_id, motivo: "handoff_keyword" \}\)/.test(src));
+caso("v71/v73: reclamo/garantía → NO se asiste (lo lleva el humano)", /if \(HANDOFF_RE\.test\(rafaga\) && !soloPideAsesor\(rafaga\)\) \{ omitidos\.push\(\{ wa_id: p\.wa_id, motivo: "handoff_keyword" \}\)/.test(src));
 // v71.2 — el gate NEEDS_TOOL_RE resultó DEMASIADO LITERAL con datos reales (1ª corrida en shadow,
 // 18-ago): descartó "disculpa es el color amarillo me cotizo color magenta" —una corrección de cotización,
 // venta viva— porque no traía ninguna palabra de catálogo. Se invierte: se descarta solo lo que
@@ -1264,6 +1264,27 @@ caso("v71.2: esAck filtra por VOCABULARIO (compuestos caen solos)", [
 // v71.3 — con tráfico real (18-ago) 3 de 4 asistencias del barrido fueron cortesía vacía ("quedamos
 // atentos") a clientes cuyo último mensaje era de HACE HORAS. Ahora el barrido le dice al modelo que si no
 // tiene algo concreto que aportar, calle (el camino ya existía: devolver vacío → sin_respuesta).
+// --- v73: pedir un asesor no es lo mismo que un reclamo ------------------------------------------
+// 🔴 caso real 18-ago: pidió asesor a las 14:44, nadie llegó, y a las 14:51 escribió qué impresora quería
+// cotizar (una venta que el bot sabe resolver — el caso de v52). Silencio: el bot calla porque pidió un
+// humano (v30), el barrido ni lo miraba (exigía un asesor de quien medir silencio) y nadie lee la cola.
+const soloPideAsesor = (() => {
+  const H = eval(src.match(/const HANDOFF_RE = (\/.*\/i);/)[1]);
+  const P = eval(src.match(/const PIDE_ASESOR_RE = (\/.*\/i);/)[1]);
+  return (t) => H.test(t) && P.test(t) && !H.test(t.replace(new RegExp(P.source, "gi"), " "));
+})();
+caso("v73: pedir un asesor NO bloquea al bot (puede adelantar mientras llega)", [
+  "Quiero hablar con un asesor", "me puede atender una persona?", "quiero hablar con alguien",
+].every(soloPideAsesor));
+caso("v73: un RECLAMO sigue siendo intocable, aunque pida asesor en la misma frase", [
+  "tengo un reclamo con mi pedido", "quiero hablar con un asesor porque llegó dañado",
+  "necesito aplicar mi garantía", "un asesor para una devolución", "me facturaron de más",
+  "precio de distribuidor",
+].every((t) => !soloPideAsesor(t)));
+caso("v73: el barrido solo se aparta si NO es una simple petición de asesor", /HANDOFF_RE\.test\(rafaga\) && !soloPideAsesor\(rafaga\)/.test(src));
+caso("v73: al asistir se reconoce lo que pidió (no se le niega el asesor)", /ESTE CLIENTE PIDIÓ HABLAR CON UN ASESOR/.test(src) && /NO le niegues lo que pidió/.test(src));
+caso("v73: el barrido cubre handoff por keyword sin asesor (COPILOT_SWEEP_SIN_ASESOR_MIN)", /p_sin_asesor_min: SWEEP_SIN_ASESOR_MIN/.test(src) && /COPILOT_SWEEP_SIN_ASESOR_MIN/.test(src));
+
 // --- v72.4: las notas de voz también se transcriben en conversaciones con asesor ----------------
 // 🔴 hallazgo 18-ago (visto en el resumen): un "[audio]" llevaba 2h45 sin respuesta y NUNCA se transcribió
 // — la transcripción vive en la tarea de fondo del flujo normal, que no se alcanza estando en handoff.
@@ -1294,7 +1315,7 @@ caso("v72: en shadow registra pero NO manda correo", /if \(SWEEP_MODE !== "live"
 caso("v72: la API key de Resend se enmascara en los errores", /replaceAll\(key, "\*\*\*"\)/.test(src));
 caso("v72: reusa los secretos del watchdog (no inventa otros)", /RESEND_API_KEY/.test(src) && /ALERTA_EMAILS/.test(src) && /ALERTA_FROM/.test(src));
 caso("v71.3: el barrido pide callar si no hay nada concreto que aportar", /NO respondas NADA\. Devuelve una respuesta vacía/.test(src) && /RESPUESTA TARDÍA/.test(src));
-caso("v71.3: el sufijo SOLO se aplica al barrido, no a la asistencia reactiva", /origen === "barrido" \? SWEEP_SUFFIX : ""/.test(src));
+caso("v71.3/v73: el sufijo SOLO se aplica al barrido, no a la asistencia reactiva", /origen\.startsWith\("barrido"\) \? SWEEP_SUFFIX : ""/.test(src));
 caso("v71.3: advierte que pasó tiempo (no saludar como si fuera de este instante)", /no saludes como si la conversación fuera de este instante/.test(src));
 caso("v71.2: una consulta real NO se descarta aunque empiece con cortesía", [
   "disculpa es el color amarillo me cotizo color magenta",

@@ -13,11 +13,16 @@
 --
 -- `security definer` + grant solo a service_role (auto-expose OFF en este proyecto).
 
+-- v73: la firma cambia (nuevo p_sin_asesor_min) → se elimina la anterior para no dejar dos versiones
+-- ambiguas conviviendo.
+drop function if exists public.asistencia_pendientes(int, int, int, int);
+
 create or replace function public.asistencia_pendientes(
-  p_espera_min int default 25,   -- cuánto lleva esperando el cliente sin respuesta
-  p_asesor_min int default 15,   -- silencio del asesor (mismo umbral que HANDOFF_ASSIST_MIN)
-  p_frio_horas int default 24,   -- más allá de esto la conversación es FRÍA: la retoma el cold-return, no el barrido
-  p_max int default 10           -- anti-blast: cuántos atender por corrida
+  p_espera_min int default 25,     -- cuánto lleva esperando el cliente sin respuesta
+  p_asesor_min int default 15,     -- silencio del asesor (mismo umbral que HANDOFF_ASSIST_MIN)
+  p_frio_horas int default 24,     -- más allá de esto la conversación es FRÍA: la retoma el cold-return
+  p_max int default 10,            -- anti-blast: cuántos atender por corrida
+  p_sin_asesor_min int default 30  -- v73: handoff por KEYWORD sin que ningún asesor llegara nunca
 ) returns jsonb
 language plpgsql
 security definer
@@ -51,9 +56,21 @@ begin
     where c.status = 'handoff'                                    -- 'cerrada' (proveedores) queda fuera por definición
       and m.role = 'user'
       and m.created_at <= now() - make_interval(mins => p_espera_min)
-      and h.ultimo_asesor_at is not null
-      and h.ultimo_asesor_at <= now() - make_interval(mins => p_asesor_min)
-      and h.ultimo_asesor_at >  now() - make_interval(hours => p_frio_horas)
+      -- v73 — DOS poblaciones, no una:
+      --  (a) un asesor SÍ escribió y lleva rato callado (el caso original), o
+      --  (b) NINGÚN asesor escribió nunca: la conversación entró en handoff porque el cliente PIDIÓ un
+      --      asesor… y nadie llegó. Antes esta población era un punto ciego total — el bot no habla
+      --      (regla v30) y el barrido ni la miraba (exigía un asesor de quien medir silencio). Caso real
+      --      18-ago: pidió asesor a las 14:44, a las 14:51 escribió qué impresora quería cotizar, silencio.
+      and (
+        (h.ultimo_asesor_at is not null
+         and h.ultimo_asesor_at <= now() - make_interval(mins => p_asesor_min)
+         and h.ultimo_asesor_at >  now() - make_interval(hours => p_frio_horas))
+        or
+        (h.ultimo_asesor_at is null
+         and m.created_at <= now() - make_interval(mins => p_sin_asesor_min)
+         and m.created_at >  now() - make_interval(hours => p_frio_horas))
+      )
       and c.turns_today <= 40                                     -- mismo tope diario que el flujo normal
     order by m.created_at
     limit p_max
@@ -62,6 +79,6 @@ begin
 end;
 $function$;
 
-grant execute on function public.asistencia_pendientes(int, int, int, int) to service_role;
+grant execute on function public.asistencia_pendientes(int, int, int, int, int) to service_role;
 
--- Verificación:  select jsonb_pretty(public.asistencia_pendientes(25, 15, 24, 10));
+-- Verificación:  select jsonb_pretty(public.asistencia_pendientes(25, 15, 24, 10, 30));

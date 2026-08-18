@@ -21,6 +21,33 @@ con certeza, y calla/deriva cuando es mejor que responda un humano. Tienda:
 
 ## Estado actual (2026-08-13)
 ## Estado actual (2026-08-18)
+- **EN EL REPO, DESPLEGAR: v73 — el PUNTO CIEGO del "quiero hablar con un asesor".** Caso real que trajo
+  Isaac (conv 50763782012, 18-ago): 14:44 *"Quiero hablar con un asesor"* → el bot promete uno; 14:50
+  *"ok"*; **14:51 *"Quiero cotizar una impresora con conexión WIFI, que pueda copiar e imprimir hojas
+  tamaño carta y legal"*** → SILENCIO. Esa consulta el bot la sabe responder (es el caso de v52, búsqueda
+  por característica en el `body`). **Verificado que el mensaje SÍ está en `messages`** — no fue un hueco
+  de captura sino de decisión. **Tres reglas correctas se combinaban en un agujero:** (1) handoff por
+  KEYWORD → el bot no retoma nunca (v30, para respetar la petición); (2) el barrido exigía un asesor de
+  quien medir silencio → una conversación donde NADIE llegó ni se miraba; (3) el guardrail del barrido
+  bloquea con `HANDOFF_RE`, que contiene "asesor" → la señal que identifica a esta población era la misma
+  que la excluía. Resultado: el bot calla porque pidió un humano, el humano no llega porque nadie lee la
+  cola, y el cliente con una compra en la mano se queda mirando la pantalla. **Fix:** (a) **`soloPideAsesor`**
+  separa "pide un asesor" (benigno: el bot puede adelantar) de "reclamo/garantía/facturación/mayoreo"
+  (intocable) — probado con 9 casos, incluido *"quiero hablar con un asesor porque llegó dañado"*, que
+  sigue siendo intocable; (b) el RPC cubre ahora las DOS poblaciones (con asesor callado ≥15 min, o SIN
+  asesor nunca y esperando ≥`COPILOT_SWEEP_SIN_ASESOR_MIN`, default 30) — **validado en PG local con el
+  caso real: antes 0 candidatos, ahora 1**; (c) `PIDIO_ASESOR_SUFFIX` — al asistir NO se le niega lo que
+  pidió: *"Un asesor le responde en breve. Mientras tanto le adelanto…"*. 662 golden + 29 node.
+  **Deploy:** `.\deploy.ps1 copilot-webhook` + re-aplicar el RPC `asistencia_pendientes` (cambia la firma:
+  la migración hace `drop function` de la versión de 4 parámetros primero).
+- **📌 PENDIENTE (idea de Isaac, buena): CLASIFICADOR en vez de regex.** Una regex mira UN mensaje; estas
+  decisiones necesitan leer la conversación: distinguir el *"ok"* que cierra del *"ok, quedo esperando al
+  asesor que me prometieron"* (el filtro de acks lo saca de la lista y lo vuelve invisible). Diseño
+  propuesto: una llamada corta al modelo con los últimos ~8 mensajes que devuelva `{estado, puede_bot,
+  resumen, prioridad}` y alimente al barrido Y al resumen, con los guardrails DUROS (INTERRUPT_RE) intactos
+  antes de él. Coste acotado cacheando por (conversación, último mensaje). v73 cierra el agujero de
+  CANDIDATOS —sin eso ni un clasificador vería la conversación—; el clasificador es la capa de JUICIO
+  encima.
 - **EN EL REPO, DESPLEGAR: v72.2 — plantillas de correo rediseñadas (maquetas aprobadas por Isaac).** Los
   tres correos (sistema caído, desatención, resumen) salen ahora con una plantilla común en
   `watchdog/index.ts` (`marco`/`rotulo`/`filaDato`) y su gemela inline en el copiloto para el aviso de

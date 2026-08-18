@@ -845,6 +845,21 @@ const TOOLS: Anthropic.Tool[] = [{
 // reemplaza por un patrón de CONTRASTE explícito (palabra de contraste + verbo de entrega + "factur",
 // en cualquier orden) que exige la señal real del reclamo (recibí menos de lo que me facturaron).
 const HANDOFF_RE = /\b(humano|persona|asesor|agente|reclamo|queja|hablar con alguien|supervisor|quiero devolver|devolver (el|la|lo|los|las|un|una|mi|este|esta|esto|eso)|devolverl[oa]s?|devuelvan|cambiarl[oa]s?|(una|la|mi|su|esa|esta) devoluci[oó]n|(aplicar|usar|reclamar|validar|activar|hacer (v[aá]lida|efectiva)) (la |mi |su )?garant[ií]a|(mi|su) garant[ií]a|en garant[ií]a|tiene garant[ií]a|sali[oó] (mal|malo|mala|da[ñn]ad[oa]|defectuos[oa])|(lleg[oó]|vino) (mal|malo|mala|da[ñn]ad[oa]|roto|rota|defectuos[oa])|defectuos[oa]s?|me vendieron (uno|una|algo) (malo|mala|da[ñn]ad[oa]|defectuos[oa])|nota de cr[eé]dito|me factur(aron|a|[oó]) (de m[aá]s|mal|otra cantidad)|me cobr(aron|a|[oó]) de m[aá]s|factura(ci[oó]n)? (incorrecta|equivocada|mal (hecha|emitida))|(solo|nom[aá]s|pero) .{0,40}(entregaron|entreg[oó]|dieron|lleg(aron|[oó])) .{0,60}factur\w*|factur\w* .{0,60}(solo|nom[aá]s|pero) .{0,40}(entregaron|entreg[oó]|dieron|lleg(aron|[oó]))|(precios?|descuentos?) (de |del |de la |para |al )?(distribuidor|mayorista|revendedor)\w*|al por mayor)\b/i;
+// v73 — PEDIR UN ASESOR NO ES LO MISMO QUE UN RECLAMO. HANDOFF_RE mezcla las dos cosas y el barrido las
+// trataba igual: se apartaba de ambas. Caso real 18-ago: el cliente pidió asesor a las 14:44, nadie llegó,
+// y a las 14:51 escribió "quiero cotizar una impresora con conexión WIFI, que pueda copiar e imprimir
+// hojas tamaño carta y legal" — una venta que el bot sabe cotizar (es el caso de v52). Quedó en silencio
+// porque el barrido vio "asesor" en la ráfaga y se apartó. Un RECLAMO el bot no debe tocarlo nunca; una
+// SOLICITUD DE ASESOR solo dice que el cliente quiere atención — y si el asesor no llega, callar no
+// respeta la petición: la abandona. `SOLO_PIDE_ASESOR_RE` reconoce el caso benigno para poder distinguir.
+const PIDE_ASESOR_RE = /\b(humano|persona|asesor|agente|hablar con alguien|supervisor)\b/i;
+function soloPideAsesor(t: string): boolean {
+  if (!HANDOFF_RE.test(t)) return false;               // no hay handoff que interpretar
+  if (!PIDE_ASESOR_RE.test(t)) return false;           // matcheó por otra cosa (reclamo, garantía, mayoreo)
+  // ¿queda algo de HANDOFF_RE al quitar las palabras de "pedir asesor"? Si sí, hay un reclamo debajo.
+  return !HANDOFF_RE.test(t.replace(new RegExp(PIDE_ASESOR_RE.source, "gi"), " "));
+}
+
 // v54 (decisión de Gerencia, auditoría 17-jul): precio de DISTRIBUIDOR/mayorista/reventa lo atiende un
 // humano (política comercial, no precio de lista) → HANDOFF_RE lo deriva con despedida cortés. Casos
 // reales: "¿en la página ya es Precio de Distribuidor?", clientes de Zona Libre pidiendo mayoreo.
@@ -2385,7 +2400,8 @@ async function ejecutarAsistencia(
           // ASSIST_SUFFIX ("todo debe salir de una herramienta, nunca de memoria"). modoAsistencia=true acota
           // las tools. linksTracked + reaplicarTracking reponen el tracking de buscar_producto (v29).
           const linksTracked: Record<string, string> = {};
-          const r = await responderLLM(history as any, false, null, false, waId, {}, linksTracked, true, origen === "barrido" ? SWEEP_SUFFIX : "");
+          const r = await responderLLM(history as any, false, null, false, waId, {}, linksTracked, true,
+              origen === "barrido_pidio_asesor" ? SWEEP_SUFFIX + PIDIO_ASESOR_SUFFIX : origen.startsWith("barrido") ? SWEEP_SUFFIX : "");
           let salida = r.text ? reaplicarTracking(limpiarWhatsApp(r.text), linksTracked) : null;
           // v66 — en ASISTENCIA no hay burbujas (la regla lo prohíbe, pero si el modelo igual marcara
           // cortes, el marcador se re-une aquí: JAMÁS debe llegar [[---]] al cliente).
@@ -2435,6 +2451,8 @@ async function ejecutarAsistencia(
 const SWEEP_RAW = (Deno.env.get("COPILOT_SWEEP") ?? "off").trim().toLowerCase();
 const SWEEP_MODE = ["shadow", "live"].includes(SWEEP_RAW) ? SWEEP_RAW : "off";
 const SWEEP_ESPERA_MIN = (() => { const n = parseInt((Deno.env.get("COPILOT_SWEEP_ESPERA_MIN") ?? "").trim(), 10); return Number.isFinite(n) && n >= 5 ? Math.min(n, 480) : 25; })();
+// v73 — espera para los handoff por KEYWORD donde ningún asesor llegó nunca (población ciega).
+const SWEEP_SIN_ASESOR_MIN = (() => { const n = parseInt((Deno.env.get("COPILOT_SWEEP_SIN_ASESOR_MIN") ?? "").trim(), 10); return Number.isFinite(n) && n >= 5 ? Math.min(n, 480) : 30; })();
 const SWEEP_MAX = (() => { const n = parseInt((Deno.env.get("COPILOT_SWEEP_MAX") ?? "").trim(), 10); return Number.isFinite(n) && n >= 1 ? Math.min(n, 50) : 10; })();
 
 // v71.2 — ¿el mensaje es SOLO cortesía? Se filtra por VOCABULARIO (todas sus palabras son de cortesía),
@@ -2453,6 +2471,9 @@ function esAck(t: string): boolean {
 // 3 de 4 asistencias del barrido fueron cortesía vacía ("quedamos atentos por aquí") a clientes cuyo
 // último mensaje era de hace HORAS — no aportan nada y suenan a robot. El camino para callar ya existe
 // (devolver vacío → `sin_respuesta`); solo faltaba decirle al modelo que aquí ESO es lo correcto.
+const PIDIO_ASESOR_SUFFIX = `
+- ESTE CLIENTE PIDIÓ HABLAR CON UN ASESOR y todavía no lo han atendido. NO le niegues lo que pidió ni le digas que usted lo atiende en lugar del asesor: reconoce que un asesor le va a responder Y, si tienes algo concreto que adelantarle (precio con ITBMS, disponibilidad, un dato de la tienda), dáselo mientras tanto. Ej.: "Un asesor le responde en breve. Mientras tanto le adelanto…". Si no tienes nada concreto que aportar, NO respondas nada.`;
+
 const SWEEP_SUFFIX = `
 
 RESPUESTA TARDÍA (esta conversación lleva rato sin atención y estás retomándola tú, no el cliente escribió recién)
@@ -2559,7 +2580,7 @@ async function avisarDesatencion(casos: CasoDesatendido[]): Promise<Record<strin
 
 interface PendienteAsistencia {
   conversation_id: string; wa_id: string; sender_name: string | null; turns_today: number;
-  texto: string; ultimo_cliente_at: string; ultimo_asesor_at: string; mins_espera: number; mins_sin_asesor: number;
+  texto: string; ultimo_cliente_at: string; ultimo_asesor_at: string | null; mins_espera: number; mins_sin_asesor: number | null;
 }
 
 async function barridoAsistencia(force: boolean): Promise<Record<string, unknown>> {
@@ -2568,7 +2589,7 @@ async function barridoAsistencia(force: boolean): Promise<Record<string, unknown
   // aclara en el flujo normal. (`?force=1` lo salta para pruebas manuales.)
   if (!force && !horarioPanama().dentro) return { sweep: "fuera_de_horario" };
   const { data, error } = await sb.rpc("asistencia_pendientes", {
-    p_espera_min: SWEEP_ESPERA_MIN, p_asesor_min: HANDOFF_ASSIST_MIN, p_frio_horas: HANDOFF_COLD_HOURS, p_max: SWEEP_MAX,
+    p_espera_min: SWEEP_ESPERA_MIN, p_asesor_min: HANDOFF_ASSIST_MIN, p_frio_horas: HANDOFF_COLD_HOURS, p_max: SWEEP_MAX, p_sin_asesor_min: SWEEP_SIN_ASESOR_MIN,
   });
   if (error) { await log("sweep_error", false, { error: String(error.message ?? error).slice(0, 200) }); return { error: "rpc" }; }
   const pendientes = (data ?? []) as PendienteAsistencia[];
@@ -2582,12 +2603,15 @@ async function barridoAsistencia(force: boolean): Promise<Record<string, unknown
     const rafaga = await textoDeRafagaSinResponder(p.conversation_id, p.texto);
     // pago/RUC/factura y reclamos: el bot NO los toca (guardrail sagrado), pero SÍ se avisa a un asesor (v72).
     if (INTERRUPT_RE.test(rafaga)) { omitidos.push({ wa_id: p.wa_id, motivo: "interrupcion" }); urgentes.push({ wa_id: p.wa_id, nombre: p.sender_name, texto: p.texto, mins_espera: p.mins_espera, motivo: "interrupcion" }); continue; }
-    if (HANDOFF_RE.test(rafaga)) { omitidos.push({ wa_id: p.wa_id, motivo: "handoff_keyword" }); urgentes.push({ wa_id: p.wa_id, nombre: p.sender_name, texto: p.texto, mins_espera: p.mins_espera, motivo: "handoff_keyword" }); continue; }
+    // v73: un RECLAMO sigue siendo intocable y se le avisa a un humano. Pero si el cliente SOLO pidió un
+    // asesor y nadie llegó, el bot sí adelanta lo que sabe (aclarando que el asesor sigue en camino).
+    if (HANDOFF_RE.test(rafaga) && !soloPideAsesor(rafaga)) { omitidos.push({ wa_id: p.wa_id, motivo: "handoff_keyword" }); urgentes.push({ wa_id: p.wa_id, nombre: p.sender_name, texto: p.texto, mins_espera: p.mins_espera, motivo: "handoff_keyword" }); continue; }
     if (esAck(p.texto)) { omitidos.push({ wa_id: p.wa_id, motivo: "ack" }); continue; }
     if (SWEEP_MODE !== "live") { atendidos.push(p.wa_id); continue; }  // shadow: se registra, no se responde
     await ejecutarAsistencia(
       { id: p.conversation_id, turns_today: p.turns_today }, p.wa_id, p.texto, p.texto,
-      p.ultimo_cliente_at, p.ultimo_asesor_at, p.mins_sin_asesor, Date.now(), false, "barrido",
+      p.ultimo_cliente_at, p.ultimo_asesor_at ?? p.ultimo_cliente_at, p.mins_sin_asesor ?? 0, Date.now(), false,
+      soloPideAsesor(rafaga) ? "barrido_pidio_asesor" : "barrido",
     );
     atendidos.push(p.wa_id);
   }
