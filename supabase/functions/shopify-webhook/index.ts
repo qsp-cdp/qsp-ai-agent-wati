@@ -45,13 +45,26 @@ function esRetiroEnTienda(shopifyOrder: any): boolean {
   return lineas.includes('recoger') || lineas.includes('retiro en tienda') || lineas.includes('pickup');
 }
 
+// v63: ¿la línea de envío elegida INDICA ciudad/domicilio? Se usa para (a) no leer como "interior" una
+// línea de ciudad y (b) silenciar `direccion_no_reconocida` en pedidos de ciudad. Cuidado: la línea de
+// ciudad de esta tienda dice "…zonas alejadas: retiro en punto Servientrega" (nota, NO método), por eso
+// NO basta mirar "servientrega". Señales de ciudad: pasa el filtro de despacho, o el nombre trae domicilio
+// / Ciudad de Panamá / San Miguelito. Independiente del filtro de despacho, que en piloto puede estar
+// apuntando solo a la línea de prueba ("Local Delivery") y no a la línea real de ciudad.
+function lineaIndicaCiudad(lineas: string, esLineaCiudad: boolean): boolean {
+  return esLineaCiudad || lineas.includes('domicilio') || lineas.includes('ciudad de panam') || lineas.includes('san miguelito');
+}
+
 // F4 (v31): detecta ventas imposibles o mal ruteadas comparando la LÍNEA de envío elegida en el
 // checkout con la zona real resuelta. NO bloquea nada — el agente humano maneja y asigna todos los
 // pedidos; esto produce `envio_flag` (pedidos) + job_log `pedido_flag` + nota 🚨 en Shipday.
 function calcularFlag(shopifyOrder: any, zona: ZonaResuelta | null, esLineaCiudad: boolean, gratis: boolean): string | null {
   if (!zona) return null;
   const lineas: string = (shopifyOrder?.shipping_lines || []).map((l: any) => `${l?.title ?? ''} ${l?.code ?? ''}`).join(' ').toLowerCase();
-  const esLineaInterior = lineas.includes('servientrega') || lineas.includes('sucursal');
+  // v63: la línea es INTERIOR solo si dice servientrega/sucursal y NO trae señal de ciudad. Sin este
+  // guardián, la línea de ciudad (que menciona "Servientrega" en su nombre) marcaba falso
+  // `eligio_interior_siendo_ciudad` en TODO pedido de ciudad — correcto aunque el filtro de despacho no la incluya.
+  const esLineaInterior = (lineas.includes('servientrega') || lineas.includes('sucursal')) && !lineaIndicaCiudad(lineas, esLineaCiudad);
   if (zona.estado === 'sin_match') return 'direccion_no_reconocida';
   if (zona.estado === 'sin_servicio') return 'sin_servicio_comarca';
   if (zona.estado !== 'ok') return null; // ambiguo ya lleva su nota ⚠️; no es un imposible
@@ -107,7 +120,21 @@ Deno.serve(async (req) => {
         order: order.orderNumber, zona: zona?.zona ?? zona?.estado ?? 'n/d', total: shopifyOrder.total_price ?? null,
       });
     }
-    const flag = calcularFlag(shopifyOrder, zona, esLineaCiudad, gratis);
+    const flagRaw = calcularFlag(shopifyOrder, zona, esLineaCiudad, gratis);
+    // v63: en un pedido de CIUDAD, `direccion_no_reconocida` es ruido — Shipday geocodifica la dirección
+    // cruda y el agente la maneja igual; no hay decisión de ruteo que corregir. Se SILENCIA del flag (no va
+    // al correo ni a `envio_flag`), pero se deja registro APARTE en job_log para seguir mejorando el
+    // diccionario de zonas (qué direcciones de ciudad no matchean). "Ciudad" se decide por el nombre de la
+    // línea (domicilio/Ciudad de Panamá/San Miguelito), aunque el filtro de despacho aún no la incluya (piloto).
+    const lineasEnvio: string = (shopifyOrder?.shipping_lines || []).map((l: any) => `${l?.title ?? ''} ${l?.code ?? ''}`).join(' ').toLowerCase();
+    const silenciarSinMatch = flagRaw === 'direccion_no_reconocida' && lineaIndicaCiudad(lineasEnvio, esLineaCiudad);
+    const flag = silenciarSinMatch ? null : flagRaw;
+    if (silenciarSinMatch) {
+      await logJob('shopify-webhook', 'direccion_no_reconocida_silenciada', true, {
+        order: order.orderNumber, zona: zona?.zona ?? zona?.estado ?? 'n/d',
+        ambito: zona?.ambito ?? null, lugar: zona?.lugar ?? null, total: shopifyOrder.total_price ?? null,
+      });
+    }
     if (flag) {
       await logJob('shopify-webhook', 'pedido_flag', true, {
         order: order.orderNumber, flag, zona: zona?.zona ?? zona?.estado ?? 'n/d',
