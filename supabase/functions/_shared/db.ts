@@ -231,6 +231,28 @@ export async function infoPedidoActual(pedidoRef: string): Promise<{ estado: str
   } catch { return { estado: null, wa_id: null }; }
 }
 
+// --- Idempotencia de despacho Shopify→Shipday (v62) -----------------------------------------------
+// Shopify entrega los webhooks AT-LEAST-ONCE (reintenta ante timeout o respuesta no-2xx), y un mismo
+// pedido puede además disparar varios eventos (creación + preparación). Sin guarda, cada reintento crea
+// una NUEVA orden en Shipday → doble asignación/entrega. La marca de "ya despachado" es
+// `pedidos.shipday_order_id` (el id que devuelve Shipday al crear la orden), que se persiste tras un
+// despacho exitoso. Este helper la lee para no recrear. BEST-EFFORT: ante fallo devuelve null (y el
+// llamador, ante la duda, despacha — se favorece no perder el pedido).
+export async function shipdayOrderIdDe(pedidoRef: string): Promise<string | null> {
+  try {
+    const ref = String(pedidoRef ?? '').trim().replace(/^#+/, '');
+    if (!ref) return null;
+    const res = await fetch(
+      restUrl(`/pedidos?fuente=eq.shopify&pedido_ref=eq.${encodeURIComponent(ref)}&select=shipday_order_id&limit=1`),
+      { headers: serviceHeaders(), signal: AbortSignal.timeout(5000) },
+    );
+    if (!res.ok) return null;
+    const rows = await res.json() as Array<{ shipday_order_id?: string | null }>;
+    const v = rows?.[0]?.shipday_order_id;
+    return v != null && String(v).trim() ? String(v) : null;
+  } catch { return null; }
+}
+
 // --- Resolución de zona (v52) --------------------------------------------------------------------
 // El diccionario + el RPC `resolver_tarifa_v2` (v31: metro E interior) saben la zona real de una dirección;
 // Shipday solo geocodifica texto libre. Esto NO reemplaza el geocoding: enriquece la orden con la

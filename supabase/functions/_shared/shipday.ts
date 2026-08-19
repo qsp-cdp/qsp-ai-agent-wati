@@ -26,6 +26,9 @@ export async function createShipdayOrder(order: Record<string, unknown>) {
       'Content-Type': 'application/json',
     },
     body: JSON.stringify(order),
+    // v62: timeout — es la única llamada externa del despacho sin límite, y va al final de una cadena
+    // de 5+5+8s. Sin esto, si Shipday tarda, Shopify da el webhook por fallido y reintenta (→ duplicado).
+    signal: AbortSignal.timeout(15000),
   });
   const text = await res.text();
   if (!res.ok) throw new Error(`Shipday respondió ${res.status}: ${text}`);
