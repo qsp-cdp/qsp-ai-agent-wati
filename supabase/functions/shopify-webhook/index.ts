@@ -19,10 +19,12 @@ function esEnvioGratis(shopifyOrder: any): boolean {
   return terms.length > 0 && lines.some((m) => terms.some((t) => m.includes(t)));
 }
 
-// ¿La zona resuelta es entrega de FLOTA PROPIA (→ Shipday)? Solo entonces se despacha un envío gratis
-// "rescatado". Cualquier otra cosa (interior/sin_servicio de v2, servientrega, retiro, asesor, o RPC caído/null) → false:
-// no es nuestra flota, va por Servientrega a la sucursal o lo ve el operador. `ambiguo` solo si TODAS las
-// opciones son propias (ej. San Miguelito Z3/Z6, ambas $7 propia). Conservador: ante la duda, NO despacha.
+// ¿La zona resuelta es entrega de FLOTA PROPIA (→ Shipday)? v64: este es EL criterio de despacho para
+// todo pedido de Shopify (antes solo rescataba envíos gratis): la ZONA de la dirección corregida decide,
+// no el nombre de la tarifa. Cualquier otra cosa (interior/sin_servicio de v2, servientrega, retiro,
+// asesor) → false: no es nuestra flota, va por Servientrega a la sucursal o lo ve el operador. `ambiguo`
+// solo si TODAS las opciones son propias (ej. San Miguelito Z3/Z6, ambas $7 propia): la entrega es
+// posible sea cual sea la zona real. Conservador: ante la duda, NO despacha.
 function esFlotaPropia(zona: ZonaResuelta | null): boolean {
   if (!zona) return false;
   if (zona.estado === 'ok') return zona.ambito !== 'interior' && zona.metodo === 'propia';
@@ -101,21 +103,27 @@ Deno.serve(async (req) => {
   try {
     const shopifyOrder = JSON.parse(rawBody);
     const order = shopifyOrderToShipday(shopifyOrder);
-    // Decisión de despacho. Normalmente por el filtro de nombre de la tarifa (shouldDispatchShopifyOrder).
-    // RESCATE de envío gratis (>$300, todo el país): esa tarifa no pasa el filtro por nombre, pero SÍ debe ir
-    // a Shipday cuando es entrega de flota PROPIA (ciudad). En el interior el envío gratis es a la sucursal
-    // Servientrega (retiro) → NO va a Shipday. La zona resuelta decide; se reutiliza para el enriquecimiento.
-    // F4 (v31): la zona se resuelve SIEMPRE con resolver_tarifa_v2 (metro+interior) y se persiste en
-    // `pedidos` junto con `envio_flag`. NADA se bloquea: el agente humano maneja y asigna todos los
-    // pedidos; los casos imposibles solo llevan nota 🚨 en Shipday + flag consultable.
+    // v64: DECISIÓN DE DESPACHO POR ZONA, no por el nombre de la tarifa. El diseño es: Shopify manda el
+    // pedido → Supabase corrige/clasifica la dirección → si la entrega es de flota propia, va a Shipday
+    // sin intervención humana. El filtro por nombre (shouldDispatchShopifyOrder) queda solo como señal
+    // secundaria ("el cliente eligió línea de ciudad") para banderas y como respaldo si el resolver cae.
+    // Despacha: metro flota propia · ambiguo con TODAS las opciones propias · sin_match con línea de
+    // ciudad (Shipday geocodifica la dirección cruda). NO despacha: interior (Servientrega a sucursal),
+    // Z4a (solo retiro en punto), comarca sin servicio, retiro en tienda — esos llevan bandera/registro.
+    // F4 (v31): la zona se resuelve SIEMPRE con resolver_tarifa_v2 y se persiste en `pedidos` + `envio_flag`.
     const esLineaCiudad = shouldDispatchShopifyOrder(shopifyOrder);
     const gratis = esEnvioGratis(shopifyOrder);
     // v32: en retiro no hay dirección de entrega que clasificar — el pedido se registra sin zona ni flag.
     const retiro = esRetiroEnTienda(shopifyOrder);
     const zona = retiro ? null : await resolverTarifa(String(order.customerAddress ?? ''));
-    let despachar = esLineaCiudad;
-    if (!despachar && gratis) {
-      despachar = esFlotaPropia(zona);
+    const lineasEnvio: string = (shopifyOrder?.shipping_lines || []).map((l: any) => `${l?.title ?? ''} ${l?.code ?? ''}`).join(' ').toLowerCase();
+    const sinMatchCiudad = zona?.estado === 'sin_match' && lineaIndicaCiudad(lineasEnvio, esLineaCiudad);
+    // RPC caído (zona null, no retiro) → respaldo al filtro por nombre: mejor despachar un pedido de
+    // ciudad sin zona que perderlo en silencio. En retiro nunca se despacha.
+    const despachar = retiro ? false : (zona ? (esFlotaPropia(zona) || sinMatchCiudad) : esLineaCiudad);
+    if (gratis && !retiro) {
+      // Traza del envío gratis (>$300, aplica en todo el país): en ciudad va a flota propia, en el
+      // interior es retiro en la sucursal Servientrega. La zona ya decidió arriba; esto solo registra.
       await logJob('shopify-webhook', despachar ? 'envio_gratis_rescatado' : 'envio_gratis_omitido', true, {
         order: order.orderNumber, zona: zona?.zona ?? zona?.estado ?? 'n/d', total: shopifyOrder.total_price ?? null,
       });
@@ -125,8 +133,7 @@ Deno.serve(async (req) => {
     // cruda y el agente la maneja igual; no hay decisión de ruteo que corregir. Se SILENCIA del flag (no va
     // al correo ni a `envio_flag`), pero se deja registro APARTE en job_log para seguir mejorando el
     // diccionario de zonas (qué direcciones de ciudad no matchean). "Ciudad" se decide por el nombre de la
-    // línea (domicilio/Ciudad de Panamá/San Miguelito), aunque el filtro de despacho aún no la incluya (piloto).
-    const lineasEnvio: string = (shopifyOrder?.shipping_lines || []).map((l: any) => `${l?.title ?? ''} ${l?.code ?? ''}`).join(' ').toLowerCase();
+    // línea (domicilio/Ciudad de Panamá/San Miguelito), aunque el filtro de despacho no la incluya.
     const silenciarSinMatch = flagRaw === 'direccion_no_reconocida' && lineaIndicaCiudad(lineasEnvio, esLineaCiudad);
     const flag = silenciarSinMatch ? null : flagRaw;
     if (silenciarSinMatch) {
@@ -160,7 +167,7 @@ Deno.serve(async (req) => {
       envio_flag: flag,
     });
     if (!despachar) {
-      console.log(`Pedido ${shopifyOrder.order_number ?? shopifyOrder.id} omitido (${retiro ? 'retiro en tienda' : 'no es entrega local'})${flag ? ` · flag ${flag}` : ''}`);
+      console.log(`Pedido ${shopifyOrder.order_number ?? shopifyOrder.id} omitido (${retiro ? 'retiro en tienda' : `zona ${zona?.zona ?? zona?.estado ?? 'sin resolver'} no es flota propia`})${flag ? ` · flag ${flag}` : ''}`);
       return json({ ok: true, skipped: true });
     }
     // v62: IDEMPOTENCIA. Shopify entrega at-least-once (reintenta ante timeout/no-2xx) y un pedido puede
