@@ -253,6 +253,73 @@ export async function shipdayOrderIdDe(pedidoRef: string): Promise<string | null
   } catch { return null; }
 }
 
+// --- Watchdog de actividad (v69) -----------------------------------------------------------------
+// El apagón del 15-ago (WATI desactivó el webhook y nadie se enteró en 8 h) dejó claro que falta una
+// señal de "no está entrando NADA". `job_log` no sirve como latido —un turno normal exitoso no siempre
+// escribe ahí—; la señal buena es la tabla `messages`: si no hay NINGÚN mensaje (cliente, bot o asesor)
+// en horario hábil, algo está roto aguas arriba.
+
+// Marca de tiempo del mensaje más reciente (cualquier rol). null = tabla vacía o error.
+export async function ultimoMensajeAt(): Promise<string | null> {
+  try {
+    const res = await fetch(restUrl('/messages?select=created_at&order=created_at.desc&limit=1'), {
+      headers: serviceHeaders(),
+      signal: AbortSignal.timeout(10000),
+    });
+    if (!res.ok) return null;
+    const filas = await res.json();
+    return filas?.[0]?.created_at ?? null;
+  } catch { return null; }
+}
+
+// Resumen del día (RPC `resumen_diario`): volumen, incidencias, silencio máximo y —lo importante— las
+// conversaciones que quedaron SIN RESPONDER (ni bot ni asesor). Alimenta el correo de cierre.
+export interface ResumenDiario {
+  desde: string;
+  clientes: { escribieron: number; atendidos: number; sin_atencion: number };
+  mensajes: { de_clientes: number; del_bot: number; de_asesores: number };
+  incidencias: Record<string, number>;
+  silencio_max_min: number;
+  sin_responder: Array<{ wa_id: string; nombre: string | null; hora: string; espera_min: number; texto: string }>;
+  sin_responder_n: number;
+}
+
+export async function resumenDiario(minEspera = 45): Promise<ResumenDiario | null> {
+  try {
+    const res = await fetch(restUrl('/rpc/resumen_diario'), {
+      method: 'POST',
+      headers: serviceHeaders(),
+      body: JSON.stringify({ p_min_espera: minEspera }),
+      signal: AbortSignal.timeout(15000),
+    });
+    if (!res.ok) return null;
+    return await res.json() as ResumenDiario;
+  } catch { return null; }
+}
+
+// Filas recientes de job_log con esta `action` (el resumen las usa para marcar 💰 los casos que el
+// copiloto NO puede atender — los escribe el barrido en copilot-webhook como `desatencion_avisada`; y
+// las banderas de zona/envío `pedido_flag` que escribe shopify-webhook).
+export async function jobLogRecientes(action: string, desdeIso: string, limite = 100): Promise<Array<{ created_at: string; detail: any }>> {
+  try {
+    const url = `/job_log?select=created_at,detail&action=eq.${encodeURIComponent(action)}&created_at=gte.${encodeURIComponent(desdeIso)}&order=created_at.desc&limit=${limite}`;
+    const res = await fetch(restUrl(url), { headers: serviceHeaders(), signal: AbortSignal.timeout(10000) });
+    if (!res.ok) return [];
+    return await res.json();
+  } catch { return []; }
+}
+
+// Última fila de job_log con esta `action` (para el anti-spam de alertas y el aviso de recuperación).
+export async function ultimoJobLog(action: string, desdeIso: string): Promise<{ created_at: string; detail: any } | null> {
+  try {
+    const url = `/job_log?select=created_at,detail&action=eq.${encodeURIComponent(action)}&created_at=gte.${encodeURIComponent(desdeIso)}&order=created_at.desc&limit=1`;
+    const res = await fetch(restUrl(url), { headers: serviceHeaders(), signal: AbortSignal.timeout(10000) });
+    if (!res.ok) return null;
+    const filas = await res.json();
+    return filas?.[0] ?? null;
+  } catch { return null; }
+}
+
 // --- Resolución de zona (v52) --------------------------------------------------------------------
 // El diccionario + el RPC `resolver_tarifa_v2` (v31: metro E interior) saben la zona real de una dirección;
 // Shipday solo geocodifica texto libre. Esto NO reemplaza el geocoding: enriquece la orden con la
