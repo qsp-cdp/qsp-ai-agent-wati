@@ -253,6 +253,30 @@ export async function shipdayOrderIdDe(pedidoRef: string): Promise<string | null
   } catch { return null; }
 }
 
+// --- Idempotencia del despacho por WATI (v63) ------------------------------------------------------
+// El asesor dispara la plantilla "Despachar a Shipday" desde el inbox. Si la dispara dos veces (doble
+// clic, duda de si salió, o dos asesores sobre el mismo chat), hoy se crean DOS órdenes en Shipday →
+// dos repartidores al mismo destino. A diferencia de Shopify, aquí no siempre hay número de pedido:
+// watiCaptureToShipday genera `WATI-<timestamp>`, distinto en cada disparo, así que la llave no puede
+// ser el pedido_ref. La guarda real es por CLIENTE + VENTANA DE TIEMPO: si a este wa_id ya se le creó
+// una orden hace pocos minutos, es el mismo despacho repetido.
+// BEST-EFFORT: ante cualquier fallo devuelve null y el llamador despacha (mejor repetir que perder).
+export async function pedidoWatiReciente(waId: string, minutos = 15): Promise<{ pedido_ref: string; shipday_order_id: string | null } | null> {
+  try {
+    const wa = String(waId ?? '').replace(/\D/g, '');
+    if (wa.length < 6) return null;
+    const desde = new Date(Date.now() - minutos * 60 * 1000).toISOString();
+    const res = await fetch(
+      restUrl(`/pedidos?wa_id=eq.${encodeURIComponent(wa)}&fuente=eq.wati&created_at=gte.${encodeURIComponent(desde)}&select=pedido_ref,shipday_order_id&order=created_at.desc&limit=1`),
+      { headers: serviceHeaders(), signal: AbortSignal.timeout(5000) },
+    );
+    if (!res.ok) return null;
+    const rows = await res.json() as Array<{ pedido_ref?: string; shipday_order_id?: string | null }>;
+    const r = rows?.[0];
+    return r?.pedido_ref ? { pedido_ref: String(r.pedido_ref), shipday_order_id: r.shipday_order_id ?? null } : null;
+  } catch { return null; }
+}
+
 // --- Watchdog de actividad (v69) -----------------------------------------------------------------
 // El apagón del 15-ago (WATI desactivó el webhook y nadie se enteró en 8 h) dejó claro que falta una
 // señal de "no está entrando NADA". `job_log` no sirve como latido —un turno normal exitoso no siempre
