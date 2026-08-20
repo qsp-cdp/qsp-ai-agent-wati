@@ -1,0 +1,62 @@
+# Despliegue de una Edge Function grande (copilot-webhook) desde GitHub Actions.
+# Existe porque copilot-webhook (~305 KB) no cabe en el canal MCP de despliegue y el entorno de
+# desarrollo remoto no tiene CLI ni salida a la Management API de Supabase. La CI de GitHub sí.
+#
+# CÓMO USARLO (todo en el navegador, sin instalar nada):
+#   1. Crear un Access Token en https://supabase.com/dashboard/account/tokens
+#   2. Repo → Settings → Secrets and variables → Actions → New repository secret:
+#        Name:  SUPABASE_ACCESS_TOKEN
+#        Value: <el token del paso 1>
+#   3. Repo → pestaña Actions → este workflow → "Run workflow" (elegí esta rama).
+#      Si el botón no aparece (el workflow aún no está en la rama por defecto), abrí la corrida
+#      fallida que dejó el primer push y usá "Re-run all jobs" una vez agregado el secreto.
+name: Desplegar Edge Function
+
+on:
+  workflow_dispatch:
+    inputs:
+      function:
+        description: Función a desplegar
+        required: true
+        default: copilot-webhook
+  push:
+    branches: [claude/supabase-agent-review-tvvg61]
+    paths:
+      - supabase/functions/copilot-webhook/**
+      - .github/workflows/deploy-copilot.yml
+
+concurrency:
+  group: deploy-copilot
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    env:
+      SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+      PROJECT_REF: jbigmlcalcwiphqeudxd
+      FUNC: ${{ github.event.inputs.function || 'copilot-webhook' }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Verificar que el secreto exista
+        run: |
+          if [ -z "$SUPABASE_ACCESS_TOKEN" ]; then
+            echo "::error::Falta el secreto SUPABASE_ACCESS_TOKEN. Agrégalo en Settings → Secrets → Actions y re-ejecuta."
+            exit 1
+          fi
+
+      - name: Instalar la CLI de Supabase
+        uses: supabase/setup-cli@v1
+        with:
+          version: latest
+
+      - name: Desplegar ${{ env.FUNC }}
+        run: supabase functions deploy "$FUNC" --project-ref "$PROJECT_REF" --no-verify-jwt
+
+      - name: Verificar la versión desplegada
+        run: |
+          sleep 3
+          V=$(curl -s "https://${PROJECT_REF}.functions.supabase.co/${FUNC}" | grep -o '"version":"[^"]*"' || true)
+          echo "Healthcheck: ${V:-'(sin campo version)'}"
