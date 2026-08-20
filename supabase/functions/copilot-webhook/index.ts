@@ -1976,6 +1976,7 @@ async function guardarDatosEnvio(waId: string, input: any): Promise<string> {
       } catch { /* la zona es un extra: sin ella la captura sigue válida */ }
     }
     const completo = faltan.length === 0;
+    const zonaDebil = !zona || ["sin_match", "ambiguo", "error"].includes(String((zona as any)?.estado ?? ""));
     // v75 — espejo a los atributos de WATI (best-effort). El pin se guarda como link de Maps clicable.
     const pinUrl = coords ? `https://maps.google.com/?q=${coords.lat},${coords.lng}`
       : mapsUrl ? mapsUrl
@@ -1983,8 +1984,16 @@ async function guardarDatosEnvio(waId: string, input: any): Promise<string> {
       : (!cambioDireccion && existente?.maps_url) ? String(existente.maps_url) : "";
     const zonaTxt = zona ? [(zona as any).zona ?? (zona as any).estado, (zona as any).tarifa_usd != null ? `$${(zona as any).tarifa_usd}` : null].filter(Boolean).join(" · ") : "";
     await espejarEnvioWati(digitos, { direccion: dirFinal, referencia: refFinal, pinUrl, zonaTxt });
-    // P3-b: datos completos → cerrar la ventana de captura para que el gate de handoff vuelva a callar.
-    if (completo) await sb.from("conversations").update({ captura_hasta: null }).eq("wa_id", digitos);
+    // v78 — ¿el bot sigue ESPERANDO algo del cliente? (faltan datos, o pidió el pin porque la zona no
+    // resolvió). Mientras espere, la ventana de captura queda ABIERTA: si un asesor entra a la
+    // conversación —aunque sea por error—, la respuesta del cliente con esos datos NO se pierde; el gate
+    // de handoff la enruta al modo captura en vez de callar. Caso real 20-ago: el bot pidió la ubicación,
+    // un asesor saludó a los 5 min, y el pin que mandó el cliente cayó en el vacío. Cuando ya no falta
+    // nada (o el pin llegó), se cierra y el gate vuelve a su regla normal.
+    const esperandoAlgo = !completo || (zonaDebil && !pinFinal);
+    await sb.from("conversations")
+      .update({ captura_hasta: esperandoAlgo ? new Date(Date.now() + 20 * 60 * 1000).toISOString() : null })
+      .eq("wa_id", digitos);
     await log("captura_envio", true, { waId, completo, faltan, pin: pinFinal, zona: (zona as any)?.zona ?? (zona as any)?.estado ?? null });
     return JSON.stringify({
       ok: true, guardado: Object.keys(fila).filter((k) => k !== "updated_at"), faltan,
@@ -1993,7 +2002,6 @@ async function guardarDatosEnvio(waId: string, input: any): Promise<string> {
       nota: (() => {
         // v76 — el pin se pide SOLO como refuerzo: cuando la dirección no resolvió en el mapa de zonas
         // (sin_match/ambiguo/null) y aún no hay pin. Si la zona resolvió, NO se pide (menos fricción).
-        const zonaDebil = !zona || ["sin_match", "ambiguo", "error"].includes(String((zona as any)?.estado ?? ""));
         // v76.1 — sin zona resuelta está PROHIBIDO citar un costo de envío: el modelo arrastraba el precio
         // de la dirección ANTERIOR de la conversación (caso real: cambió a "Vía Brasil" → sin_match → el
         // bot igual dijo "B/.6.00" heredado de Betania). El costo de la dirección nueva puede ser otro.
@@ -2886,7 +2894,7 @@ Deno.serve(async (req) => {
         texto: tr?.texto ?? null, ts: new Date().toISOString(),
       });
     }
-    return Response.json({ status: "ok", function: "copilot-webhook", version: "v77-ubicacion", mode: MODE, mode_raw: MODE_RAW, model: MODEL, llm_configured: !!anthropic, wati_send_configured: !!(WATI_API_TOKEN && WATI_API_BASE), inventario_configurado: !!(SHOPIFY_ADMIN_TOKEN && SHOPIFY_ADMIN_API_BASE), resolve_configured: !!RESOLVE_SECRET, webhook_key_es_default: WEBHOOK_KEY_ES_DEFAULT, handoff_assist_min: HANDOFF_ASSIST_MIN, handoff_cold_hours: HANDOFF_COLD_HOURS, debounce_ms: DEBOUNCE_MS, sesion_gap_dias: SESION_GAP_DIAS, burbujas: BURBUJAS, burbuja_ms: BURBUJA_MS, audio_puente: AUDIO_PUENTE, sweep: SWEEP_MODE, sweep_espera_min: SWEEP_ESPERA_MIN, stt: STT_MODE, stt_raw: STT_RAW, stt_configurado: !!OPENAI_API_KEY, stt_model: STT_MODEL, busqueda_shadow: BUSQUEDA_SHADOW, busqueda_mcp: BUSQUEDA_MCP, busqueda_mcp_limit: BUSQUEDA_MCP_LIMIT, catalog_mcp_url: CATALOG_MCP_URL, ucp_profile_url: UCP_PROFILE_URL, live_targets: MODE === "live" ? (LIVE_ALL ? "all" : LIVE_ALLOWLIST.length) : 0, ts: new Date().toISOString() });
+    return Response.json({ status: "ok", function: "copilot-webhook", version: "v78-captura-resiliente", mode: MODE, mode_raw: MODE_RAW, model: MODEL, llm_configured: !!anthropic, wati_send_configured: !!(WATI_API_TOKEN && WATI_API_BASE), inventario_configurado: !!(SHOPIFY_ADMIN_TOKEN && SHOPIFY_ADMIN_API_BASE), resolve_configured: !!RESOLVE_SECRET, webhook_key_es_default: WEBHOOK_KEY_ES_DEFAULT, handoff_assist_min: HANDOFF_ASSIST_MIN, handoff_cold_hours: HANDOFF_COLD_HOURS, debounce_ms: DEBOUNCE_MS, sesion_gap_dias: SESION_GAP_DIAS, burbujas: BURBUJAS, burbuja_ms: BURBUJA_MS, audio_puente: AUDIO_PUENTE, sweep: SWEEP_MODE, sweep_espera_min: SWEEP_ESPERA_MIN, stt: STT_MODE, stt_raw: STT_RAW, stt_configurado: !!OPENAI_API_KEY, stt_model: STT_MODEL, busqueda_shadow: BUSQUEDA_SHADOW, busqueda_mcp: BUSQUEDA_MCP, busqueda_mcp_limit: BUSQUEDA_MCP_LIMIT, catalog_mcp_url: CATALOG_MCP_URL, ucp_profile_url: UCP_PROFILE_URL, live_targets: MODE === "live" ? (LIVE_ALL ? "all" : LIVE_ALLOWLIST.length) : 0, ts: new Date().toISOString() });
   }
   if (req.method !== "POST") return Response.json({ error: "method_not_allowed" }, { status: 405 });
   if (url.searchParams.get("key") !== WEBHOOK_KEY) return Response.json({ error: "forbidden" }, { status: 403 });
@@ -3151,6 +3159,23 @@ Deno.serve(async (req) => {
       if (c) { coordsLoc = c; campoLoc = campo; break; }
     }
     if (coordsLoc) {
+      // v78 — EL PIN SE GUARDA SIEMPRE, hable el bot o no. Aunque la conversación esté en handoff y el
+      // bot deba callar, la ubicación es un DATO que el despacho necesita: perderla obliga a pedírsela
+      // otra vez al cliente. Se escribe solo el pin (no toca dirección/referencia) en la libreta que
+      // lee wati-order. Best-effort: si falla, el flujo sigue igual.
+      try {
+        const dig8 = waId.slice(-8);
+        const { data: cPin } = await sb.from("contacts").select("id").eq("phone_digits", dig8)
+          .order("updated_at", { ascending: false }).limit(1);
+        const idPin = (cPin ?? [])[0]?.id;
+        const pinFila = {
+          latitude: coordsLoc.lat, longitude: coordsLoc.lng,
+          maps_url: `https://maps.google.com/?q=${coordsLoc.lat},${coordsLoc.lng}`,
+          updated_at: new Date().toISOString(),
+        };
+        if (idPin) await sb.from("contacts").update(pinFila).eq("id", idPin);
+        else await sb.from("contacts").insert({ name: p?.senderName || "Cliente WhatsApp", phone: `+${waId}`, address: "", source: "copilot", ...pinFila });
+      } catch (e) { await log("error", false, { waId, fase: "pin_persistir", error: String(e).slice(0, 150) }); }
       texto = `[el cliente compartió su ubicación 📍] https://maps.google.com/?q=${coordsLoc.lat},${coordsLoc.lng}`;
       tipo = "text";
       // Solo el CAMPO que traía las coordenadas (diagnóstico de shape); la coordenada en sí no va al log.
