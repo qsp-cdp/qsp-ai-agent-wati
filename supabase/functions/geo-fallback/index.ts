@@ -101,6 +101,10 @@ Deno.serve(async (req) => {
         const z = await rpc('zona_por_coordenadas', { p_lat: g.lat, p_lng: g.lng }) as any;
         fila = {
           consulta_norm: clave, consulta_raw: raw, lat: g.lat, lng: g.lng,
+          // v2: el NOMBRE CANÓNICO del lugar según Google (ej. "EMTOP"). Es lo que se indexa en el
+          // diccionario al aprender: se repite entre clientes, a diferencia de la frase suelta que
+          // escribió este cliente en particular.
+          nombre_lugar: g.nombre ?? null,
           zona: z?.zona ?? null, corregimiento: z?.corregimiento ?? null,
           estado: z?.estado === 'ok' ? 'ok' : 'fuera_area',
         };
@@ -115,6 +119,21 @@ Deno.serve(async (req) => {
     await fetch(`${SB_URL}/rest/v1/geocache`, { method: 'POST', headers: { ...H, Prefer: 'resolution=merge-duplicates,return=minimal' }, body: JSON.stringify(fila) }).catch(() => {});
     await fetch(`${SB_URL}/rest/v1/job_log`, { method: 'POST', headers: { ...H, Prefer: 'return=minimal' },
       body: JSON.stringify({ function_name: 'geo-fallback', action: 'geocode', ok: fila.estado === 'ok', detail: { estado: fila.estado, zona: fila.zona ?? null, usadas: usadas + 1 } }) }).catch(() => {});
+
+    // APRENDIZAJE: si Google ubicó el lugar y el polígono dio zona, el nombre canónico pasa a ser una
+    // entrada permanente del diccionario — la próxima vez (y cualquier variante de la frase) resuelve
+    // GRATIS por texto, sin llamar a Google. La función aplica sus propios guardarraíles (el nombre
+    // debe aparecer en lo que escribió el cliente, no puede pisar entradas existentes, etc.).
+    if (fila.estado === 'ok') {
+      try {
+        const aprendidos = await rpc('promover_geocache_al_diccionario', {}) as any[];
+        if (Array.isArray(aprendidos) && aprendidos.length) {
+          await fetch(`${SB_URL}/rest/v1/job_log`, { method: 'POST', headers: { ...H, Prefer: 'return=minimal' },
+            body: JSON.stringify({ function_name: 'geo-fallback', action: 'diccionario_aprendio', ok: true,
+              detail: { nuevos: aprendidos.length, nombres: aprendidos.map((a) => a.nombre).slice(0, 5) } }) }).catch(() => {});
+        }
+      } catch { /* aprender es un extra: si falla, la respuesta al cliente no cambia */ }
+    }
 
     return json({ estado: fila.estado, zona: fila.zona ?? null, corregimiento: fila.corregimiento ?? null, lat: fila.lat ?? null, lng: fila.lng ?? null, origen: 'google' });
   } catch (e) {
