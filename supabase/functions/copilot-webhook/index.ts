@@ -1988,6 +1988,30 @@ async function guardarDatosEnvio(waId: string, input: any): Promise<string> {
         if (z) zona = { estado: (z as any).estado ?? null, ambito: (z as any).ambito ?? null, zona: (z as any).zona ?? null, tarifa_usd: (z as any).tarifa_usd ?? null, metodo: (z as any).metodo ?? null };
       } catch { /* la zona es un extra: sin ella la captura sigue válida */ }
     }
+    // v81 — CAPA 3: el diccionario no reconoció la dirección (caso real "Vía Brasil, Local de Emtop":
+    // un comercio, no un barrio). Se le pregunta a Google DÓNDE queda y la zona la decide nuestro
+    // polígono a partir de esas coordenadas — Google traduce, nunca pone la tarifa. La función
+    // geo-fallback tiene caché (no se paga dos veces la misma dirección) y tope diario de llamadas.
+    // Best-effort y en línea: si falla o tarda, la captura sigue igual que antes (zona sin resolver).
+    if (dirFinal && (!zona || String((zona as any).estado) === "sin_match")) {
+      try {
+        const rg = await fetch(`${SB_URL}/functions/v1/geo-fallback?key=geofb-7k2m9x4q1w`, {
+          method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ direccion: dirFinal }), signal: AbortSignal.timeout(9000),
+        });
+        if (rg.ok) {
+          const g = await rg.json();
+          if (g?.estado === "ok" && g?.zona) {
+            const { data: z2 } = await sb.rpc("zona_por_corregimiento", { p_correg: g.corregimiento });
+            const f = Array.isArray(z2) ? z2[0] : z2;
+            zona = { estado: "ok", ambito: "metro", zona: g.zona,
+                     tarifa_usd: (f as any)?.tarifa_usd ?? null, metodo: (f as any)?.metodo ?? "propia",
+                     origen: g.origen === "cache" ? "geo_cache" : "geo_google" };
+            await log("zona_por_geocode", true, { waId, zona: g.zona, correg: g.corregimiento, origen: g.origen });
+          }
+        }
+      } catch (e) { await log("zona_por_geocode", false, { waId, error: String(e).slice(0, 150) }); }
+    }
     // v80 — EL PIN MANDA: si hay coordenadas (pin nuevo, o el registrado si la dirección no cambió) y
     // el TEXTO no resolvió zona, se resuelve por point-in-polygon (RPC zona_por_coordenadas: polígonos
     // oficiales de corregimientos → zona del diccionario). Es la vía más precisa: no depende de cómo el
@@ -2922,7 +2946,7 @@ Deno.serve(async (req) => {
         texto: tr?.texto ?? null, ts: new Date().toISOString(),
       });
     }
-    return Response.json({ status: "ok", function: "copilot-webhook", version: "v80-zona-por-pin", mode: MODE, mode_raw: MODE_RAW, model: MODEL, llm_configured: !!anthropic, wati_send_configured: !!(WATI_API_TOKEN && WATI_API_BASE), inventario_configurado: !!(SHOPIFY_ADMIN_TOKEN && SHOPIFY_ADMIN_API_BASE), resolve_configured: !!RESOLVE_SECRET, webhook_key_es_default: WEBHOOK_KEY_ES_DEFAULT, handoff_assist_min: HANDOFF_ASSIST_MIN, handoff_cold_hours: HANDOFF_COLD_HOURS, debounce_ms: DEBOUNCE_MS, sesion_gap_dias: SESION_GAP_DIAS, burbujas: BURBUJAS, burbuja_ms: BURBUJA_MS, audio_puente: AUDIO_PUENTE, sweep: SWEEP_MODE, sweep_espera_min: SWEEP_ESPERA_MIN, stt: STT_MODE, stt_raw: STT_RAW, stt_configurado: !!OPENAI_API_KEY, stt_model: STT_MODEL, busqueda_shadow: BUSQUEDA_SHADOW, busqueda_mcp: BUSQUEDA_MCP, busqueda_mcp_limit: BUSQUEDA_MCP_LIMIT, catalog_mcp_url: CATALOG_MCP_URL, ucp_profile_url: UCP_PROFILE_URL, live_targets: MODE === "live" ? (LIVE_ALL ? "all" : LIVE_ALLOWLIST.length) : 0, ts: new Date().toISOString() });
+    return Response.json({ status: "ok", function: "copilot-webhook", version: "v81-geocode-fallback", mode: MODE, mode_raw: MODE_RAW, model: MODEL, llm_configured: !!anthropic, wati_send_configured: !!(WATI_API_TOKEN && WATI_API_BASE), inventario_configurado: !!(SHOPIFY_ADMIN_TOKEN && SHOPIFY_ADMIN_API_BASE), resolve_configured: !!RESOLVE_SECRET, webhook_key_es_default: WEBHOOK_KEY_ES_DEFAULT, handoff_assist_min: HANDOFF_ASSIST_MIN, handoff_cold_hours: HANDOFF_COLD_HOURS, debounce_ms: DEBOUNCE_MS, sesion_gap_dias: SESION_GAP_DIAS, burbujas: BURBUJAS, burbuja_ms: BURBUJA_MS, audio_puente: AUDIO_PUENTE, sweep: SWEEP_MODE, sweep_espera_min: SWEEP_ESPERA_MIN, stt: STT_MODE, stt_raw: STT_RAW, stt_configurado: !!OPENAI_API_KEY, stt_model: STT_MODEL, busqueda_shadow: BUSQUEDA_SHADOW, busqueda_mcp: BUSQUEDA_MCP, busqueda_mcp_limit: BUSQUEDA_MCP_LIMIT, catalog_mcp_url: CATALOG_MCP_URL, ucp_profile_url: UCP_PROFILE_URL, live_targets: MODE === "live" ? (LIVE_ALL ? "all" : LIVE_ALLOWLIST.length) : 0, ts: new Date().toISOString() });
   }
   if (req.method !== "POST") return Response.json({ error: "method_not_allowed" }, { status: 405 });
   if (url.searchParams.get("key") !== WEBHOOK_KEY) return Response.json({ error: "forbidden" }, { status: 403 });
