@@ -750,6 +750,13 @@ LOGÍSTICA, PAGOS Y DATOS DE LA TIENDA (envíos, ubicación, horarios, métodos 
 - COSTO/MÉTODO DE ENVÍO POR SECTOR (Ciudad de Panamá y San Miguelito): cuando el cliente pida cuánto cuesta el envío, cómo le llega, o DÓNDE RETIRAR en un lugar CONCRETO de la ciudad (su corregimiento o barrio: Tocumen, Betania, Juan Díaz, San Miguelito, Las Cumbres…), usa la herramienta tarifa_entrega con ese lugar y RELAYA su "respuesta_sugerida" (puedes adaptar el tono, pero NUNCA cambies el método ni el precio que devuelve). OJO — el error más grave a evitar: en algunas zonas NO ofrecemos entrega a domicilio, SOLO retiro en un punto Servientrega; dilo tal cual y NO ofrezcas domicilio ahí. IMPORTANTE — el punto de retiro de un SECTOR DE LA CIUDAD (ej. "¿dónde retiro en Tocumen?") sale de tarifa_entrega, NO de sucursales_interior (esa herramienta es SOLO para el INTERIOR/provincias). Si tarifa_entrega devuelve estado "ambiguo", pregunta en qué corregimiento está; si "sin_match" y el cliente es del INTERIOR, usa sucursales_interior + info_tienda; si "sin_match" y no ubicas el lugar, o "error"/"sin_dato", deriva a un asesor. (El método "asesor" llega como estado "ok" con la respuesta ya armada: relayala.) Para el costo GENÉRICO de envío (sin un sector concreto) usa info_tienda.
 - ENVÍO GRATIS — SOLO compra por la WEB (>US$300): el envío gratis en compras mayores a US$300 aplica ÚNICAMENTE cuando el cliente COMPLETA la compra en línea por la web (checkout en el sitio). En un pedido o cotización que se coordina por WhatsApp, el envío gratis NO aplica: se cobra la tarifa de envío normal según la zona (cotízala con tarifa_entrega o info_tienda). Por eso NUNCA digas "califica" ni "sigue calificando para envío gratis" al armar una cotización por WhatsApp, aunque el subtotal pase de US$300. Si viene al caso PUEDES mencionarlo como opción ("si completa la compra por nuestra web con más de US$300, el envío es gratis"), pero el pedido por WhatsApp lleva su costo de envío. Cuando SÍ aplica (compra web >US$300): en la Ciudad de Panamá es gratis a domicilio; en el interior es a la sucursal Servientrega para RETIRO, no puerta a puerta.
 
+CAPTURA DE DATOS DE ENTREGA (cuando el cliente quiere ENVÍO a domicilio)
+- Cuando el cliente decida COMPRAR y quiera ENVÍO a domicilio (o pida coordinar la entrega de una compra que está cerrando contigo), captura con naturalidad los datos de entrega: la dirección completa (corregimiento o barrio, calle, edificio o casa) y un punto de referencia; el pin/ubicación de WhatsApp o el link de Maps es opcional, pero ofrécelo UNA vez ("si desea, compártame su ubicación por el clip 📎 para ubicarlo exacto").
+- Cada dato que el cliente dé, guárdalo AL MOMENTO con guardar_datos_envio (puedes llamarla varias veces a medida que los da). La herramienta te dice qué falta: repregunta SOLO eso, UNA vez, sin convertirlo en formulario. Si el cliente lo ignora o cambia de tema, no insistas.
+- Si guardar_datos_envio devuelve la zona con costo, confírmalo tal cual (es el mismo dato determinista de tarifa_entrega). Si la zona sale del INTERIOR, aplica las reglas del interior (Servientrega: retiro o domicilio, costos de info_tienda) — no ofrezcas flota propia.
+- Al completar (dirección + referencia): confirma en UNA línea lo capturado y di que un asesor confirma el despacho y el pago. Tú NO despachas, NO cobras y NO prometes hora de entrega — eso lo lanza el asesor.
+- Esto NO cambia la regla anti-interrupción: si un humano está coordinando la entrega en ese momento, no te metas.
+
 CONCIENCIA DE PEDIDOS (estado de un pedido YA hecho)
 - Cuando el cliente pregunte por el ESTADO, el seguimiento o la entrega de SU pedido/orden/compra YA realizada ("¿dónde está mi pedido?", "¿ya salió mi orden?", "¿cuándo me llega?", "¿me das el número de guía?"), usa la herramienta estado_pedido (toma su WhatsApp del contexto — NO se lo pidas) y RELAYA su "respuesta_sugerida". NUNCA inventes el estado, la fecha de entrega ni un número de guía: solo lo que devuelva la tool.
 - Preguntar por el estado de un pedido ya despachado NO es una interrupción: respóndelo con estado_pedido. Distinto es un pago/cotización/factura o una entrega que un HUMANO está coordinando en ese momento (eso sí se deriva, ver anti-interrupción).
@@ -787,6 +794,17 @@ Un compañero del equipo tiene esta conversación, pero lleva un rato sin respon
 - NO cierres ni confirmes la venta, NO confirmes ni coordines un pago, un pedido ni una entrega, NO pidas ni guardes datos del cliente, NO toques datos fiscales (RUC/factura), NO cotices el costo/método de envío de un sector concreto (eso compromete una entrega: la coordina el asesor), y NO contradigas ni renegocies algo que el asesor ya venía manejando (un precio especial, una cortesía).
 - Si la pregunta toca un pago en curso, una cotización/factura formal, coordinar una entrega, o el caso puntual que lleva el asesor, NO escribas nada (deja la respuesta vacía): que lo siga el humano.`;
 
+// v74 — MODO CAPTURA (P3-b): un asesor invocó al bot SOLO para capturar los datos de entrega mientras
+// la conversación sigue en handoff (endpoint ?captura=1 → conversations.captura_hasta). Reemplaza a
+// ASSIST_SUFFIX en ese modo; las tools quedan acotadas en responderLLM (modoCaptura).
+const CAPTURA_SUFFIX = `
+
+MODO CAPTURA DE ENTREGA — un asesor del equipo te pidió capturar los datos de entrega de este cliente. Tu ÚNICO objetivo en este modo:
+- Obtener y guardar (con guardar_datos_envio, llamándola con cada dato que el cliente dé): la dirección completa (corregimiento o barrio, calle, edificio o casa), un punto de referencia y —opcional— el pin/ubicación de WhatsApp o link de Maps.
+- Repregunta SOLO lo que la herramienta diga que falta, UNA vez por dato, con calidez y sin sonar a formulario.
+- Cuando la herramienta confirme que no falta nada: agradece, confirma la dirección en UNA línea y di que el asesor continúa con el despacho.
+- NO vendas, NO cotices productos, NO coordines ni confirmes pagos, NO toques datos fiscales (RUC/cédula/factura), NO prometas hora de entrega. Si el cliente pregunta otra cosa, responde en UNA línea solo si una herramienta te da el dato; si no, dile que el asesor le confirma enseguida.`;
+
 const TOOLS: Anthropic.Tool[] = [{
   name: "buscar_producto",
   description: "Busca productos en el catálogo de Quick Service Panamá (Shopify). Llámala SIEMPRE que el cliente pregunte precio, disponibilidad/stock, compatibilidad, características (bandeja de papel, dúplex, conectividad, etc.), o mencione/insinúe un producto, marca o categoría (tinta, toner, impresora Epson/Canon/HP, etc.). Pasa términos CONCISOS: marca + MODELO (el número de modelo es la mejor señal); para 'tinta para [impresora]' busca por el modelo de la impresora; para una CARACTERÍSTICA (ej. 'bandeja legal y carta') pasa la característica en los términos, no solo la marca. Puedes llamarla varias veces reformulando si no encuentras. Devuelve título, precio (precio_usd SIN ITBMS + itbms_7pct + total_con_itbms), stock (disponibilidad ya resuelta: muestra el número si hay >3, si no deriva a un asesor), marca, tipo, link y especificaciones (texto real de la ficha del producto, cuando la tienda lo tenga — pertenece SOLO a ese resultado, nunca la mezcles con otro producto de la lista; úsala solo para características físicas/técnicas, NUNCA para precio/promo; si especificaciones_truncada=true puede haber más datos que no viste). Devuelve hasta 6 resultados; algunos pueden venir marcados combo:true (presentación combo/juego/pack/kit — LEE su título antes de presentarlo como el juego de la familia pedida) y precio_desde:true (el precio es un 'desde' porque hay variantes a distinto precio). Si un resultado trae oferta:true con precio_antes_usd/ahorro_usd, está en PRECIO DE OFERTA: destácalo con esos valores exactos.",
@@ -800,6 +818,10 @@ const TOOLS: Anthropic.Tool[] = [{
   name: "guardar_lead",
   description: "Guarda los datos de contacto del cliente en WATI para que un asesor cotice más rápido y para enriquecer el CRM. Llámala cuando el cliente te dé alguno de estos datos (correo, nombre, apellido y/o empresa), normalmente cuando hay intención de cotizar o comprar. Pasa SOLO los datos que el cliente realmente dio (puedes llamarla varias veces a medida que los da). NO la uses para RUC/cédula/datos de factura (eso lo maneja un asesor). El número de WhatsApp se toma solo.",
   input_schema: { type: "object", properties: { email: { type: "string", description: "Correo electrónico del cliente, ej: juan@empresa.com" }, nombre: { type: "string", description: "Nombre (de pila) del cliente" }, apellido: { type: "string", description: "Apellido del cliente" }, empresa: { type: "string", description: "Nombre de la empresa (solo si la compra es para una empresa)" } } },
+} as Anthropic.Tool, {
+  name: "guardar_datos_envio",
+  description: "Guarda los DATOS DE ENTREGA a domicilio del cliente (dirección, punto de referencia, link/pin de ubicación y nombre de quien recibe) en la libreta oficial que usa el equipo para despachar. Llámala cuando el cliente quiera ENVÍO a domicilio y te dé cualquiera de esos datos (puedes llamarla varias veces a medida que los da — pasa SOLO lo que el cliente realmente dio, en sus palabras, sin inventar ni completar). Devuelve qué quedó guardado, qué FALTA (repregunta SOLO eso, una vez) y la zona/costo resuelto cuando la dirección se reconoce (relaya ese costo tal cual). El teléfono se toma solo del contexto. NO es para datos fiscales (RUC/cédula/factura) ni pagos. El DESPACHO final siempre lo confirma y lo lanza un asesor: NUNCA prometas hora de entrega ni digas que el pedido ya salió.",
+  input_schema: { type: "object", properties: { direccion: { type: "string", description: "Dirección de entrega tal como la dio el cliente (corregimiento/barrio, calle, edificio o casa, apto)." }, referencia: { type: "string", description: "Punto de referencia para el repartidor (ej. 'frente al parque, portón negro')." }, maps_url: { type: "string", description: "Link de Google Maps o ubicación compartida por WhatsApp, tal cual llegó." }, nombre: { type: "string", description: "Nombre de quien recibe el pedido, si el cliente lo dio." } } },
 } as Anthropic.Tool, {
   name: "sucursales_interior",
   description: "Puntos de recogida en el INTERIOR del país / provincias (red Servientrega, 45 sucursales con teléfono y horario) — NO para la Ciudad de Panamá / San Miguelito (para el retiro o el costo en un sector de la CIUDAD usa tarifa_entrega). Úsala cuando el cliente del interior (David, Chiriquí, Chitré, Bocas, etc.) pregunte dónde recoger/retirar, si hay sucursal/agencia/punto en su zona, o pida la ubicación de un punto. Pasa 'lugar' = la provincia o ciudad del cliente (ej. 'Chiriquí', 'David', 'Penonomé', 'Chitré'). Si el cliente da una ciudad y no aparece, deduce TÚ la provincia (sabes la geografía de Panamá) y vuelve a llamarla con la provincia. Devuelve SOLO puntos reales — NUNCA inventes sucursales, direcciones ni teléfonos.",
@@ -1842,6 +1864,91 @@ async function tarifaEntrega(lugar: string = ""): Promise<string> {
   }
 }
 
+// v74 — CAPTURA DE DATOS DE ENVÍO (P3-a/b). Guarda dirección/referencia/pin/nombre en la libreta
+// `contacts` — la MISMA que leen wati-address/wati-order: lo capturado aquí fluye directo al despacho
+// que el asesor lanza con la plantilla "Despachar a Shipday" (wati-order completa desde la libreta lo
+// que no venga en el body). El bot NUNCA crea la orden en Shipday. Los links cortos de Maps
+// (maps.app.goo.gl) se guardan CRUDOS: wati-order los resuelve al despachar (resolveMapsCoords).
+function coordsDeMaps(url: string): { lat: number; lng: number } | null {
+  const s = String(url ?? "");
+  const m = s.match(/@(-?\d{1,2}\.\d+),(-?\d{1,3}\.\d+)/) ||
+    s.match(/[?&](?:q|ll|query|daddr|destination)=(-?\d{1,2}\.\d+),\s*(-?\d{1,3}\.\d+)/) ||
+    s.match(/!3d(-?\d{1,2}\.\d+)!4d(-?\d{1,3}\.\d+)/) ||
+    s.match(/^geo:(-?\d{1,2}\.\d+),(-?\d{1,3}\.\d+)/i);
+  if (!m) return null;
+  const lat = Number(m[1]), lng = Number(m[2]);
+  return (isFinite(lat) && isFinite(lng) && Math.abs(lat) <= 90 && Math.abs(lng) <= 180) ? { lat, lng } : null;
+}
+
+async function guardarDatosEnvio(waId: string, input: any): Promise<string> {
+  try {
+    const digitos = String(waId ?? "").replace(/\D/g, "");
+    const digits8 = digitos.slice(-8);
+    if (digits8.length < 6) return JSON.stringify({ ok: false, nota: "Sin teléfono utilizable; deriva la coordinación a un asesor." });
+    const direccion = String(input?.direccion ?? "").trim().slice(0, 500);
+    const referencia = String(input?.referencia ?? "").trim().slice(0, 300);
+    const mapsUrl = String(input?.maps_url ?? "").trim().slice(0, 500);
+    const nombre = String(input?.nombre ?? "").trim().slice(0, 120);
+    if (direccion && (direccion.includes("{{") || direccion.startsWith("@"))) {
+      return JSON.stringify({ ok: false, nota: "La dirección llegó como variable sin resolver; pídela de nuevo al cliente." });
+    }
+    // Libreta: actualizar solo los campos que llegaron (misma semántica que wati-address; no borra nada).
+    const { data: prev } = await sb.from("contacts").select("id,name,address,referencia,maps_url,latitude,longitude")
+      .eq("phone_digits", digits8).order("updated_at", { ascending: false }).limit(1);
+    const existente = (prev ?? [])[0] as any;
+    const coords = mapsUrl ? coordsDeMaps(mapsUrl) : null;
+    const fila: Record<string, unknown> = { updated_at: new Date().toISOString() };
+    if (nombre) fila.name = nombre;
+    if (direccion) fila.address = direccion;
+    if (referencia) fila.referencia = referencia;
+    if (mapsUrl) fila.maps_url = mapsUrl;
+    if (coords) { fila.latitude = coords.lat; fila.longitude = coords.lng; }
+    if (Object.keys(fila).length === 1 && !existente) {
+      return JSON.stringify({ ok: false, nota: "No llegó ningún dato para guardar; pide la dirección de entrega." });
+    }
+    if (existente?.id) {
+      const up = await sb.from("contacts").update(fila).eq("id", existente.id);
+      if (up.error) throw new Error(up.error.message);
+    } else {
+      const ins = await sb.from("contacts").insert({
+        name: nombre || "Cliente WhatsApp", phone: `+${digitos}`, address: direccion || "",
+        referencia: referencia || null, maps_url: mapsUrl || null,
+        latitude: coords?.lat ?? null, longitude: coords?.lng ?? null, source: "copilot",
+      });
+      if (ins.error) throw new Error(ins.error.message);
+    }
+    const dirFinal = direccion || existente?.address || "";
+    const refFinal = referencia || existente?.referencia || "";
+    const pinFinal = !!(coords || mapsUrl || existente?.latitude != null || existente?.maps_url);
+    const faltan: string[] = [];
+    if (!dirFinal) faltan.push("direccion");
+    if (!refFinal) faltan.push("referencia");
+    // Zona best-effort (resolver_tarifa_v2: metro E interior) para confirmar cobertura/costo con dato real.
+    let zona: Record<string, unknown> | null = null;
+    if (dirFinal) {
+      try {
+        const { data: z } = await sb.rpc("resolver_tarifa_v2", { p_lugar: dirFinal });
+        if (z) zona = { estado: (z as any).estado ?? null, ambito: (z as any).ambito ?? null, zona: (z as any).zona ?? null, tarifa_usd: (z as any).tarifa_usd ?? null, metodo: (z as any).metodo ?? null };
+      } catch { /* la zona es un extra: sin ella la captura sigue válida */ }
+    }
+    const completo = faltan.length === 0;
+    // P3-b: datos completos → cerrar la ventana de captura para que el gate de handoff vuelva a callar.
+    if (completo) await sb.from("conversations").update({ captura_hasta: null }).eq("wa_id", digitos);
+    await log("captura_envio", true, { waId, completo, faltan, pin: pinFinal, zona: (zona as any)?.zona ?? (zona as any)?.estado ?? null });
+    return JSON.stringify({
+      ok: true, guardado: Object.keys(fila).filter((k) => k !== "updated_at"), faltan,
+      pin_ubicacion: pinFinal ? "sí" : "no (opcional: el cliente puede compartir su ubicación por el clip de WhatsApp)",
+      zona,
+      nota: completo
+        ? "Datos completos. Confirma la dirección al cliente en UNA línea y dile que un asesor confirma el despacho y el pago. NO prometas hora de entrega."
+        : `Falta: ${faltan.join(" y ")}. Pídelo con naturalidad (UNA sola vez). El pin/ubicación es opcional.`,
+    });
+  } catch (e) {
+    await log("error", false, { fase: "captura_envio", waId, error: String(e).slice(0, 200) });
+    return JSON.stringify({ ok: false, nota: "No se pudo guardar; sigue la conversación con normalidad y deriva la coordinación a un asesor." });
+  }
+}
+
 // v48 — CONCIENCIA DE PEDIDOS. La lectura la hace el RPC estado_pedido (fuente única = tabla `pedidos`, que
 // escriben las funciones de despacho: shopify-webhook / shipday-status / wati-order — ver
 // docs/handoff-pedidos-conciencia.md). El fraseo se arma en CÓDIGO (frasearPedido, puro/testeable) para que
@@ -1899,7 +2006,7 @@ async function estadoPedido(waId: string = ""): Promise<string> {
   }
 }
 
-async function responderLLM(history: { role: string; content: string; model?: string | null; created_at?: string | null }[], forceTool: boolean, imagenes?: { b64: string; mediaType: string }[] | null, imagenFallo?: boolean, waId: string = "", atributos: Record<string, string> = {}, linksTracked: Record<string, string> = {}, modoAsistencia: boolean = false, sufijoExtra: string = ""): Promise<{ text: string | null; toolCalls: unknown[]; tokensIn: number; tokensOut: number; cacheRead: number; cacheWrite: number; agotado?: boolean }> {
+async function responderLLM(history: { role: string; content: string; model?: string | null; created_at?: string | null }[], forceTool: boolean, imagenes?: { b64: string; mediaType: string }[] | null, imagenFallo?: boolean, waId: string = "", atributos: Record<string, string> = {}, linksTracked: Record<string, string> = {}, modoAsistencia: boolean = false, sufijoExtra: string = "", modoCaptura: boolean = false): Promise<{ text: string | null; toolCalls: unknown[]; tokensIn: number; tokensOut: number; cacheRead: number; cacheWrite: number; agotado?: boolean }> {
   if (!anthropic) return { text: null, toolCalls: [], tokensIn: 0, tokensOut: 0, cacheRead: 0, cacheWrite: 0 };
   // La API exige que el primer mensaje sea del usuario: descarta "assistant" al inicio
   // (puede pasar si un asesor escribió primero).
@@ -1948,7 +2055,8 @@ async function responderLLM(history: { role: string; content: string; model?: st
   // invalidar el caché. Render order de la API: tools → system → messages; con el breakpoint al
   // final de SYSTEM_PROMPT, tools + SYSTEM_PROMPT quedan cacheados (lectura 0.1×). Resultado: ~misma
   // salida, input mucho más barato en turnos con cache-hit (verificar con usage.cache_read_input_tokens).
-  const systemDinamico = ctx + ctxAhora + ctxHorario + (modoAsistencia ? ASSIST_SUFFIX + sufijoExtra : ctxDatos);
+  // v74: en MODO CAPTURA el sufijo es CAPTURA_SUFFIX (objetivo único: datos de entrega) en vez del de asistencia.
+  const systemDinamico = ctx + ctxAhora + ctxHorario + (modoCaptura ? CAPTURA_SUFFIX : modoAsistencia ? ASSIST_SUFFIX + sufijoExtra : ctxDatos);
   const system: Anthropic.TextBlockParam[] = [
     { type: "text", text: SYSTEM_PROMPT, cache_control: { type: "ephemeral" } },
     { type: "text", text: systemDinamico },
@@ -1958,7 +2066,11 @@ async function responderLLM(history: { role: string; content: string; model?: st
   // cliente con un humano a cargo) y tarifa_entrega (cotizar método+precio de envío COMPROMETE una entrega
   // —v47—; si en asistencia preguntan el costo, cae a info_tienda genérico, no comprometido). ASSIST_SUFFIX
   // gobierna qué NO cerrar/coordinar; INTERRUPT_RE ya bloqueó pago/fiscal/coordinar entrega antes de llegar.
-  const toolsActivas = modoAsistencia ? TOOLS.filter((t) => ["buscar_producto", "info_tienda", "sucursales_interior", "estado_pedido", "calcular_cotizacion", "consultar_folleto"].includes(t.name)) : TOOLS;
+  // v74: en MODO CAPTURA las tools se acotan al objetivo (guardar datos + responder cobertura/costo);
+  // guardar_datos_envio sigue FUERA de la asistencia normal (no capturar datos con un humano a cargo).
+  const toolsActivas = modoCaptura
+    ? TOOLS.filter((t) => ["guardar_datos_envio", "tarifa_entrega", "info_tienda", "sucursales_interior"].includes(t.name))
+    : modoAsistencia ? TOOLS.filter((t) => ["buscar_producto", "info_tienda", "sucursales_interior", "estado_pedido", "calcular_cotizacion", "consultar_folleto"].includes(t.name)) : TOOLS;
   // Los mensajes de un asesor humano se marcan para que el agente sepa que los dijo una persona.
   // v32: cada mensaje ANTERIOR (no el último/actual) se prefija con [hoy/ayer/fecha] para que el bot
   // ubique el historial en el tiempo. El último (el que se responde ahora) va limpio (es "ahora", y así
@@ -2026,6 +2138,8 @@ async function responderLLM(history: { role: string; content: string; model?: st
           ? await infoTienda()
           : block.name === "guardar_lead"
           ? await guardarLead(waId, (block.input as any).email, (block.input as any).empresa, (block.input as any).nombre, (block.input as any).apellido)
+          : block.name === "guardar_datos_envio"
+          ? await guardarDatosEnvio(waId, block.input as any)
           : block.name === "sucursales_interior"
           ? sucursalesInterior((block.input as any).lugar ?? "")
           : block.name === "tarifa_entrega"
@@ -2400,8 +2514,9 @@ async function ejecutarAsistencia(
           // ASSIST_SUFFIX ("todo debe salir de una herramienta, nunca de memoria"). modoAsistencia=true acota
           // las tools. linksTracked + reaplicarTracking reponen el tracking de buscar_producto (v29).
           const linksTracked: Record<string, string> = {};
+          // v74: origen "captura" (P3-b) → modoCaptura: tools acotadas + CAPTURA_SUFFIX en vez de ASSIST_SUFFIX.
           const r = await responderLLM(history as any, false, null, false, waId, {}, linksTracked, true,
-              origen === "barrido_pidio_asesor" ? SWEEP_SUFFIX + PIDIO_ASESOR_SUFFIX : origen.startsWith("barrido") ? SWEEP_SUFFIX : "");
+              origen === "barrido_pidio_asesor" ? SWEEP_SUFFIX + PIDIO_ASESOR_SUFFIX : origen.startsWith("barrido") ? SWEEP_SUFFIX : "", origen === "captura");
           let salida = r.text ? reaplicarTracking(limpiarWhatsApp(r.text), linksTracked) : null;
           // v66 — en ASISTENCIA no hay burbujas (la regla lo prohíbe, pero si el modelo igual marcara
           // cortes, el marcador se re-une aquí: JAMÁS debe llegar [[---]] al cliente).
@@ -2413,8 +2528,12 @@ async function ejecutarAsistencia(
           // anti-duplicado (llegó otro mensaje del cliente) + anti-carrera (el asesor volvió a escribir
           // durante el LLM → reseteó el reloj → él sigue; o la conversación dejó de estar en handoff).
           if (await hayMensajeClienteMasNuevo(conv.id, userCreatedAt)) { await log("descartado_superado", true, { waId, fase: "asist-post" }); return; }
-          const { data: hNuevo } = await sb.from("messages").select("id").eq("conversation_id", conv.id).eq("model", "human-agent").gt("created_at", ultHumano as string).limit(1);
-          if (hNuevo && hNuevo.length) { await log("asistencia_handoff", true, { waId, enviado: false, motivo: "asesor_volvio" }); return; }
+          // v74: en captura por keyword-handoff puede no haber escrito nunca un humano (ultHumano vacío):
+          // sin marca de tiempo válida el filtro gt() no aplica y la consulta se salta.
+          if (ultHumano) {
+            const { data: hNuevo } = await sb.from("messages").select("id").eq("conversation_id", conv.id).eq("model", "human-agent").gt("created_at", ultHumano as string).limit(1);
+            if (hNuevo && hNuevo.length) { await log("asistencia_handoff", true, { waId, enviado: false, motivo: "asesor_volvio" }); return; }
+          }
           const { data: cAhora } = await sb.from("conversations").select("status").eq("id", conv.id).maybeSingle();
           if (cAhora?.status !== "handoff") { await log("asistencia_handoff", true, { waId, enviado: false, motivo: "status_cambio" }); return; }
           // Anti-eco: model != 'human-agent' → cuando WATI rebote el eco (owner=true), se reconoce como
@@ -2705,7 +2824,7 @@ Deno.serve(async (req) => {
         texto: tr?.texto ?? null, ts: new Date().toISOString(),
       });
     }
-    return Response.json({ status: "ok", function: "copilot-webhook", version: "v71-barrido-asistencia", mode: MODE, mode_raw: MODE_RAW, model: MODEL, llm_configured: !!anthropic, wati_send_configured: !!(WATI_API_TOKEN && WATI_API_BASE), inventario_configurado: !!(SHOPIFY_ADMIN_TOKEN && SHOPIFY_ADMIN_API_BASE), resolve_configured: !!RESOLVE_SECRET, webhook_key_es_default: WEBHOOK_KEY_ES_DEFAULT, handoff_assist_min: HANDOFF_ASSIST_MIN, handoff_cold_hours: HANDOFF_COLD_HOURS, debounce_ms: DEBOUNCE_MS, sesion_gap_dias: SESION_GAP_DIAS, burbujas: BURBUJAS, burbuja_ms: BURBUJA_MS, audio_puente: AUDIO_PUENTE, sweep: SWEEP_MODE, sweep_espera_min: SWEEP_ESPERA_MIN, stt: STT_MODE, stt_raw: STT_RAW, stt_configurado: !!OPENAI_API_KEY, stt_model: STT_MODEL, busqueda_shadow: BUSQUEDA_SHADOW, busqueda_mcp: BUSQUEDA_MCP, busqueda_mcp_limit: BUSQUEDA_MCP_LIMIT, catalog_mcp_url: CATALOG_MCP_URL, ucp_profile_url: UCP_PROFILE_URL, live_targets: MODE === "live" ? (LIVE_ALL ? "all" : LIVE_ALLOWLIST.length) : 0, ts: new Date().toISOString() });
+    return Response.json({ status: "ok", function: "copilot-webhook", version: "v74-captura-envio", mode: MODE, mode_raw: MODE_RAW, model: MODEL, llm_configured: !!anthropic, wati_send_configured: !!(WATI_API_TOKEN && WATI_API_BASE), inventario_configurado: !!(SHOPIFY_ADMIN_TOKEN && SHOPIFY_ADMIN_API_BASE), resolve_configured: !!RESOLVE_SECRET, webhook_key_es_default: WEBHOOK_KEY_ES_DEFAULT, handoff_assist_min: HANDOFF_ASSIST_MIN, handoff_cold_hours: HANDOFF_COLD_HOURS, debounce_ms: DEBOUNCE_MS, sesion_gap_dias: SESION_GAP_DIAS, burbujas: BURBUJAS, burbuja_ms: BURBUJA_MS, audio_puente: AUDIO_PUENTE, sweep: SWEEP_MODE, sweep_espera_min: SWEEP_ESPERA_MIN, stt: STT_MODE, stt_raw: STT_RAW, stt_configurado: !!OPENAI_API_KEY, stt_model: STT_MODEL, busqueda_shadow: BUSQUEDA_SHADOW, busqueda_mcp: BUSQUEDA_MCP, busqueda_mcp_limit: BUSQUEDA_MCP_LIMIT, catalog_mcp_url: CATALOG_MCP_URL, ucp_profile_url: UCP_PROFILE_URL, live_targets: MODE === "live" ? (LIVE_ALL ? "all" : LIVE_ALLOWLIST.length) : 0, ts: new Date().toISOString() });
   }
   if (req.method !== "POST") return Response.json({ error: "method_not_allowed" }, { status: 405 });
   if (url.searchParams.get("key") !== WEBHOOK_KEY) return Response.json({ error: "forbidden" }, { status: 403 });
@@ -2715,6 +2834,44 @@ Deno.serve(async (req) => {
   if (url.searchParams.get("sweep") === "1") {
     const r = await barridoAsistencia(url.searchParams.get("force") === "1");
     return Response.json({ ok: true, ...r, ts: new Date().toISOString() });
+  }
+
+  // v74 (P3-b) — ACTIVAR CAPTURA DE DATOS DE ENTREGA. Lo llama el chatbot de WATI "Captura con AI"
+  // (webhook-call desde el inbox) o un asesor vía curl, con la MISMA key del webhook. Body: {waId}.
+  // Marca conversations.captura_hasta = ahora + 30 min y ABRE la conversación con el cliente pidiendo
+  // los datos (mensaje fijo, sin LLM; si la libreta ya tiene dirección, pide confirmarla). NO saca la
+  // conversación de handoff: el asesor sigue a cargo; el gate de handoff enruta las respuestas del
+  // cliente al modo captura mientras la ventana esté vigente (y guardar_datos_envio la cierra al completar).
+  if (url.searchParams.get("captura") === "1") {
+    try {
+      const body = await req.json().catch(() => ({}));
+      const waCap = String(body?.waId ?? body?.wa_id ?? body?.telefono ?? body?.whatsappNumber ?? "").replace(/\D/g, "");
+      if (waCap.length < 8) return Response.json({ ok: false, error: "falta_waId" }, { status: 400 });
+      const { data: convCap } = await sb.from("conversations").select("id,status").eq("wa_id", waCap).maybeSingle();
+      if (!convCap?.id) return Response.json({ ok: false, error: "sin_conversacion" }, { status: 404 });
+      const hasta = new Date(Date.now() + 30 * 60 * 1000).toISOString();
+      const updCap = await sb.from("conversations").update({ captura_hasta: hasta }).eq("id", convCap.id);
+      if (updCap.error) return Response.json({ ok: false, error: String(updCap.error.message ?? "").slice(0, 150) }, { status: 500 });
+      const { data: cPrev } = await sb.from("contacts").select("address,referencia").eq("phone_digits", waCap.slice(-8)).order("updated_at", { ascending: false }).limit(1);
+      const dirPrev = String((cPrev ?? [])[0]?.address ?? "").trim();
+      const apertura = dirPrev
+        ? `📦 Para coordinar la entrega de su pedido: ¿me confirma si seguimos con la dirección que tenemos registrada?\n\n${dirPrev.slice(0, 300)}\n\nSi cambió, envíeme la dirección completa (corregimiento o barrio, calle, edificio o casa) y un punto de referencia. Si desea, también puede compartir su ubicación por el clip 📎 → Ubicación.`
+        : `📦 Con gusto le ayudo a coordinar la entrega de su pedido. ¿Me comparte la dirección completa de entrega? (corregimiento o barrio, calle, edificio o casa) y un punto de referencia. Si desea, también puede compartir su ubicación por el clip 📎 → Ubicación.`;
+      // Insert-antes-de-enviar (anti-eco, invariante v21): el eco owner=true de este envío no debe
+      // registrarse como asesor ni resetear el reloj de asistencia.
+      const quiereEnviar = liveAllowed(waCap);
+      const insCap = await sb.from("messages").insert({ conversation_id: convCap.id, role: "assistant", content: apertura, mode: quiereEnviar ? "live" : "shadow", model: "captura-envio" }).select("id");
+      let enviado = false;
+      if (!insCap.error && quiereEnviar) {
+        enviado = await enviarWati(waCap, apertura);
+        if (!enviado) await sb.from("messages").update({ mode: "shadow" }).eq("id", (insCap.data?.[0] as any)?.id);
+      }
+      await log("captura_activada", true, { waId: waCap, status: convCap.status, hasta, direccion_registrada: !!dirPrev, enviado });
+      return Response.json({ ok: true, captura_hasta: hasta, direccion_registrada: !!dirPrev, enviado, ts: new Date().toISOString() });
+    } catch (e) {
+      await log("error", false, { fase: "captura_activar", error: String(e).slice(0, 200) });
+      return Response.json({ ok: false, error: "internal" }, { status: 500 });
+    }
   }
 
   // v45: tope de tamaño del payload — los webhooks de WATI son chicos (el media llega como URL, no como
@@ -3010,6 +3167,20 @@ Deno.serve(async (req) => {
       }
       const rafagaHandoff = await textoDeRafagaSinResponder(conv.id, texto);
       const interrumpe = INTERRUPT_RE.test(rafagaHandoff); // trámite/pago/fiscal en curso → nunca tocar
+      // v74 (P3-b) — CAPTURA ACTIVADA POR EL ASESOR (endpoint ?captura=1 → conversations.captura_hasta).
+      // Mientras la ventana esté vigente, el bot conversa SOLO para capturar los datos de entrega (modo
+      // captura: tools acotadas + CAPTURA_SUFFIX), sin sacar la conversación de handoff y sin exigir los
+      // 15 min de silencio del asesor (él mismo pidió la captura). Un trámite de pago/fiscal (INTERRUPT_RE)
+      // manda: ahí el bot calla como siempre. Limitación consciente: una NOTA DE VOZ durante la captura
+      // sigue el camino de audio de arriba (no entra al modo captura); el cliente típico responde texto.
+      {
+        const { data: cCap } = await sb.from("conversations").select("captura_hasta").eq("id", conv.id).maybeSingle();
+        const capturaHasta = (cCap as any)?.captura_hasta;
+        if (!interrumpe && capturaHasta && new Date(capturaHasta).getTime() > Date.now()) {
+          correrEnSegundoPlano(ejecutarAsistencia(conv, waId, texto, contenido, userCreatedAt, (ultHumano ?? "") as string, minsSinHumano, t0, true, "captura"));
+          return Response.json({ ok: true, captura: true });
+        }
+      }
       const frio = !!ultHumano && minsSinHumano > HANDOFF_COLD_HOURS * 60 && !interrumpe;
       // v50 — asistencia ampliada a PREVENTA: además de las preguntas básicas de tienda (BASIC_INFO_RE),
       // ahora también asiste ante catálogo/precio/stock/estado de pedido (NEEDS_TOOL_RE) → el bot da precios
