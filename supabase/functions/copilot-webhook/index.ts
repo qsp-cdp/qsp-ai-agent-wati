@@ -1988,6 +1988,21 @@ async function guardarDatosEnvio(waId: string, input: any): Promise<string> {
         if (z) zona = { estado: (z as any).estado ?? null, ambito: (z as any).ambito ?? null, zona: (z as any).zona ?? null, tarifa_usd: (z as any).tarifa_usd ?? null, metodo: (z as any).metodo ?? null };
       } catch { /* la zona es un extra: sin ella la captura sigue válida */ }
     }
+    // v80 — EL PIN MANDA: si hay coordenadas (pin nuevo, o el registrado si la dirección no cambió) y
+    // el TEXTO no resolvió zona, se resuelve por point-in-polygon (RPC zona_por_coordenadas: polígonos
+    // oficiales de corregimientos → zona del diccionario). Es la vía más precisa: no depende de cómo el
+    // cliente escribió la dirección ("Local de Emtop", "donde está Farmacias Arrocha"). Best-effort.
+    const latZ = coords?.lat ?? ((!cambioDireccion && existente?.latitude != null) ? Number(existente.latitude) : null);
+    const lngZ = coords?.lng ?? ((!cambioDireccion && existente?.longitude != null) ? Number(existente.longitude) : null);
+    if (latZ != null && lngZ != null && (!zona || (zona as any).estado !== "ok")) {
+      try {
+        const { data: zp } = await sb.rpc("zona_por_coordenadas", { p_lat: latZ, p_lng: lngZ });
+        if (zp && (zp as any).estado === "ok") {
+          zona = { estado: "ok", ambito: (zp as any).ambito ?? "metro", zona: (zp as any).zona, tarifa_usd: (zp as any).tarifa_usd ?? null, metodo: (zp as any).metodo ?? null };
+          await log("zona_por_pin", true, { waId, zona: (zp as any).zona, correg: (zp as any).corregimiento ?? null });
+        }
+      } catch { /* la zona es un extra: sin ella la captura sigue válida */ }
+    }
     const completo = faltan.length === 0;
     const zonaDebil = !zona || ["sin_match", "ambiguo", "error"].includes(String((zona as any)?.estado ?? ""));
     // v75 — espejo a los atributos de WATI (best-effort). El pin se guarda como link de Maps clicable.
@@ -2907,7 +2922,7 @@ Deno.serve(async (req) => {
         texto: tr?.texto ?? null, ts: new Date().toISOString(),
       });
     }
-    return Response.json({ status: "ok", function: "copilot-webhook", version: "v79-asistencia-contexto", mode: MODE, mode_raw: MODE_RAW, model: MODEL, llm_configured: !!anthropic, wati_send_configured: !!(WATI_API_TOKEN && WATI_API_BASE), inventario_configurado: !!(SHOPIFY_ADMIN_TOKEN && SHOPIFY_ADMIN_API_BASE), resolve_configured: !!RESOLVE_SECRET, webhook_key_es_default: WEBHOOK_KEY_ES_DEFAULT, handoff_assist_min: HANDOFF_ASSIST_MIN, handoff_cold_hours: HANDOFF_COLD_HOURS, debounce_ms: DEBOUNCE_MS, sesion_gap_dias: SESION_GAP_DIAS, burbujas: BURBUJAS, burbuja_ms: BURBUJA_MS, audio_puente: AUDIO_PUENTE, sweep: SWEEP_MODE, sweep_espera_min: SWEEP_ESPERA_MIN, stt: STT_MODE, stt_raw: STT_RAW, stt_configurado: !!OPENAI_API_KEY, stt_model: STT_MODEL, busqueda_shadow: BUSQUEDA_SHADOW, busqueda_mcp: BUSQUEDA_MCP, busqueda_mcp_limit: BUSQUEDA_MCP_LIMIT, catalog_mcp_url: CATALOG_MCP_URL, ucp_profile_url: UCP_PROFILE_URL, live_targets: MODE === "live" ? (LIVE_ALL ? "all" : LIVE_ALLOWLIST.length) : 0, ts: new Date().toISOString() });
+    return Response.json({ status: "ok", function: "copilot-webhook", version: "v80-zona-por-pin", mode: MODE, mode_raw: MODE_RAW, model: MODEL, llm_configured: !!anthropic, wati_send_configured: !!(WATI_API_TOKEN && WATI_API_BASE), inventario_configurado: !!(SHOPIFY_ADMIN_TOKEN && SHOPIFY_ADMIN_API_BASE), resolve_configured: !!RESOLVE_SECRET, webhook_key_es_default: WEBHOOK_KEY_ES_DEFAULT, handoff_assist_min: HANDOFF_ASSIST_MIN, handoff_cold_hours: HANDOFF_COLD_HOURS, debounce_ms: DEBOUNCE_MS, sesion_gap_dias: SESION_GAP_DIAS, burbujas: BURBUJAS, burbuja_ms: BURBUJA_MS, audio_puente: AUDIO_PUENTE, sweep: SWEEP_MODE, sweep_espera_min: SWEEP_ESPERA_MIN, stt: STT_MODE, stt_raw: STT_RAW, stt_configurado: !!OPENAI_API_KEY, stt_model: STT_MODEL, busqueda_shadow: BUSQUEDA_SHADOW, busqueda_mcp: BUSQUEDA_MCP, busqueda_mcp_limit: BUSQUEDA_MCP_LIMIT, catalog_mcp_url: CATALOG_MCP_URL, ucp_profile_url: UCP_PROFILE_URL, live_targets: MODE === "live" ? (LIVE_ALL ? "all" : LIVE_ALLOWLIST.length) : 0, ts: new Date().toISOString() });
   }
   if (req.method !== "POST") return Response.json({ error: "method_not_allowed" }, { status: 405 });
   if (url.searchParams.get("key") !== WEBHOOK_KEY) return Response.json({ error: "forbidden" }, { status: 403 });
