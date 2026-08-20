@@ -1880,6 +1880,31 @@ function coordsDeMaps(url: string): { lat: number; lng: number } | null {
   return (isFinite(lat) && isFinite(lng) && Math.abs(lat) <= 90 && Math.abs(lng) <= 180) ? { lat, lng } : null;
 }
 
+// v75 — ESPEJO a los ATRIBUTOS DE CONTACTO DE WATI, para que el asesor vea los datos de entrega en la
+// ficha del contacto en el inbox (además de la libreta `contacts`, que es la que alimenta el despacho).
+// Mismo endpoint que guardarLead. best-effort: nunca rompe la captura. REQUIERE que estos atributos
+// existan en WATI → Contactos → Atributos: direccion_envio, referencia_envio, pin_envio, zona_envio.
+async function espejarEnvioWati(waId: string, d: { direccion: string; referencia: string; pinUrl: string; zonaTxt: string }): Promise<void> {
+  if (!WATI_API_TOKEN || !WATI_API_BASE) return;
+  const params: { name: string; value: string }[] = [];
+  if (d.direccion) params.push({ name: "direccion_envio", value: d.direccion.slice(0, 250) });
+  if (d.referencia) params.push({ name: "referencia_envio", value: d.referencia.slice(0, 250) });
+  if (d.pinUrl) params.push({ name: "pin_envio", value: d.pinUrl.slice(0, 250) });
+  if (d.zonaTxt) params.push({ name: "zona_envio", value: d.zonaTxt.slice(0, 250) });
+  if (!params.length) return;
+  try {
+    const r = await fetch(`${WATI_API_BASE}/api/v1/updateContactAttributes/${encodeURIComponent(waId)}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${WATI_API_TOKEN}` },
+      body: JSON.stringify({ customParams: params }),
+      signal: AbortSignal.timeout(8000),
+    });
+    await log("captura_envio_wati", r.ok, { waId, campos: params.map((x) => x.name), wati_status: r.status });
+  } catch (err) {
+    await log("captura_envio_wati", false, { waId, error: String(err).slice(0, 150) });
+  }
+}
+
 async function guardarDatosEnvio(waId: string, input: any): Promise<string> {
   try {
     const digitos = String(waId ?? "").replace(/\D/g, "");
@@ -1906,6 +1931,15 @@ async function guardarDatosEnvio(waId: string, input: any): Promise<string> {
     if (Object.keys(fila).length === 1 && !existente) {
       return JSON.stringify({ ok: false, nota: "No llegó ningún dato para guardar; pide la dirección de entrega." });
     }
+    // v75 — CORRECCIÓN DE DIRECCIÓN: si la dirección nueva DIFIERE de la registrada, el pin y la referencia
+    // viejos describen el domicilio ANTERIOR. Si no llegan nuevos en esta captura, se LIMPIAN — Shipday
+    // prioriza el pin, y dejarlo enrutaría a la casa vieja (misma lección que upsertContactByPhone esCorreccion).
+    const norm = (s: unknown) => String(s ?? "").toLowerCase().replace(/\s+/g, " ").trim();
+    const cambioDireccion = !!(direccion && existente?.address && norm(direccion) !== norm(existente.address));
+    if (cambioDireccion) {
+      if (!referencia) fila.referencia = null;
+      if (!coords && !mapsUrl) { fila.latitude = null; fila.longitude = null; fila.maps_url = null; }
+    }
     if (existente?.id) {
       const up = await sb.from("contacts").update(fila).eq("id", existente.id);
       if (up.error) throw new Error(up.error.message);
@@ -1918,8 +1952,9 @@ async function guardarDatosEnvio(waId: string, input: any): Promise<string> {
       if (ins.error) throw new Error(ins.error.message);
     }
     const dirFinal = direccion || existente?.address || "";
-    const refFinal = referencia || existente?.referencia || "";
-    const pinFinal = !!(coords || mapsUrl || existente?.latitude != null || existente?.maps_url);
+    // Tras un cambio de dirección, la referencia/pin viejos ya se limpiaron: no cuentan como "presentes".
+    const refFinal = referencia || (cambioDireccion ? "" : (existente?.referencia || ""));
+    const pinFinal = !!(coords || mapsUrl || (!cambioDireccion && (existente?.latitude != null || existente?.maps_url)));
     const faltan: string[] = [];
     if (!dirFinal) faltan.push("direccion");
     if (!refFinal) faltan.push("referencia");
@@ -1932,6 +1967,13 @@ async function guardarDatosEnvio(waId: string, input: any): Promise<string> {
       } catch { /* la zona es un extra: sin ella la captura sigue válida */ }
     }
     const completo = faltan.length === 0;
+    // v75 — espejo a los atributos de WATI (best-effort). El pin se guarda como link de Maps clicable.
+    const pinUrl = coords ? `https://maps.google.com/?q=${coords.lat},${coords.lng}`
+      : mapsUrl ? mapsUrl
+      : (!cambioDireccion && existente?.latitude != null) ? `https://maps.google.com/?q=${existente.latitude},${existente.longitude}`
+      : (!cambioDireccion && existente?.maps_url) ? String(existente.maps_url) : "";
+    const zonaTxt = zona ? [(zona as any).zona ?? (zona as any).estado, (zona as any).tarifa_usd != null ? `$${(zona as any).tarifa_usd}` : null].filter(Boolean).join(" · ") : "";
+    await espejarEnvioWati(digitos, { direccion: dirFinal, referencia: refFinal, pinUrl, zonaTxt });
     // P3-b: datos completos → cerrar la ventana de captura para que el gate de handoff vuelva a callar.
     if (completo) await sb.from("conversations").update({ captura_hasta: null }).eq("wa_id", digitos);
     await log("captura_envio", true, { waId, completo, faltan, pin: pinFinal, zona: (zona as any)?.zona ?? (zona as any)?.estado ?? null });
@@ -2824,7 +2866,7 @@ Deno.serve(async (req) => {
         texto: tr?.texto ?? null, ts: new Date().toISOString(),
       });
     }
-    return Response.json({ status: "ok", function: "copilot-webhook", version: "v74-captura-envio", mode: MODE, mode_raw: MODE_RAW, model: MODEL, llm_configured: !!anthropic, wati_send_configured: !!(WATI_API_TOKEN && WATI_API_BASE), inventario_configurado: !!(SHOPIFY_ADMIN_TOKEN && SHOPIFY_ADMIN_API_BASE), resolve_configured: !!RESOLVE_SECRET, webhook_key_es_default: WEBHOOK_KEY_ES_DEFAULT, handoff_assist_min: HANDOFF_ASSIST_MIN, handoff_cold_hours: HANDOFF_COLD_HOURS, debounce_ms: DEBOUNCE_MS, sesion_gap_dias: SESION_GAP_DIAS, burbujas: BURBUJAS, burbuja_ms: BURBUJA_MS, audio_puente: AUDIO_PUENTE, sweep: SWEEP_MODE, sweep_espera_min: SWEEP_ESPERA_MIN, stt: STT_MODE, stt_raw: STT_RAW, stt_configurado: !!OPENAI_API_KEY, stt_model: STT_MODEL, busqueda_shadow: BUSQUEDA_SHADOW, busqueda_mcp: BUSQUEDA_MCP, busqueda_mcp_limit: BUSQUEDA_MCP_LIMIT, catalog_mcp_url: CATALOG_MCP_URL, ucp_profile_url: UCP_PROFILE_URL, live_targets: MODE === "live" ? (LIVE_ALL ? "all" : LIVE_ALLOWLIST.length) : 0, ts: new Date().toISOString() });
+    return Response.json({ status: "ok", function: "copilot-webhook", version: "v75-captura-wati", mode: MODE, mode_raw: MODE_RAW, model: MODEL, llm_configured: !!anthropic, wati_send_configured: !!(WATI_API_TOKEN && WATI_API_BASE), inventario_configurado: !!(SHOPIFY_ADMIN_TOKEN && SHOPIFY_ADMIN_API_BASE), resolve_configured: !!RESOLVE_SECRET, webhook_key_es_default: WEBHOOK_KEY_ES_DEFAULT, handoff_assist_min: HANDOFF_ASSIST_MIN, handoff_cold_hours: HANDOFF_COLD_HOURS, debounce_ms: DEBOUNCE_MS, sesion_gap_dias: SESION_GAP_DIAS, burbujas: BURBUJAS, burbuja_ms: BURBUJA_MS, audio_puente: AUDIO_PUENTE, sweep: SWEEP_MODE, sweep_espera_min: SWEEP_ESPERA_MIN, stt: STT_MODE, stt_raw: STT_RAW, stt_configurado: !!OPENAI_API_KEY, stt_model: STT_MODEL, busqueda_shadow: BUSQUEDA_SHADOW, busqueda_mcp: BUSQUEDA_MCP, busqueda_mcp_limit: BUSQUEDA_MCP_LIMIT, catalog_mcp_url: CATALOG_MCP_URL, ucp_profile_url: UCP_PROFILE_URL, live_targets: MODE === "live" ? (LIVE_ALL ? "all" : LIVE_ALLOWLIST.length) : 0, ts: new Date().toISOString() });
   }
   if (req.method !== "POST") return Response.json({ error: "method_not_allowed" }, { status: 405 });
   if (url.searchParams.get("key") !== WEBHOOK_KEY) return Response.json({ error: "forbidden" }, { status: 403 });

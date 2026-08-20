@@ -47,12 +47,31 @@ Crear en WATI un chatbot/flow con un solo paso **Webhook / API call**:
 - Body JSON: `{"waId": "{{contact.phone}}"}` (o la variable equivalente del número del contacto).
 - El asesor lo dispara desde el inbox igual que "Despachar a Shipday". Nada más que configurar.
 
+## Atributos de contacto en WATI (v75)
+
+Además de guardar en la libreta `contacts` (lo que alimenta el despacho), la captura **espeja**
+los datos a los atributos del contacto en WATI para que el asesor los vea en la ficha del inbox.
+**Requisito:** crear estos atributos en **WATI → Contactos → Atributos** (si no existen, WATI ignora
+el valor):
+
+| Atributo | Contenido |
+|---|---|
+| `direccion_envio` | dirección de entrega |
+| `referencia_envio` | punto de referencia |
+| `pin_envio` | link de Google Maps del pin (clicable) |
+| `zona_envio` | zona + costo resueltos (ej. `Z1 Centro · $6`) |
+
+**Corrección de dirección (v75):** si el cliente da una dirección NUEVA distinta a la registrada y no
+manda pin/referencia nuevos, el pin y la referencia viejos se **limpian** — Shipday geocodifica la
+dirección nueva en vez de enrutar al domicilio anterior (evita el bug de "la casa vieja").
+
 ## Trazabilidad (job_log)
 
 | action | cuándo |
 |---|---|
 | `captura_activada` | el asesor activó la ventana (endpoint) |
 | `captura_envio` | la tool guardó datos (detalle: completo, faltan, pin, zona) |
+| `captura_envio_wati` | espejo a los atributos de WATI (campos, wati_status) |
 
 ## Flujo completo de punta a punta
 
