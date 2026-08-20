@@ -753,6 +753,7 @@ LOGÍSTICA, PAGOS Y DATOS DE LA TIENDA (envíos, ubicación, horarios, métodos 
 CAPTURA DE DATOS DE ENTREGA (cuando el cliente quiere ENVÍO a domicilio)
 - Cuando el cliente decida COMPRAR y quiera ENVÍO a domicilio (o pida coordinar la entrega de una compra que está cerrando contigo), captura con naturalidad los datos de entrega: la dirección completa (corregimiento o barrio, calle, edificio o casa) y un punto de referencia.
 - PIN/UBICACIÓN (clip 📎 de WhatsApp o link de Maps) — es un REFUERZO, no lo pidas de entrada: pídelo UNA sola vez únicamente cuando guardar_datos_envio te indique que la dirección NO se reconoció o quedó incompleta. Si el cliente no responde, no sabe cómo compartirla o no quiere, sigue adelante sin insistir (el repartidor puede llamarlo al llegar).
+- Si el cliente comparte su ubicación por el clip, te llegará como un mensaje "[el cliente compartió su ubicación 📍]" con un link de Maps: guárdalo DE INMEDIATO con guardar_datos_envio (campo maps_url, el link tal cual) y confírmale que quedó registrada. Si en cambio envía un código Plus Code (patrón tipo "XFQM+5W"): ese código no lo puedes convertir en ubicación — dile con honestidad que no puedes ubicarlo con ese código y pídele UNA vez la ubicación por el clip 📎 o un link de Google Maps; si no, sigue sin insistir.
 - Cada dato que el cliente dé, guárdalo AL MOMENTO con guardar_datos_envio (puedes llamarla varias veces a medida que los da). La herramienta te dice qué falta: repregunta SOLO eso, UNA vez, sin convertirlo en formulario. Si el cliente lo ignora o cambia de tema, no insistas.
 - Si guardar_datos_envio devuelve la zona con costo, confírmalo tal cual (es el mismo dato determinista de tarifa_entrega). Si la zona sale del INTERIOR, aplica las reglas del interior (Servientrega: retiro o domicilio, costos de info_tienda) — no ofrezcas flota propia.
 - Al completar (dirección + referencia): MUESTRA al cliente lo que quedó guardado, tal cual y en 1-2 líneas (la dirección, la referencia y "con ubicación 📍" si compartió el pin), para que pueda corregir si algo quedó mal, y di que un asesor confirma el despacho y el pago. Tú NO despachas, NO cobras y NO prometes hora de entrega — eso lo lanza el asesor.
@@ -1875,7 +1876,10 @@ function coordsDeMaps(url: string): { lat: number; lng: number } | null {
   const m = s.match(/@(-?\d{1,2}\.\d+),(-?\d{1,3}\.\d+)/) ||
     s.match(/[?&](?:q|ll|query|daddr|destination)=(-?\d{1,2}\.\d+),\s*(-?\d{1,3}\.\d+)/) ||
     s.match(/!3d(-?\d{1,2}\.\d+)!4d(-?\d{1,3}\.\d+)/) ||
-    s.match(/^geo:(-?\d{1,2}\.\d+),(-?\d{1,3}\.\d+)/i);
+    s.match(/^geo:(-?\d{1,2}\.\d+),(-?\d{1,3}\.\d+)/i) ||
+    // último recurso (v77): un par de coordenadas suelto "9.0176,-79.5263" — así llegan las
+    // ubicaciones compartidas de WhatsApp en el payload de WATI (campo text del type=location).
+    s.match(/(-?\d{1,2}\.\d{3,}),\s*(-?\d{1,3}\.\d{3,})/);
   if (!m) return null;
   const lat = Number(m[1]), lng = Number(m[2]);
   return (isFinite(lat) && isFinite(lng) && Math.abs(lat) <= 90 && Math.abs(lng) <= 180) ? { lat, lng } : null;
@@ -2882,7 +2886,7 @@ Deno.serve(async (req) => {
         texto: tr?.texto ?? null, ts: new Date().toISOString(),
       });
     }
-    return Response.json({ status: "ok", function: "copilot-webhook", version: "v76.1-costo-grounded", mode: MODE, mode_raw: MODE_RAW, model: MODEL, llm_configured: !!anthropic, wati_send_configured: !!(WATI_API_TOKEN && WATI_API_BASE), inventario_configurado: !!(SHOPIFY_ADMIN_TOKEN && SHOPIFY_ADMIN_API_BASE), resolve_configured: !!RESOLVE_SECRET, webhook_key_es_default: WEBHOOK_KEY_ES_DEFAULT, handoff_assist_min: HANDOFF_ASSIST_MIN, handoff_cold_hours: HANDOFF_COLD_HOURS, debounce_ms: DEBOUNCE_MS, sesion_gap_dias: SESION_GAP_DIAS, burbujas: BURBUJAS, burbuja_ms: BURBUJA_MS, audio_puente: AUDIO_PUENTE, sweep: SWEEP_MODE, sweep_espera_min: SWEEP_ESPERA_MIN, stt: STT_MODE, stt_raw: STT_RAW, stt_configurado: !!OPENAI_API_KEY, stt_model: STT_MODEL, busqueda_shadow: BUSQUEDA_SHADOW, busqueda_mcp: BUSQUEDA_MCP, busqueda_mcp_limit: BUSQUEDA_MCP_LIMIT, catalog_mcp_url: CATALOG_MCP_URL, ucp_profile_url: UCP_PROFILE_URL, live_targets: MODE === "live" ? (LIVE_ALL ? "all" : LIVE_ALLOWLIST.length) : 0, ts: new Date().toISOString() });
+    return Response.json({ status: "ok", function: "copilot-webhook", version: "v77-ubicacion", mode: MODE, mode_raw: MODE_RAW, model: MODEL, llm_configured: !!anthropic, wati_send_configured: !!(WATI_API_TOKEN && WATI_API_BASE), inventario_configurado: !!(SHOPIFY_ADMIN_TOKEN && SHOPIFY_ADMIN_API_BASE), resolve_configured: !!RESOLVE_SECRET, webhook_key_es_default: WEBHOOK_KEY_ES_DEFAULT, handoff_assist_min: HANDOFF_ASSIST_MIN, handoff_cold_hours: HANDOFF_COLD_HOURS, debounce_ms: DEBOUNCE_MS, sesion_gap_dias: SESION_GAP_DIAS, burbujas: BURBUJAS, burbuja_ms: BURBUJA_MS, audio_puente: AUDIO_PUENTE, sweep: SWEEP_MODE, sweep_espera_min: SWEEP_ESPERA_MIN, stt: STT_MODE, stt_raw: STT_RAW, stt_configurado: !!OPENAI_API_KEY, stt_model: STT_MODEL, busqueda_shadow: BUSQUEDA_SHADOW, busqueda_mcp: BUSQUEDA_MCP, busqueda_mcp_limit: BUSQUEDA_MCP_LIMIT, catalog_mcp_url: CATALOG_MCP_URL, ucp_profile_url: UCP_PROFILE_URL, live_targets: MODE === "live" ? (LIVE_ALL ? "all" : LIVE_ALLOWLIST.length) : 0, ts: new Date().toISOString() });
   }
   if (req.method !== "POST") return Response.json({ error: "method_not_allowed" }, { status: 405 });
   if (url.searchParams.get("key") !== WEBHOOK_KEY) return Response.json({ error: "forbidden" }, { status: 403 });
@@ -3123,6 +3127,37 @@ Deno.serve(async (req) => {
     } catch (e) {
       await log("error", false, { waId, fase: "audio_puente", error: String(e).slice(0, 300) });
       return Response.json({ ok: true, skipped: "audio_error" });
+    }
+  }
+
+  // v77 — UBICACIÓN COMPARTIDA (clip 📎). WATI la entrega como type="location" y antes caía a
+  // evento_sin_texto: el cliente compartía su ubicación y quedaba EN VISTO (caso real 20-ago, justo
+  // después de que el propio bot la pidiera). Las coordenadas vienen en alguno de varios campos según
+  // la versión del webhook: se escanean los candidatos y, si aparece un par lat,lng válido, el mensaje
+  // se REESCRIBE como texto con un link de Maps y sigue el flujo NORMAL (patrón v68 del STT) — el LLM
+  // lo guarda con guardar_datos_envio (maps_url), la misma ruta que un link pegado por el cliente.
+  if (tipo === "location" && !esDelNegocio && waId) {
+    const candidatos: [string, string][] = [
+      ["text", String(p?.text ?? "")],
+      ["data", typeof p?.data === "string" ? p.data : JSON.stringify(p?.data ?? "")],
+      ["sourceUrl", String(p?.sourceUrl ?? "")],
+      ["location", (p?.location?.latitude != null && p?.location?.longitude != null) ? `${p.location.latitude},${p.location.longitude}` : ""],
+      ["latlng", (p?.latitude != null && p?.longitude != null) ? `${p.latitude},${p.longitude}` : ""],
+    ];
+    let coordsLoc: { lat: number; lng: number } | null = null, campoLoc = "";
+    for (const [campo, valor] of candidatos) {
+      if (!valor || valor === '""') continue;
+      const c = coordsDeMaps(valor);
+      if (c) { coordsLoc = c; campoLoc = campo; break; }
+    }
+    if (coordsLoc) {
+      texto = `[el cliente compartió su ubicación 📍] https://maps.google.com/?q=${coordsLoc.lat},${coordsLoc.lng}`;
+      tipo = "text";
+      // Solo el CAMPO que traía las coordenadas (diagnóstico de shape); la coordenada en sí no va al log.
+      await log("ubicacion_recibida", true, { waId, campo: campoLoc });
+    } else {
+      // Sin coordenadas parseables: registrar el shape para diagnosticar y seguir al skip de siempre.
+      await log("ubicacion_sin_coordenadas", false, { waId, keys: Object.keys(p ?? {}).slice(0, 30) });
     }
   }
 
