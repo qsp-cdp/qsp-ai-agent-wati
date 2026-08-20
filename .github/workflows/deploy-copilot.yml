@@ -40,22 +40,28 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Verificar que el secreto exista
+      - name: Comprobar secreto
+        id: guard
         run: |
           if [ -z "$SUPABASE_ACCESS_TOKEN" ]; then
-            echo "::error::Falta el secreto SUPABASE_ACCESS_TOKEN. Agrégalo en Settings → Secrets → Actions y re-ejecuta."
-            exit 1
+            echo "::warning::Falta SUPABASE_ACCESS_TOKEN. Agrega el secreto (Settings → Secrets and variables → Actions) y luego 'Re-run all jobs' en esta corrida. NO se desplegó nada."
+            echo "ok=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "ok=true" >> "$GITHUB_OUTPUT"
           fi
 
       - name: Instalar la CLI de Supabase
+        if: steps.guard.outputs.ok == 'true'
         uses: supabase/setup-cli@v1
         with:
           version: latest
 
       - name: Desplegar ${{ env.FUNC }}
+        if: steps.guard.outputs.ok == 'true'
         run: supabase functions deploy "$FUNC" --project-ref "$PROJECT_REF" --no-verify-jwt
 
       - name: Verificar la versión desplegada
+        if: steps.guard.outputs.ok == 'true'
         run: |
           sleep 3
           V=$(curl -s "https://${PROJECT_REF}.functions.supabase.co/${FUNC}" | grep -o '"version":"[^"]*"' || true)
