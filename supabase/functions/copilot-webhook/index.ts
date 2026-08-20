@@ -1886,12 +1886,16 @@ function coordsDeMaps(url: string): { lat: number; lng: number } | null {
 // existan en WATI → Contactos → Atributos: direccion_envio, referencia_envio, pin_envio, zona_envio.
 async function espejarEnvioWati(waId: string, d: { direccion: string; referencia: string; pinUrl: string; zonaTxt: string }): Promise<void> {
   if (!WATI_API_TOKEN || !WATI_API_BASE) return;
-  const params: { name: string; value: string }[] = [];
-  if (d.direccion) params.push({ name: "direccion_envio", value: d.direccion.slice(0, 250) });
-  if (d.referencia) params.push({ name: "referencia_envio", value: d.referencia.slice(0, 250) });
-  if (d.pinUrl) params.push({ name: "pin_envio", value: d.pinUrl.slice(0, 250) });
-  if (d.zonaTxt) params.push({ name: "zona_envio", value: d.zonaTxt.slice(0, 250) });
-  if (!params.length) return;
+  // v75.1 — SIEMPRE se escriben los 4 atributos: un campo vacío se manda como "-" para PISAR el valor
+  // anterior en WATI. Si se omitiera (bug original), la ficha conservaba el pin/referencia VIEJOS aunque
+  // la libreta ya los hubiera limpiado tras un cambio de dirección — el asesor veía un pin obsoleto.
+  const val = (s: string) => (s ? s.slice(0, 250) : "-");
+  const params: { name: string; value: string }[] = [
+    { name: "direccion_envio", value: val(d.direccion) },
+    { name: "referencia_envio", value: val(d.referencia) },
+    { name: "pin_envio", value: val(d.pinUrl) },
+    { name: "zona_envio", value: val(d.zonaTxt) },
+  ];
   try {
     const r = await fetch(`${WATI_API_BASE}/api/v1/updateContactAttributes/${encodeURIComponent(waId)}`, {
       method: "POST",
@@ -2866,7 +2870,7 @@ Deno.serve(async (req) => {
         texto: tr?.texto ?? null, ts: new Date().toISOString(),
       });
     }
-    return Response.json({ status: "ok", function: "copilot-webhook", version: "v75-captura-wati", mode: MODE, mode_raw: MODE_RAW, model: MODEL, llm_configured: !!anthropic, wati_send_configured: !!(WATI_API_TOKEN && WATI_API_BASE), inventario_configurado: !!(SHOPIFY_ADMIN_TOKEN && SHOPIFY_ADMIN_API_BASE), resolve_configured: !!RESOLVE_SECRET, webhook_key_es_default: WEBHOOK_KEY_ES_DEFAULT, handoff_assist_min: HANDOFF_ASSIST_MIN, handoff_cold_hours: HANDOFF_COLD_HOURS, debounce_ms: DEBOUNCE_MS, sesion_gap_dias: SESION_GAP_DIAS, burbujas: BURBUJAS, burbuja_ms: BURBUJA_MS, audio_puente: AUDIO_PUENTE, sweep: SWEEP_MODE, sweep_espera_min: SWEEP_ESPERA_MIN, stt: STT_MODE, stt_raw: STT_RAW, stt_configurado: !!OPENAI_API_KEY, stt_model: STT_MODEL, busqueda_shadow: BUSQUEDA_SHADOW, busqueda_mcp: BUSQUEDA_MCP, busqueda_mcp_limit: BUSQUEDA_MCP_LIMIT, catalog_mcp_url: CATALOG_MCP_URL, ucp_profile_url: UCP_PROFILE_URL, live_targets: MODE === "live" ? (LIVE_ALL ? "all" : LIVE_ALLOWLIST.length) : 0, ts: new Date().toISOString() });
+    return Response.json({ status: "ok", function: "copilot-webhook", version: "v75.1-pin-pisado", mode: MODE, mode_raw: MODE_RAW, model: MODEL, llm_configured: !!anthropic, wati_send_configured: !!(WATI_API_TOKEN && WATI_API_BASE), inventario_configurado: !!(SHOPIFY_ADMIN_TOKEN && SHOPIFY_ADMIN_API_BASE), resolve_configured: !!RESOLVE_SECRET, webhook_key_es_default: WEBHOOK_KEY_ES_DEFAULT, handoff_assist_min: HANDOFF_ASSIST_MIN, handoff_cold_hours: HANDOFF_COLD_HOURS, debounce_ms: DEBOUNCE_MS, sesion_gap_dias: SESION_GAP_DIAS, burbujas: BURBUJAS, burbuja_ms: BURBUJA_MS, audio_puente: AUDIO_PUENTE, sweep: SWEEP_MODE, sweep_espera_min: SWEEP_ESPERA_MIN, stt: STT_MODE, stt_raw: STT_RAW, stt_configurado: !!OPENAI_API_KEY, stt_model: STT_MODEL, busqueda_shadow: BUSQUEDA_SHADOW, busqueda_mcp: BUSQUEDA_MCP, busqueda_mcp_limit: BUSQUEDA_MCP_LIMIT, catalog_mcp_url: CATALOG_MCP_URL, ucp_profile_url: UCP_PROFILE_URL, live_targets: MODE === "live" ? (LIVE_ALL ? "all" : LIVE_ALLOWLIST.length) : 0, ts: new Date().toISOString() });
   }
   if (req.method !== "POST") return Response.json({ error: "method_not_allowed" }, { status: 405 });
   if (url.searchParams.get("key") !== WEBHOOK_KEY) return Response.json({ error: "forbidden" }, { status: 403 });
