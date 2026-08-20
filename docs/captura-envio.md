@@ -11,8 +11,12 @@ Cuando la conversación está en modo `bot` y el cliente decide comprar con **en
 el copiloto captura los datos de forma natural (nueva tool `guardar_datos_envio`):
 
 - Pide dirección completa (corregimiento/barrio, calle, edificio o casa) y un punto de referencia.
-- El pin de WhatsApp (clip 📎 → Ubicación) o link de Maps es **opcional** — lo ofrece una vez.
+- El pin (clip 📎 → Ubicación / link de Maps) se pide **solo como refuerzo** (v76): una sola vez y
+  únicamente cuando la dirección no se reconoce en el mapa de zonas o queda incompleta. Si el cliente
+  no sabe cómo o no responde, sigue sin insistir (el repartidor puede llamarlo).
 - Guarda cada dato al momento; **repregunta solo lo que falta**, una vez, sin sonar a formulario.
+- Al completar, **muestra al cliente lo capturado** (dirección + referencia + ubicación si la dio),
+  para que corrija en el momento si algo quedó mal.
 - La tool devuelve la **zona y el costo** resueltos (resolver_tarifa_v2, metro e interior): el bot
   los confirma tal cual; si la zona es del interior aplica las reglas de Servientrega.
 - Al completar: confirma en una línea y avisa que **un asesor confirma despacho y pago**.

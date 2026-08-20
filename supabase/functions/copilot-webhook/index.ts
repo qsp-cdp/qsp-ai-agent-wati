@@ -751,10 +751,11 @@ LOGÍSTICA, PAGOS Y DATOS DE LA TIENDA (envíos, ubicación, horarios, métodos 
 - ENVÍO GRATIS — SOLO compra por la WEB (>US$300): el envío gratis en compras mayores a US$300 aplica ÚNICAMENTE cuando el cliente COMPLETA la compra en línea por la web (checkout en el sitio). En un pedido o cotización que se coordina por WhatsApp, el envío gratis NO aplica: se cobra la tarifa de envío normal según la zona (cotízala con tarifa_entrega o info_tienda). Por eso NUNCA digas "califica" ni "sigue calificando para envío gratis" al armar una cotización por WhatsApp, aunque el subtotal pase de US$300. Si viene al caso PUEDES mencionarlo como opción ("si completa la compra por nuestra web con más de US$300, el envío es gratis"), pero el pedido por WhatsApp lleva su costo de envío. Cuando SÍ aplica (compra web >US$300): en la Ciudad de Panamá es gratis a domicilio; en el interior es a la sucursal Servientrega para RETIRO, no puerta a puerta.
 
 CAPTURA DE DATOS DE ENTREGA (cuando el cliente quiere ENVÍO a domicilio)
-- Cuando el cliente decida COMPRAR y quiera ENVÍO a domicilio (o pida coordinar la entrega de una compra que está cerrando contigo), captura con naturalidad los datos de entrega: la dirección completa (corregimiento o barrio, calle, edificio o casa) y un punto de referencia; el pin/ubicación de WhatsApp o el link de Maps es opcional, pero ofrécelo UNA vez ("si desea, compártame su ubicación por el clip 📎 para ubicarlo exacto").
+- Cuando el cliente decida COMPRAR y quiera ENVÍO a domicilio (o pida coordinar la entrega de una compra que está cerrando contigo), captura con naturalidad los datos de entrega: la dirección completa (corregimiento o barrio, calle, edificio o casa) y un punto de referencia.
+- PIN/UBICACIÓN (clip 📎 de WhatsApp o link de Maps) — es un REFUERZO, no lo pidas de entrada: pídelo UNA sola vez únicamente cuando guardar_datos_envio te indique que la dirección NO se reconoció o quedó incompleta. Si el cliente no responde, no sabe cómo compartirla o no quiere, sigue adelante sin insistir (el repartidor puede llamarlo al llegar).
 - Cada dato que el cliente dé, guárdalo AL MOMENTO con guardar_datos_envio (puedes llamarla varias veces a medida que los da). La herramienta te dice qué falta: repregunta SOLO eso, UNA vez, sin convertirlo en formulario. Si el cliente lo ignora o cambia de tema, no insistas.
 - Si guardar_datos_envio devuelve la zona con costo, confírmalo tal cual (es el mismo dato determinista de tarifa_entrega). Si la zona sale del INTERIOR, aplica las reglas del interior (Servientrega: retiro o domicilio, costos de info_tienda) — no ofrezcas flota propia.
-- Al completar (dirección + referencia): confirma en UNA línea lo capturado y di que un asesor confirma el despacho y el pago. Tú NO despachas, NO cobras y NO prometes hora de entrega — eso lo lanza el asesor.
+- Al completar (dirección + referencia): MUESTRA al cliente lo que quedó guardado, tal cual y en 1-2 líneas (la dirección, la referencia y "con ubicación 📍" si compartió el pin), para que pueda corregir si algo quedó mal, y di que un asesor confirma el despacho y el pago. Tú NO despachas, NO cobras y NO prometes hora de entrega — eso lo lanza el asesor.
 - Esto NO cambia la regla anti-interrupción: si un humano está coordinando la entrega en ese momento, no te metas.
 
 CONCIENCIA DE PEDIDOS (estado de un pedido YA hecho)
@@ -800,9 +801,9 @@ Un compañero del equipo tiene esta conversación, pero lleva un rato sin respon
 const CAPTURA_SUFFIX = `
 
 MODO CAPTURA DE ENTREGA — un asesor del equipo te pidió capturar los datos de entrega de este cliente. Tu ÚNICO objetivo en este modo:
-- Obtener y guardar (con guardar_datos_envio, llamándola con cada dato que el cliente dé): la dirección completa (corregimiento o barrio, calle, edificio o casa), un punto de referencia y —opcional— el pin/ubicación de WhatsApp o link de Maps.
+- Obtener y guardar (con guardar_datos_envio, llamándola con cada dato que el cliente dé): la dirección completa (corregimiento o barrio, calle, edificio o casa) y un punto de referencia. El pin/ubicación (clip 📎) pídelo UNA sola vez y SOLO si la herramienta indica que la dirección no se reconoció o quedó incompleta; si el cliente no sabe o no responde, sigue sin insistir.
 - Repregunta SOLO lo que la herramienta diga que falta, UNA vez por dato, con calidez y sin sonar a formulario.
-- Cuando la herramienta confirme que no falta nada: agradece, confirma la dirección en UNA línea y di que el asesor continúa con el despacho.
+- Cuando la herramienta confirme que no falta nada: agradece, MUESTRA en 1-2 líneas lo que quedó guardado (la dirección, la referencia y si hay ubicación 📍) para que el cliente corrija si algo quedó mal, y di que el asesor continúa con el despacho.
 - NO vendas, NO cotices productos, NO coordines ni confirmes pagos, NO toques datos fiscales (RUC/cédula/factura), NO prometas hora de entrega. Si el cliente pregunta otra cosa, responde en UNA línea solo si una herramienta te da el dato; si no, dile que el asesor le confirma enseguida.`;
 
 const TOOLS: Anthropic.Tool[] = [{
@@ -1985,9 +1986,16 @@ async function guardarDatosEnvio(waId: string, input: any): Promise<string> {
       ok: true, guardado: Object.keys(fila).filter((k) => k !== "updated_at"), faltan,
       pin_ubicacion: pinFinal ? "sí" : "no (opcional: el cliente puede compartir su ubicación por el clip de WhatsApp)",
       zona,
-      nota: completo
-        ? "Datos completos. Confirma la dirección al cliente en UNA línea y dile que un asesor confirma el despacho y el pago. NO prometas hora de entrega."
-        : `Falta: ${faltan.join(" y ")}. Pídelo con naturalidad (UNA sola vez). El pin/ubicación es opcional.`,
+      nota: (() => {
+        // v76 — el pin se pide SOLO como refuerzo: cuando la dirección no resolvió en el mapa de zonas
+        // (sin_match/ambiguo/null) y aún no hay pin. Si la zona resolvió, NO se pide (menos fricción).
+        const zonaDebil = !zona || ["sin_match", "ambiguo", "error"].includes(String((zona as any)?.estado ?? ""));
+        if (!completo) return `Falta: ${faltan.join(" y ")}. Pídelo con naturalidad (UNA sola vez).`;
+        if (zonaDebil && !pinFinal) {
+          return "Datos completos, pero la dirección NO se reconoció bien en el mapa de zonas: muestra al cliente lo que quedó guardado (dirección y referencia, tal cual) y pídele UNA sola vez su ubicación por el clip 📎 para ubicarlo exacto; si no sabe cómo o no responde, sigue sin insistir (el repartidor puede llamarlo). Cierra diciendo que un asesor confirma el despacho y el pago.";
+        }
+        return "Datos completos. Muestra al cliente lo que quedó guardado, tal cual (la dirección, la referencia y si hay ubicación 📍), para que corrija si algo quedó mal, y dile que un asesor confirma el despacho y el pago. NO pidas el pin (la dirección se reconoció) y NO prometas hora de entrega.";
+      })(),
     });
   } catch (e) {
     await log("error", false, { fase: "captura_envio", waId, error: String(e).slice(0, 200) });
@@ -2870,7 +2878,7 @@ Deno.serve(async (req) => {
         texto: tr?.texto ?? null, ts: new Date().toISOString(),
       });
     }
-    return Response.json({ status: "ok", function: "copilot-webhook", version: "v75.1-pin-pisado", mode: MODE, mode_raw: MODE_RAW, model: MODEL, llm_configured: !!anthropic, wati_send_configured: !!(WATI_API_TOKEN && WATI_API_BASE), inventario_configurado: !!(SHOPIFY_ADMIN_TOKEN && SHOPIFY_ADMIN_API_BASE), resolve_configured: !!RESOLVE_SECRET, webhook_key_es_default: WEBHOOK_KEY_ES_DEFAULT, handoff_assist_min: HANDOFF_ASSIST_MIN, handoff_cold_hours: HANDOFF_COLD_HOURS, debounce_ms: DEBOUNCE_MS, sesion_gap_dias: SESION_GAP_DIAS, burbujas: BURBUJAS, burbuja_ms: BURBUJA_MS, audio_puente: AUDIO_PUENTE, sweep: SWEEP_MODE, sweep_espera_min: SWEEP_ESPERA_MIN, stt: STT_MODE, stt_raw: STT_RAW, stt_configurado: !!OPENAI_API_KEY, stt_model: STT_MODEL, busqueda_shadow: BUSQUEDA_SHADOW, busqueda_mcp: BUSQUEDA_MCP, busqueda_mcp_limit: BUSQUEDA_MCP_LIMIT, catalog_mcp_url: CATALOG_MCP_URL, ucp_profile_url: UCP_PROFILE_URL, live_targets: MODE === "live" ? (LIVE_ALL ? "all" : LIVE_ALLOWLIST.length) : 0, ts: new Date().toISOString() });
+    return Response.json({ status: "ok", function: "copilot-webhook", version: "v76-captura-ux", mode: MODE, mode_raw: MODE_RAW, model: MODEL, llm_configured: !!anthropic, wati_send_configured: !!(WATI_API_TOKEN && WATI_API_BASE), inventario_configurado: !!(SHOPIFY_ADMIN_TOKEN && SHOPIFY_ADMIN_API_BASE), resolve_configured: !!RESOLVE_SECRET, webhook_key_es_default: WEBHOOK_KEY_ES_DEFAULT, handoff_assist_min: HANDOFF_ASSIST_MIN, handoff_cold_hours: HANDOFF_COLD_HOURS, debounce_ms: DEBOUNCE_MS, sesion_gap_dias: SESION_GAP_DIAS, burbujas: BURBUJAS, burbuja_ms: BURBUJA_MS, audio_puente: AUDIO_PUENTE, sweep: SWEEP_MODE, sweep_espera_min: SWEEP_ESPERA_MIN, stt: STT_MODE, stt_raw: STT_RAW, stt_configurado: !!OPENAI_API_KEY, stt_model: STT_MODEL, busqueda_shadow: BUSQUEDA_SHADOW, busqueda_mcp: BUSQUEDA_MCP, busqueda_mcp_limit: BUSQUEDA_MCP_LIMIT, catalog_mcp_url: CATALOG_MCP_URL, ucp_profile_url: UCP_PROFILE_URL, live_targets: MODE === "live" ? (LIVE_ALL ? "all" : LIVE_ALLOWLIST.length) : 0, ts: new Date().toISOString() });
   }
   if (req.method !== "POST") return Response.json({ error: "method_not_allowed" }, { status: 405 });
   if (url.searchParams.get("key") !== WEBHOOK_KEY) return Response.json({ error: "forbidden" }, { status: 403 });
@@ -2900,9 +2908,11 @@ Deno.serve(async (req) => {
       if (updCap.error) return Response.json({ ok: false, error: String(updCap.error.message ?? "").slice(0, 150) }, { status: 500 });
       const { data: cPrev } = await sb.from("contacts").select("address,referencia").eq("phone_digits", waCap.slice(-8)).order("updated_at", { ascending: false }).limit(1);
       const dirPrev = String((cPrev ?? [])[0]?.address ?? "").trim();
+      // v76: la apertura pide SOLO dirección + referencia; el pin se pide después y únicamente si la
+      // dirección no se reconoce (regla del prompt) — menos fricción cuando la dirección resuelve bien.
       const apertura = dirPrev
-        ? `📦 Para coordinar la entrega de su pedido: ¿me confirma si seguimos con la dirección que tenemos registrada?\n\n${dirPrev.slice(0, 300)}\n\nSi cambió, envíeme la dirección completa (corregimiento o barrio, calle, edificio o casa) y un punto de referencia. Si desea, también puede compartir su ubicación por el clip 📎 → Ubicación.`
-        : `📦 Con gusto le ayudo a coordinar la entrega de su pedido. ¿Me comparte la dirección completa de entrega? (corregimiento o barrio, calle, edificio o casa) y un punto de referencia. Si desea, también puede compartir su ubicación por el clip 📎 → Ubicación.`;
+        ? `📦 Para coordinar la entrega de su pedido: ¿me confirma si seguimos con la dirección que tenemos registrada?\n\n${dirPrev.slice(0, 300)}\n\nSi cambió, envíeme la dirección completa (corregimiento o barrio, calle, edificio o casa) y un punto de referencia.`
+        : `📦 Con gusto le ayudo a coordinar la entrega de su pedido. ¿Me comparte la dirección completa de entrega? (corregimiento o barrio, calle, edificio o casa) y un punto de referencia.`;
       // Insert-antes-de-enviar (anti-eco, invariante v21): el eco owner=true de este envío no debe
       // registrarse como asesor ni resetear el reloj de asistencia.
       const quiereEnviar = liveAllowed(waCap);
