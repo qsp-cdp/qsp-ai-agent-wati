@@ -790,10 +790,12 @@ LÍMITES
 const ASSIST_SUFFIX = `
 
 MODO ASISTENCIA — un asesor humano está atendiendo este chat
-Un compañero del equipo tiene esta conversación, pero lleva un rato sin responder y el cliente acaba de preguntar algo. Para no dejarlo esperando, adelántale una respuesta ÚTIL sin retomar la venta. Todo lo que digas debe salir de una herramienta (NUNCA de memoria):
+Un compañero del equipo tiene esta conversación y el cliente preguntó algo que TÚ puedes responder con datos reales. Adelántale esa respuesta ÚTIL sin retomar la venta ni quitarle el caso. Todo lo que digas debe salir de una herramienta (NUNCA de memoria):
 - SÍ puedes: dar precio/ITBMS/stock y el link de un producto (buscar_producto), el total de cantidades o varios productos (calcular_cotizacion — NUNCA sumes ni apliques ITBMS de memoria), una especificación técnica desde el folleto oficial (consultar_folleto), datos de la tienda (info_tienda), puntos de recogida del interior (sucursales_interior) y el estado de un pedido ya hecho (estado_pedido). Responde breve (1-2 oraciones) con lo que devuelva la herramienta.
 - Sé deferente: deja claro que un asesor sigue con su caso. Ej.: "Mientras tanto le confirmo: [dato]. Un asesor continúa con su solicitud enseguida."
-- NO cierres ni confirmes la venta, NO confirmes ni coordines un pago, un pedido ni una entrega, NO pidas ni guardes datos del cliente, NO toques datos fiscales (RUC/factura), NO cotices el costo/método de envío de un sector concreto (eso compromete una entrega: la coordina el asesor), y NO contradigas ni renegocies algo que el asesor ya venía manejando (un precio especial, una cortesía).
+- NO cierres ni confirmes la venta, NO confirmes ni coordines un pedido ni una entrega, NO pidas ni guardes datos del cliente, NO cotices el costo/método de envío de un sector concreto (eso compromete una entrega: la coordina el asesor), y NO contradigas ni renegocies algo que el asesor ya venía manejando (un precio especial, una cortesía).
+- PAGOS Y FACTURACIÓN — territorio del asesor, sin excepción: NO expliques ni ofrezcas formas de pago (Yappy/ACH/tarjeta/efectivo/cuotas), NO des números de cuenta ni links de pago, NO pidas ni proceses datos de factura (RUC, cédula, razón social), y NUNCA digas ni insinúes que un pago fue recibido, capturado, confirmado o aplicado — aunque el cliente lo afirme o mande un comprobante. Si el tema es pago o factura, responde en UNA línea que el asesor lo confirma y no agregues nada más.
+- NO HAGAS PROMESAS: nada de horas ni fechas de entrega ("le llega hoy/mañana"), ni de que algo "ya salió", ni disponibilidad que no venga de una herramienta en este turno. Si no tienes el dato, dilo y deja que el asesor confirme.
 - Si la pregunta toca un pago en curso, una cotización/factura formal, coordinar una entrega, o el caso puntual que lleva el asesor, NO escribas nada (deja la respuesta vacía): que lo siga el humano.`;
 
 // v74 — MODO CAPTURA (P3-b): un asesor invocó al bot SOLO para capturar los datos de entrega mientras
@@ -950,6 +952,17 @@ async function insertarTicketPromesa(convId: string, waId: string, motivo: strin
 // (no llama al LLM, solo loggea). Sesgo deliberado: mejor callar que cortar una venta humana.
 // Evita matchear preguntas legítimas ("¿aceptan yappy?", "¿dónde retiro?") — esas las
 // resuelve info_tienda.
+// v79 — PAGOS Y FACTURACIÓN EN ASISTENCIA: territorio exclusivo del asesor. INTERRUPT_RE ya bloquea el
+// pago EN CURSO (comprobante, "adjunto el pago", RUC); esto es más amplio y aplica SOLO en handoff: con
+// un asesor en la conversación, el bot no habla de pagos NI SIQUIERA para explicar métodos — no ofrece
+// Yappy/ACH/tarjeta, no arma links de pago, no factura y jamás dice que un pago se recibió o se capturó.
+// Fuera de handoff (modo bot normal) esto no aplica: ahí "¿qué formas de pago aceptan?" se responde con
+// info_tienda como siempre.
+const PAGOS_ASESOR_RE = new RegExp([
+  "\\bpago\\b", "\\bpagos\\b", "\\bpagar\\b", "pagu[eé]", "\\babon", "dep[oó]sit", "transferen", "\\byappy\\b", "\\bach\\b",
+  "tarjeta", "efectivo", "\\bcuotas?\\b", "link de pago", "formas? de pago", "m[eé]todos? de pago", "factur", "\\bcobr",
+].join("|"), "i");
+
 const INTERRUPT_RE = new RegExp([
   // datos fiscales / facturación
   "\\bruc\\b", "\\bdv\\b", "c[eé]dula", "raz[oó]n social", "factura a nombre", "facturar a", "datos (de|para) (la )?factura", "a nombre de",
@@ -2894,7 +2907,7 @@ Deno.serve(async (req) => {
         texto: tr?.texto ?? null, ts: new Date().toISOString(),
       });
     }
-    return Response.json({ status: "ok", function: "copilot-webhook", version: "v78-captura-resiliente", mode: MODE, mode_raw: MODE_RAW, model: MODEL, llm_configured: !!anthropic, wati_send_configured: !!(WATI_API_TOKEN && WATI_API_BASE), inventario_configurado: !!(SHOPIFY_ADMIN_TOKEN && SHOPIFY_ADMIN_API_BASE), resolve_configured: !!RESOLVE_SECRET, webhook_key_es_default: WEBHOOK_KEY_ES_DEFAULT, handoff_assist_min: HANDOFF_ASSIST_MIN, handoff_cold_hours: HANDOFF_COLD_HOURS, debounce_ms: DEBOUNCE_MS, sesion_gap_dias: SESION_GAP_DIAS, burbujas: BURBUJAS, burbuja_ms: BURBUJA_MS, audio_puente: AUDIO_PUENTE, sweep: SWEEP_MODE, sweep_espera_min: SWEEP_ESPERA_MIN, stt: STT_MODE, stt_raw: STT_RAW, stt_configurado: !!OPENAI_API_KEY, stt_model: STT_MODEL, busqueda_shadow: BUSQUEDA_SHADOW, busqueda_mcp: BUSQUEDA_MCP, busqueda_mcp_limit: BUSQUEDA_MCP_LIMIT, catalog_mcp_url: CATALOG_MCP_URL, ucp_profile_url: UCP_PROFILE_URL, live_targets: MODE === "live" ? (LIVE_ALL ? "all" : LIVE_ALLOWLIST.length) : 0, ts: new Date().toISOString() });
+    return Response.json({ status: "ok", function: "copilot-webhook", version: "v79-asistencia-contexto", mode: MODE, mode_raw: MODE_RAW, model: MODEL, llm_configured: !!anthropic, wati_send_configured: !!(WATI_API_TOKEN && WATI_API_BASE), inventario_configurado: !!(SHOPIFY_ADMIN_TOKEN && SHOPIFY_ADMIN_API_BASE), resolve_configured: !!RESOLVE_SECRET, webhook_key_es_default: WEBHOOK_KEY_ES_DEFAULT, handoff_assist_min: HANDOFF_ASSIST_MIN, handoff_cold_hours: HANDOFF_COLD_HOURS, debounce_ms: DEBOUNCE_MS, sesion_gap_dias: SESION_GAP_DIAS, burbujas: BURBUJAS, burbuja_ms: BURBUJA_MS, audio_puente: AUDIO_PUENTE, sweep: SWEEP_MODE, sweep_espera_min: SWEEP_ESPERA_MIN, stt: STT_MODE, stt_raw: STT_RAW, stt_configurado: !!OPENAI_API_KEY, stt_model: STT_MODEL, busqueda_shadow: BUSQUEDA_SHADOW, busqueda_mcp: BUSQUEDA_MCP, busqueda_mcp_limit: BUSQUEDA_MCP_LIMIT, catalog_mcp_url: CATALOG_MCP_URL, ucp_profile_url: UCP_PROFILE_URL, live_targets: MODE === "live" ? (LIVE_ALL ? "all" : LIVE_ALLOWLIST.length) : 0, ts: new Date().toISOString() });
   }
   if (req.method !== "POST") return Response.json({ error: "method_not_allowed" }, { status: 405 });
   if (url.searchParams.get("key") !== WEBHOOK_KEY) return Response.json({ error: "forbidden" }, { status: 403 });
@@ -3307,8 +3320,22 @@ Deno.serve(async (req) => {
       // grounded (buscar_producto) sin retomar la venta. Guardrails ANTES del OR (revisión adversarial v50):
       // INTERRUPT_RE (pago/fiscal/coordinar entrega en curso) y HANDOFF_RE (reclamo/devolución/garantía/
       // "quiero un asesor") bloquean la asistencia → esos casos los lleva el humano, el bot calla.
-      const puedeAsistir = !!ultHumano && !frio && minsSinHumano >= HANDOFF_ASSIST_MIN
+      // v79 — ASISTENCIA POR CONTEXTO, NO POR RELOJ (decisión del negocio, 20-ago). Antes el bot exigía
+      // HANDOFF_ASSIST_MIN (15 min) de silencio del asesor: un reloj no sabe si el bot puede ayudar, solo
+      // cuánto esperó. Ahora decide el CONTENIDO: si el cliente pregunta algo que el bot responde con una
+      // herramienta (precio/stock/tienda/pedido), responde aunque el asesor acabe de escribir. Los
+      // guardarraíles que quedan son todos de contexto, no de tiempo:
+      //   · interrumpe (INTERRUPT_RE): trámite fiscal o pago EN CURSO → no tocar.
+      //   · HANDOFF_RE: reclamo, devolución, garantía, mayoreo → del asesor.
+      //   · PAGOS_ASESOR_RE: cualquier tema de pago/facturación → del asesor (ni métodos, ni links, ni
+      //     confirmar que un pago llegó).
+      //   · BASIC_INFO_RE/NEEDS_TOOL_RE: que sea algo que el bot SEPA responder con datos reales.
+      // Anti-colisión (sigue vivo, y es por contexto): si el asesor escribe mientras el LLM piensa, la
+      // asistencia se aborta antes de enviar (motivo asesor_volvio en ejecutarAsistencia).
+      const tocaPagos = PAGOS_ASESOR_RE.test(rafagaHandoff);
+      const puedeAsistir = !frio
         && conv.turns_today <= MAX_TURNS_DIA && !interrumpe && !HANDOFF_RE.test(rafagaHandoff)
+        && !tocaPagos
         && (BASIC_INFO_RE.test(texto) || NEEDS_TOOL_RE.test(texto));
 
       if (frio) {
