@@ -827,7 +827,7 @@ const TOOLS: Anthropic.Tool[] = [{
 } as Anthropic.Tool, {
   name: "guardar_datos_envio",
   description: "Guarda los DATOS DE ENTREGA a domicilio del cliente (dirección, punto de referencia, link/pin de ubicación y nombre de quien recibe) en la libreta oficial que usa el equipo para despachar. Llámala cuando el cliente quiera ENVÍO a domicilio y te dé cualquiera de esos datos (puedes llamarla varias veces a medida que los da — pasa SOLO lo que el cliente realmente dio, en sus palabras, sin inventar ni completar). Devuelve qué quedó guardado, qué FALTA (repregunta SOLO eso, una vez) y la zona/costo resuelto cuando la dirección se reconoce (relaya ese costo tal cual). El teléfono se toma solo del contexto. NO es para datos fiscales (RUC/cédula/factura) ni pagos. El DESPACHO final siempre lo confirma y lo lanza un asesor: NUNCA prometas hora de entrega ni digas que el pedido ya salió.",
-  input_schema: { type: "object", properties: { direccion: { type: "string", description: "Dirección de entrega tal como la dio el cliente (corregimiento/barrio, calle, edificio o casa, apto)." }, referencia: { type: "string", description: "Punto de referencia para el repartidor (ej. 'frente al parque, portón negro')." }, maps_url: { type: "string", description: "Link de Google Maps o ubicación compartida por WhatsApp, tal cual llegó." }, nombre: { type: "string", description: "Nombre de quien recibe el pedido, si el cliente lo dio." } } },
+  input_schema: { type: "object", properties: { direccion: { type: "string", description: "Dirección de entrega tal como la dio el cliente (corregimiento/barrio, calle, edificio o casa, apto)." }, referencia: { type: "string", description: "Punto de referencia para el repartidor (ej. 'frente al parque, portón negro')." }, maps_url: { type: "string", description: "Link de Google Maps o ubicación compartida por WhatsApp, tal cual llegó." }, nombre: { type: "string", description: "Nombre de quien recibe el pedido, si el cliente lo dio." }, descartar_pin: { type: "boolean", description: "true SOLO cuando el cliente aclara que la entrega va a la DIRECCIÓN ESCRITA y no a la ubicación 📍 que había compartido (p. ej. mandó su ubicación actual desde otro lugar). Borra ese pin: si se queda, el repartidor va al pin y no a la dirección." } } },
 } as Anthropic.Tool, {
   name: "sucursales_interior",
   description: "Puntos de recogida en el INTERIOR del país / provincias (red Servientrega, 45 sucursales con teléfono y horario) — NO para la Ciudad de Panamá / San Miguelito (para el retiro o el costo en un sector de la CIUDAD usa tarifa_entrega). Úsala cuando el cliente del interior (David, Chiriquí, Chitré, Bocas, etc.) pregunte dónde recoger/retirar, si hay sucursal/agencia/punto en su zona, o pida la ubicación de un punto. Pasa 'lugar' = la provincia o ciudad del cliente (ej. 'Chiriquí', 'David', 'Penonomé', 'Chitré'). Si el cliente da una ciudad y no aparece, deduce TÚ la provincia (sabes la geografía de Panamá) y vuelve a llamarla con la provincia. Devuelve SOLO puntos reales — NUNCA inventes sucursales, direcciones ni teléfonos.",
@@ -2023,6 +2023,10 @@ async function guardarDatosEnvio(waId: string, input: any): Promise<string> {
     const referencia = String(input?.referencia ?? "").trim().slice(0, 300);
     const mapsUrl = String(input?.maps_url ?? "").trim().slice(0, 500);
     const nombre = String(input?.nombre ?? "").trim().slice(0, 120);
+    // v91 — el cliente aclaró que la entrega va a la dirección ESCRITA, no al pin que había compartido
+    // (típico: mandó su ubicación actual desde otro lugar). Sin esto el pin sobrevivía y Shipday, que lo
+    // prioriza, enrutaba al lugar equivocado con toda la ficha diciendo lo contrario.
+    const descartarPin = input?.descartar_pin === true;
     if (direccion && (direccion.includes("{{") || direccion.startsWith("@"))) {
       return JSON.stringify({ ok: false, nota: "La dirección llegó como variable sin resolver; pídela de nuevo al cliente." });
     }
@@ -2049,6 +2053,8 @@ async function guardarDatosEnvio(waId: string, input: any): Promise<string> {
       if (!referencia) fila.referencia = null;
       if (!coords && !mapsUrl) { fila.latitude = null; fila.longitude = null; fila.maps_url = null; }
     }
+    // v91 — descarte explícito del pin (gana sobre todo lo anterior: es una decisión del CLIENTE).
+    if (descartarPin) { fila.latitude = null; fila.longitude = null; fila.maps_url = null; }
     if (existente?.id) {
       const up = await sb.from("contacts").update(fila).eq("id", existente.id);
       if (up.error) throw new Error(up.error.message);
@@ -2063,7 +2069,10 @@ async function guardarDatosEnvio(waId: string, input: any): Promise<string> {
     const dirFinal = direccion || existente?.address || "";
     // Tras un cambio de dirección, la referencia/pin viejos ya se limpiaron: no cuentan como "presentes".
     const refFinal = referencia || (cambioDireccion ? "" : (existente?.referencia || ""));
-    const pinFinal = !!(coords || mapsUrl || (!cambioDireccion && (existente?.latitude != null || existente?.maps_url)));
+    // v91 — `usarPinGuardado`: el pin previo solo sigue valiendo si la dirección no cambió Y el cliente
+    // no lo descartó. Antes cada uso repetía la condición y el descarte se habría olvidado en alguno.
+    const usarPinGuardado = !cambioDireccion && !descartarPin;
+    const pinFinal = !!(coords || mapsUrl || (usarPinGuardado && (existente?.latitude != null || existente?.maps_url)));
     const faltan: string[] = [];
     if (!dirFinal) faltan.push("direccion");
     if (!refFinal) faltan.push("referencia");
@@ -2086,8 +2095,8 @@ async function guardarDatosEnvio(waId: string, input: any): Promise<string> {
     // del cliente (Betania) porque este bloque corría después — el bot le confirmó al cliente un lugar
     // donde no estaba. El pin GUARDADO de antes solo complementa (no pisa un texto ok). Con pin fresco
     // resuelto, además, ni se llama a Google (gratis y más preciso). Best-effort.
-    const latZ = coords?.lat ?? ((!cambioDireccion && existente?.latitude != null) ? Number(existente.latitude) : null);
-    const lngZ = coords?.lng ?? ((!cambioDireccion && existente?.longitude != null) ? Number(existente.longitude) : null);
+    const latZ = coords?.lat ?? ((usarPinGuardado && existente?.latitude != null) ? Number(existente.latitude) : null);
+    const lngZ = coords?.lng ?? ((usarPinGuardado && existente?.longitude != null) ? Number(existente.longitude) : null);
     if (latZ != null && lngZ != null && (coords || !zona || (zona as any).estado !== "ok")) {
       try {
         const { data: zp } = await sb.rpc("zona_por_coordenadas", { p_lat: latZ, p_lng: lngZ });
@@ -2126,8 +2135,8 @@ async function guardarDatosEnvio(waId: string, input: any): Promise<string> {
     // v75 — espejo a los atributos de WATI (best-effort). El pin se guarda como link de Maps clicable.
     const pinUrl = coords ? `https://maps.google.com/?q=${coords.lat},${coords.lng}`
       : mapsUrl ? mapsUrl
-      : (!cambioDireccion && existente?.latitude != null) ? `https://maps.google.com/?q=${existente.latitude},${existente.longitude}`
-      : (!cambioDireccion && existente?.maps_url) ? String(existente.maps_url) : "";
+      : (usarPinGuardado && existente?.latitude != null) ? `https://maps.google.com/?q=${existente.latitude},${existente.longitude}`
+      : (usarPinGuardado && existente?.maps_url) ? String(existente.maps_url) : "";
     // v90 — el corregimiento va SIEMPRE en zona_envio: cuando la zona resuelve por diccionario viaja en
     // `ubicacion` y no en `lugar` (que solo ponen las vías de pin/Google), así que la ficha lo perdía.
     const zonaTxt = zona ? [(zona as any).zona ?? (zona as any).estado, (zona as any).tarifa_usd != null ? `$${(zona as any).tarifa_usd}` : null, (zona as any).lugar ?? (zona as any).ubicacion?.corregimiento ?? null].filter(Boolean).join(" · ") : "";
@@ -2142,9 +2151,25 @@ async function guardarDatosEnvio(waId: string, input: any): Promise<string> {
     // igual decía "📍 Lista para despacho", así que un asesor que la abriera en ese momento habría
     // despachado con los dos datos peleados (y Shipday prioriza el pin: el repartidor iba a Betania con una
     // dirección escrita de San Francisco). Mientras el cliente no aclare cuál vale, la ficha debe DECIRLO.
-    const discrepa = !!(corregTexto && jer.corregimiento && norm(corregTexto) !== norm(jer.corregimiento));
+    // v91 — la comparación es contra el corregimiento REAL DEL PIN, fresco o GUARDADO. v90 solo comparaba
+    // cuando el pin llegaba a mandar sobre la zona; en la prueba (21-ago, mensaje 4) el cliente aclaró que
+    // valía la dirección escrita, el texto resolvió San Francisco… y el pin de Betania siguió guardado sin
+    // que nadie lo mirara. La ficha quedó TODA coherente en San Francisco salvo el pin — más engañosa que
+    // antes — y Shipday habría mandado al repartidor a Betania.
+    let corregPin = "";
+    if (latZ != null && lngZ != null) {
+      if (coords && (zona as any)?.lugar) {
+        corregPin = String((zona as any).lugar); // pin fresco: ya resuelto arriba, sin repetir la consulta
+      } else {
+        try {
+          const { data: zp2 } = await sb.rpc("zona_por_coordenadas", { p_lat: latZ, p_lng: lngZ });
+          if (zp2 && (zp2 as any).estado === "ok") corregPin = String((zp2 as any).corregimiento ?? "");
+        } catch { /* sin esto solo se pierde la advertencia, no la captura */ }
+      }
+    }
+    const discrepa = !!(corregTexto && corregPin && norm(corregTexto) !== norm(corregPin));
     if (discrepa) {
-      await log("discrepancia_texto_pin", false, { waId, correg_texto: corregTexto, correg_pin: jer.corregimiento });
+      await log("discrepancia_texto_pin", false, { waId, correg_texto: corregTexto, correg_pin: corregPin, pin_fresco: !!coords });
     }
     if (jer.provincia || jer.distrito || jer.corregimiento) {
       try {
@@ -2156,7 +2181,7 @@ async function guardarDatosEnvio(waId: string, input: any): Promise<string> {
     await espejarEnvioWati(digitos, {
       direccion: dirFinal, referencia: refFinal, pinUrl, zonaTxt,
       provincia: jer.provincia, distrito: jer.distrito, corregimiento: jer.corregimiento, completo,
-      discrepancia: discrepa ? `${corregTexto} (escrito) vs ${jer.corregimiento} (pin)` : "",
+      discrepancia: discrepa ? `${corregTexto} (escrito) vs ${corregPin} (pin)` : "",
     });
     // v78 — ¿el bot sigue ESPERANDO algo del cliente? (faltan datos, o pidió el pin porque la zona no
     // resolvió). Mientras espere, la ventana de captura queda ABIERTA: si un asesor entra a la
@@ -2188,7 +2213,7 @@ async function guardarDatosEnvio(waId: string, input: any): Promise<string> {
         // otra dirección, la entrega falla). En la prueba del 21-ago el modelo lo hizo por criterio
         // propio; esta nota lo vuelve una regla, no una casualidad.
         if (discrepa) {
-          return `ATENCIÓN: la dirección escrita queda en ${corregTexto} pero la ubicación 📍 que compartió cae en ${jer.corregimiento}. NO elijas tú: dile en una línea que ambas quedaron registradas y PREGÚNTALE a cuál de las dos quiere que se le entregue (nómbralas por el sector, nunca por el código de zona). No confirmes el despacho hasta que lo aclare.`;
+          return `ATENCIÓN: la dirección escrita queda en ${corregTexto} pero la ubicación 📍 que compartió cae en ${corregPin}. NO elijas tú: dile en una línea que ambas quedaron registradas y PREGÚNTALE a cuál de las dos quiere que se le entregue (nómbralas por el sector, nunca por el código de zona). No confirmes el despacho hasta que lo aclare. Cuando responda: si elige la DIRECCIÓN ESCRITA, vuelve a llamar guardar_datos_envio con descartar_pin: true (el pin apunta a otro lado y el repartidor se guía por él); si elige la del 📍, pídele la dirección escrita de ESE lugar y guárdala con direccion.`;
         }
         if (!completo) return `Falta: ${faltan.join(" y ")}. Pídelo con naturalidad (UNA sola vez).${avisoCosto}`;
         if (zonaDebil && !pinFinal) {
@@ -3112,7 +3137,7 @@ Deno.serve(async (req) => {
         texto: tr?.texto ?? null, ts: new Date().toISOString(),
       });
     }
-    return Response.json({ status: "ok", function: "copilot-webhook", version: "v90-discrepancia-visible", mode: MODE, mode_raw: MODE_RAW, model: MODEL, llm_configured: !!anthropic, wati_send_configured: !!(WATI_API_TOKEN && WATI_API_BASE), inventario_configurado: !!(SHOPIFY_ADMIN_TOKEN && SHOPIFY_ADMIN_API_BASE), resolve_configured: !!RESOLVE_SECRET, webhook_key_es_default: WEBHOOK_KEY_ES_DEFAULT, handoff_assist_min: HANDOFF_ASSIST_MIN, handoff_cold_hours: HANDOFF_COLD_HOURS, debounce_ms: DEBOUNCE_MS, sesion_gap_dias: SESION_GAP_DIAS, burbujas: BURBUJAS, burbuja_ms: BURBUJA_MS, audio_puente: AUDIO_PUENTE, sweep: SWEEP_MODE, sweep_espera_min: SWEEP_ESPERA_MIN, stt: STT_MODE, stt_raw: STT_RAW, stt_configurado: !!OPENAI_API_KEY, stt_model: STT_MODEL, busqueda_shadow: BUSQUEDA_SHADOW, busqueda_mcp: BUSQUEDA_MCP, busqueda_mcp_limit: BUSQUEDA_MCP_LIMIT, catalog_mcp_url: CATALOG_MCP_URL, ucp_profile_url: UCP_PROFILE_URL, live_targets: MODE === "live" ? (LIVE_ALL ? "all" : LIVE_ALLOWLIST.length) : 0, ts: new Date().toISOString() });
+    return Response.json({ status: "ok", function: "copilot-webhook", version: "v91-pin-descartable", mode: MODE, mode_raw: MODE_RAW, model: MODEL, llm_configured: !!anthropic, wati_send_configured: !!(WATI_API_TOKEN && WATI_API_BASE), inventario_configurado: !!(SHOPIFY_ADMIN_TOKEN && SHOPIFY_ADMIN_API_BASE), resolve_configured: !!RESOLVE_SECRET, webhook_key_es_default: WEBHOOK_KEY_ES_DEFAULT, handoff_assist_min: HANDOFF_ASSIST_MIN, handoff_cold_hours: HANDOFF_COLD_HOURS, debounce_ms: DEBOUNCE_MS, sesion_gap_dias: SESION_GAP_DIAS, burbujas: BURBUJAS, burbuja_ms: BURBUJA_MS, audio_puente: AUDIO_PUENTE, sweep: SWEEP_MODE, sweep_espera_min: SWEEP_ESPERA_MIN, stt: STT_MODE, stt_raw: STT_RAW, stt_configurado: !!OPENAI_API_KEY, stt_model: STT_MODEL, busqueda_shadow: BUSQUEDA_SHADOW, busqueda_mcp: BUSQUEDA_MCP, busqueda_mcp_limit: BUSQUEDA_MCP_LIMIT, catalog_mcp_url: CATALOG_MCP_URL, ucp_profile_url: UCP_PROFILE_URL, live_targets: MODE === "live" ? (LIVE_ALL ? "all" : LIVE_ALLOWLIST.length) : 0, ts: new Date().toISOString() });
   }
   if (req.method !== "POST") return Response.json({ error: "method_not_allowed" }, { status: 405 });
   if (url.searchParams.get("key") !== WEBHOOK_KEY) return Response.json({ error: "forbidden" }, { status: 403 });
