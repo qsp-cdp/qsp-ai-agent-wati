@@ -766,6 +766,7 @@ CONCIENCIA DE PEDIDOS (estado de un pedido YA hecho)
 - Preguntar por el estado de un pedido ya despachado NO es una interrupción: respóndelo con estado_pedido. Distinto es un pago/cotización/factura o una entrega que un HUMANO está coordinando en ese momento (eso sí se deriva, ver anti-interrupción).
 - Si estado_pedido devuelve "sin_pedidos" (o "sin_dato"/"error"), NO afirmes que el cliente "no tiene pedidos" ni que "no aparece nada": tu vista es PARCIAL (puede haber pedidos que no ves). Di con calma que un asesor se lo confirma y, si acaso, pídele el número de pedido.
 - Esto es SOLO para pedidos ya hechos. Para el costo de un envío usa tarifa_entrega; para pagos, facturas o coordinar una entrega, deriva a un asesor.
+- RECOMPRA ("lo mismo de la última vez", "la de siempre", "repetir mi pedido", "las que le compré el mes pasado"): el cliente casi nunca nombra el producto. Usa estado_pedido y lee 'compras_anteriores' (los productos de sus últimos pedidos). Confirma en una línea qué encontraste ("La última vez llevó: …, ¿le cotizo lo mismo?") y cotiza con buscar_producto/calcular_cotizacion a PRECIO DE HOY — NUNCA repitas totales ni precios de pedidos anteriores. Si pide "lo mismo pero sin X" o "igual pero 3 negras", aplica el cambio. Si no aparecen compras anteriores (tu vista es PARCIAL: cotizaciones manuales no figuran), pídele el modelo o la cotización anterior con naturalidad, o deriva a un asesor.
 
 SOPORTE TÉCNICO Y REPARACIONES
 - QSP NO ofrece soporte técnico ni servicios de reparación. Si preguntan por reparar/arreglar un equipo, soporte técnico, o que algo "no enciende/no imprime", usa info_tienda y sugiere la empresa de la marca correspondiente que ahí figure; NUNCA inventes teléfonos ni empresas, y si no hay dato, deriva a un asesor.
@@ -799,7 +800,7 @@ const ASSIST_SUFFIX = `
 
 MODO ASISTENCIA — un asesor humano está atendiendo este chat
 Un compañero del equipo tiene esta conversación y el cliente preguntó algo que TÚ puedes responder con datos reales. Adelántale esa respuesta ÚTIL sin retomar la venta ni quitarle el caso. Todo lo que digas debe salir de una herramienta (NUNCA de memoria):
-- SÍ puedes: dar precio/ITBMS/stock y el link de un producto (buscar_producto), el total de cantidades o varios productos (calcular_cotizacion — NUNCA sumes ni apliques ITBMS de memoria), una especificación técnica desde el folleto oficial (consultar_folleto), datos de la tienda (info_tienda), puntos de recogida del interior (sucursales_interior) y el estado de un pedido ya hecho (estado_pedido). Responde breve (1-2 oraciones) con lo que devuelva la herramienta.
+- SÍ puedes: dar precio/ITBMS/stock y el link de un producto (buscar_producto), el total de cantidades o varios productos (calcular_cotizacion — NUNCA sumes ni apliques ITBMS de memoria), una especificación técnica desde el folleto oficial (consultar_folleto), datos de la tienda (info_tienda), puntos de recogida del interior (sucursales_interior) y el estado de un pedido ya hecho (estado_pedido — sus 'compras_anteriores' también identifican una recompra tipo "lo mismo de la vez pasada": cotízala a precio de HOY con buscar_producto, nunca con montos viejos). Responde breve (1-2 oraciones) con lo que devuelva la herramienta.
 - Sé deferente: deja claro que un asesor sigue con su caso. Ej.: "Mientras tanto le confirmo: [dato]. Un asesor continúa con su solicitud enseguida."
 - NO cierres ni confirmes la venta, NO confirmes ni coordines un pedido ni una entrega, y NO contradigas ni renegocies algo que el asesor ya venía manejando (un precio especial, una cortesía).
 - DATOS DE ENTREGA (v84): si el cliente da su dirección, referencia o ubicación 📍 (o responde a una pregunta tuya sobre eso), SÍ guárdalos con guardar_datos_envio y confirma el costo que la tool devuelva (tarifa_entrega también vale). Al confirmar su ubicación nómbrala como el CLIENTE la conoce (el sector/corregimiento en zona.lugar o su propia dirección) — NUNCA el código interno de zona (Z1, Z2, Z4a…). El despacho igual lo confirma y lo lanza el asesor.
@@ -846,7 +847,7 @@ const TOOLS: Anthropic.Tool[] = [{
   input_schema: { type: "object", properties: { lugar: { type: "string", description: "Corregimiento o barrio del cliente en la Ciudad de Panamá / San Miguelito (ej. Tocumen, Betania, Juan Díaz, Las Cumbres)." } } },
 } as Anthropic.Tool, {
   name: "estado_pedido",
-  description: "Consulta el ESTADO / seguimiento del pedido del cliente que está escribiendo (por su WhatsApp, tomado del CONTEXTO — NO pidas ni pases el número). Úsala SOLO cuando el cliente pregunte por el estado, seguimiento o entrega de SU pedido/orden/compra YA hecha (\"¿dónde está mi pedido?\", \"¿ya salió mi orden?\", \"¿cuándo me llega?\", \"número de guía\"). Devuelve 'respuesta_sugerida' ya armada: RELÁYALA sin inventar estados, fechas ni guías. Si el estado es 'sin_pedidos'/'sin_dato'/'error', NO afirmes que el cliente no tiene pedidos (tu vista es PARCIAL): relaya la sugerencia (un asesor lo confirma). NO es para cotizar el costo de un envío (usa tarifa_entrega) ni para pagos/facturas/coordinar una entrega en curso (eso lo maneja un asesor).",
+  description: "Consulta el ESTADO / seguimiento del pedido del cliente que está escribiendo (por su WhatsApp, tomado del CONTEXTO — NO pidas ni pases el número). Úsala cuando el cliente pregunte por el estado, seguimiento o entrega de SU pedido/orden/compra YA hecha (\"¿dónde está mi pedido?\", \"¿ya salió mi orden?\", \"¿cuándo me llega?\", \"número de guía\"), Y TAMBIÉN cuando quiera una RECOMPRA sin nombrar el producto (\"lo mismo de la última vez\", \"la de siempre\", \"repetir mi pedido\", \"el modelo que compré el mes pasado\"): el campo 'compras_anteriores' trae los productos de sus últimos pedidos para identificarlos — luego cotízalos con buscar_producto/calcular_cotizacion a precio de HOY, NUNCA con montos viejos. Devuelve 'respuesta_sugerida' para el estado: RELÁYALA sin inventar estados, fechas ni guías. Si el estado es 'sin_pedidos'/'sin_dato'/'error', NO afirmes que el cliente no tiene pedidos (tu vista es PARCIAL): relaya la sugerencia (un asesor lo confirma). NO es para cotizar el costo de un envío (usa tarifa_entrega) ni para pagos/facturas/coordinar una entrega en curso (eso lo maneja un asesor).",
   input_schema: { type: "object", properties: {} },
 } as Anthropic.Tool, {
   name: "calcular_cotizacion",
@@ -1116,6 +1117,11 @@ const NEEDS_TOOL_RE = new RegExp([
   "seguimiento (de(l)? )?(mi |su |el |la )?(pedido|orden|env[ií]o|entrega|paquete|compra|gu[ií]a)",
   "estado (de(l)? )?(mi |su |la |el )?(pedido|orden|env[ií]o|entrega|compra)",
   "cu[aá]ndo (me |le )?(llega|entregan|lleg[oó])", "ya (sali[oó]|despach)",
+  // v104 — RECOMPRA (diccionario minado §5): referencias al historial sin nombrar el producto. Fuerzan
+  // tool para que el modelo mire estado_pedido.compras_anteriores en vez de adivinar qué compró.
+  "mism[oa]s?\\b.{0,30}(vez|siempre|anterior|[uú]ltim\\w*|pasad[oa]s?\\b|cantidad|modelo)", "\\bde siempre\\b", "vez pasada", "[uú]ltima vez",
+  "(compra|pedido|orden|cotizaci[oó]n)e?s? anterior", "repetir .{0,15}(pedido|compra|orden)", "volver a (comprar|pedir|cotizar)",
+  "(compr|ped[ií]|cotiz|llev|traj)\\w*.{0,15}(mes|semana) pasad[oa]",
 ].join("|"), "i");
 
 // v31 — pregunta BÁSICA de tienda que el bot SÍ puede adelantar mientras un asesor está ausente
@@ -2457,7 +2463,21 @@ function frasearPedido(v: any): Record<string, unknown> {
   // pedidos. Si se pasara `v.pedidos` al modelo, vería estado_raw/total_usd/resumen (p.ej. un "ETA 07/08
   // 3:45pm" en estado_raw, o un precio) y podría emitir una FECHA de entrega o un PRECIO fuera de
   // buscar_producto — rompiendo el grounding. `respuesta_sugerida` ya trae ref/estado/tracking; con eso basta.
-  return { estado: "ok", respuesta_sugerida: msg };
+  // v104 — RECOMPRA (evidencia del diccionario: "lo mismo de la última vez", "la de siempre" — nunca
+  // nombran el producto). El único dato extra que el modelo necesita son los NOMBRES de producto del
+  // `resumen` ("1x Toner Hp W2311A 215A, …"), que no trae precios ni fechas: el invariante F1 se
+  // mantiene porque total_usd y estado_raw siguen SIN pasar al modelo, y la nota obliga a recotizar
+  // con buscar_producto a precio de HOY.
+  const compras = items
+    .filter((p: any) => p.resumen)
+    .map((p: any) => ({ pedido_ref: p.pedido_ref ?? null, productos: String(p.resumen).slice(0, 300) }));
+  return {
+    estado: "ok", respuesta_sugerida: msg,
+    ...(compras.length ? {
+      compras_anteriores: compras,
+      nota_recompra: "Usa 'productos' SOLO para identificar qué compró antes (recompra: 'lo mismo de la vez pasada'). Cotiza SIEMPRE con buscar_producto/calcular_cotizacion a precio de HOY — NUNCA cites montos ni totales de pedidos anteriores.",
+    } : {}),
+  };
 }
 
 async function estadoPedido(waId: string = ""): Promise<string> {
@@ -3381,7 +3401,7 @@ Deno.serve(async (req) => {
         texto: tr?.texto ?? null, ts: new Date().toISOString(),
       });
     }
-    return Response.json({ status: "ok", function: "copilot-webhook", version: "v103-bot-ajeno", mode: MODE, mode_raw: MODE_RAW, model: MODEL, llm_configured: !!anthropic, wati_send_configured: !!(WATI_API_TOKEN && WATI_API_BASE), inventario_configurado: !!(SHOPIFY_ADMIN_TOKEN && SHOPIFY_ADMIN_API_BASE), resolve_configured: !!RESOLVE_SECRET, webhook_key_es_default: WEBHOOK_KEY_ES_DEFAULT, handoff_assist_min: HANDOFF_ASSIST_MIN, handoff_cold_hours: HANDOFF_COLD_HOURS, debounce_ms: DEBOUNCE_MS, sesion_gap_dias: SESION_GAP_DIAS, burbujas: BURBUJAS, burbuja_ms: BURBUJA_MS, audio_puente: AUDIO_PUENTE, sweep: SWEEP_MODE, sweep_espera_min: SWEEP_ESPERA_MIN, stt: STT_MODE, stt_raw: STT_RAW, stt_configurado: !!OPENAI_API_KEY, stt_model: STT_MODEL, busqueda_shadow: BUSQUEDA_SHADOW, busqueda_mcp: BUSQUEDA_MCP, busqueda_mcp_limit: BUSQUEDA_MCP_LIMIT, catalog_mcp_url: CATALOG_MCP_URL, ucp_profile_url: UCP_PROFILE_URL, live_targets: MODE === "live" ? (LIVE_ALL ? "all" : LIVE_ALLOWLIST.length) : 0, ts: new Date().toISOString() });
+    return Response.json({ status: "ok", function: "copilot-webhook", version: "v104-recompra", mode: MODE, mode_raw: MODE_RAW, model: MODEL, llm_configured: !!anthropic, wati_send_configured: !!(WATI_API_TOKEN && WATI_API_BASE), inventario_configurado: !!(SHOPIFY_ADMIN_TOKEN && SHOPIFY_ADMIN_API_BASE), resolve_configured: !!RESOLVE_SECRET, webhook_key_es_default: WEBHOOK_KEY_ES_DEFAULT, handoff_assist_min: HANDOFF_ASSIST_MIN, handoff_cold_hours: HANDOFF_COLD_HOURS, debounce_ms: DEBOUNCE_MS, sesion_gap_dias: SESION_GAP_DIAS, burbujas: BURBUJAS, burbuja_ms: BURBUJA_MS, audio_puente: AUDIO_PUENTE, sweep: SWEEP_MODE, sweep_espera_min: SWEEP_ESPERA_MIN, stt: STT_MODE, stt_raw: STT_RAW, stt_configurado: !!OPENAI_API_KEY, stt_model: STT_MODEL, busqueda_shadow: BUSQUEDA_SHADOW, busqueda_mcp: BUSQUEDA_MCP, busqueda_mcp_limit: BUSQUEDA_MCP_LIMIT, catalog_mcp_url: CATALOG_MCP_URL, ucp_profile_url: UCP_PROFILE_URL, live_targets: MODE === "live" ? (LIVE_ALL ? "all" : LIVE_ALLOWLIST.length) : 0, ts: new Date().toISOString() });
   }
   if (req.method !== "POST") return Response.json({ error: "method_not_allowed" }, { status: 405 });
   if (url.searchParams.get("key") !== WEBHOOK_KEY) return Response.json({ error: "forbidden" }, { status: 403 });
