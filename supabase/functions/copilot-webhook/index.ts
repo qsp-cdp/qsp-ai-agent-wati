@@ -880,6 +880,24 @@ const TOOLS: Anthropic.Tool[] = [{
 // un agradecimiento sin reclamo ("ya me facturaron los 3 que pedí, gracias, todo perfecto"). Se
 // reemplaza por un patrón de CONTRASTE explícito (palabra de contraste + verbo de entrega + "factur",
 // en cualquier orden) que exige la señal real del reclamo (recibí menos de lo que me facturaron).
+// v100 — EL ASESOR PIDIÓ DATOS DE ENTREGA. Caso que faltaba: el asesor escribe "¿me confirma su
+// dirección?" y el cliente responde "Calle 50, edificio Torre A, apto 3" — una dirección cruda, sin la
+// palabra "dirección" ni "envío". Ese mensaje no dispara ninguna de las señales de asistencia, así que
+// el bot callaba y el asesor terminaba tecleando el dato a mano en la ficha.
+// La alternativa era pedirle al asesor un comando o que editara un atributo del contacto: tedioso, y el
+// negocio lo descartó con razón. Esto no le pide NADA: sigue preguntando como siempre y el bot entiende
+// por contexto que lo que venga es la dirección. Solo mira el ÚLTIMO mensaje del asesor (<30 min).
+const PIDE_ENVIO_RE = new RegExp([
+  "(su|la|tu|una|qu[eé]|cual) (direcci[oó]n|ubicaci[oó]n)",
+  "direcci[oó]n (de|para) (entrega|env[ií]o|despacho)",
+  "(a|para) d[oó]nde (se )?(lo|la|los|las|le)? ?(env[ií]|manda|mand[oa]|entrega|llev)",
+  "d[oó]nde (se )?(lo|la|le)? ?(entreg|env[ií]|dej)",
+  "datos (de|para) (entrega|env[ií]o|despacho)",
+  "(me )?(confirma|indica|pasa|regala|comparte)( me)? (su|la|el)? ?(direcci|ubicaci|punto de referencia)",
+  "punto de referencia",
+  "comparta (su|la) (ubicaci|direcci)",
+].join("|"), "i");
+
 const HANDOFF_RE = /\b(humano|persona|asesor|agente|reclamo|queja|hablar con alguien|supervisor|quiero devolver|devolver (el|la|lo|los|las|un|una|mi|este|esta|esto|eso)|devolverl[oa]s?|devuelvan|cambiarl[oa]s?|(una|la|mi|su|esa|esta) devoluci[oó]n|(aplicar|usar|reclamar|validar|activar|hacer (v[aá]lida|efectiva)) (la |mi |su )?garant[ií]a|(mi|su) garant[ií]a|en garant[ií]a|tiene garant[ií]a|sali[oó] (mal|malo|mala|da[ñn]ad[oa]|defectuos[oa])|(lleg[oó]|vino) (mal|malo|mala|da[ñn]ad[oa]|roto|rota|defectuos[oa])|defectuos[oa]s?|me vendieron (uno|una|algo) (malo|mala|da[ñn]ad[oa]|defectuos[oa])|nota de cr[eé]dito|me factur(aron|a|[oó]) (de m[aá]s|mal|otra cantidad)|me cobr(aron|a|[oó]) de m[aá]s|factura(ci[oó]n)? (incorrecta|equivocada|mal (hecha|emitida))|(solo|nom[aá]s|pero) .{0,40}(entregaron|entreg[oó]|dieron|lleg(aron|[oó])) .{0,60}factur\w*|factur\w* .{0,60}(solo|nom[aá]s|pero) .{0,40}(entregaron|entreg[oó]|dieron|lleg(aron|[oó]))|(precios?|descuentos?) (de |del |de la |para |al )?(distribuidor|mayorista|revendedor)\w*|al por mayor)\b/i;
 // v73 — PEDIR UN ASESOR NO ES LO MISMO QUE UN RECLAMO. HANDOFF_RE mezcla las dos cosas y el barrido las
 // trataba igual: se apartaba de ambas. Caso real 18-ago: el cliente pidió asesor a las 14:44, nadie llegó,
@@ -3016,7 +3034,7 @@ async function ejecutarAsistencia(
           const linksTracked: Record<string, string> = {};
           // v74: origen "captura" (P3-b) → modoCaptura: tools acotadas + CAPTURA_SUFFIX en vez de ASSIST_SUFFIX.
           const r = await responderLLM(history as any, false, null, false, waId, {}, linksTracked, true,
-              origen === "barrido_pidio_asesor" ? SWEEP_SUFFIX + PIDIO_ASESOR_SUFFIX : origen.startsWith("barrido") ? SWEEP_SUFFIX : "", origen === "captura");
+              origen === "barrido_pidio_asesor" ? SWEEP_SUFFIX + PIDIO_ASESOR_SUFFIX : origen.startsWith("barrido") ? SWEEP_SUFFIX : origen === "asesor_pidio_envio" ? ENVIO_ASESOR_SUFFIX : "", origen === "captura");
           let salida = r.text ? reaplicarTracking(limpiarWhatsApp(r.text), linksTracked) : null;
           // v66 — en ASISTENCIA no hay burbujas (la regla lo prohíbe, pero si el modelo igual marcara
           // cortes, el marcador se re-une aquí: JAMÁS debe llegar [[---]] al cliente).
@@ -3094,6 +3112,16 @@ function esAck(t: string): boolean {
 // (devolver vacío → `sin_respuesta`); solo faltaba decirle al modelo que aquí ESO es lo correcto.
 const PIDIO_ASESOR_SUFFIX = `
 - ESTE CLIENTE PIDIÓ HABLAR CON UN ASESOR y todavía no lo han atendido. NO le niegues lo que pidió ni le digas que usted lo atiende en lugar del asesor: reconoce que un asesor le va a responder Y, si tienes algo concreto que adelantarle (precio con ITBMS, disponibilidad, un dato de la tienda), dáselo mientras tanto. Ej.: "Un asesor le responde en breve. Mientras tanto le adelanto…". Si no tienes nada concreto que aportar, NO respondas nada.`;
+
+// v100 — el ASESOR pidió la dirección y el cliente acaba de responder. Sin este sufijo el modelo trata
+// el mensaje como charla suelta; con él sabe que su único trabajo en este turno es guardar lo que llegó.
+const ENVIO_ASESOR_SUFFIX = `
+
+EL ASESOR ACABA DE PEDIRLE AL CLIENTE SUS DATOS DE ENTREGA (dirección/ubicación/referencia) y el último mensaje del cliente es su respuesta.
+- Tu único trabajo en este turno: GUARDA lo que el cliente dio con guardar_datos_envio (aunque venga crudo, sin la palabra "dirección"), y responde breve confirmando lo guardado + el costo si la herramienta lo devuelve.
+- Si la herramienta dice que falta algo, repregunta SOLO eso, UNA vez, con calidez.
+- Si el mensaje del cliente NO es una dirección/ubicación/referencia (cambió de tema, hizo otra pregunta), NO fuerces la captura: aplica las reglas normales del modo asistencia.
+- El despacho igual lo confirma y lo lanza el asesor — no prometas hora de entrega.`;
 
 const SWEEP_SUFFIX = `
 
@@ -3326,7 +3354,7 @@ Deno.serve(async (req) => {
         texto: tr?.texto ?? null, ts: new Date().toISOString(),
       });
     }
-    return Response.json({ status: "ok", function: "copilot-webhook", version: "v99-pdf-en-rafaga", mode: MODE, mode_raw: MODE_RAW, model: MODEL, llm_configured: !!anthropic, wati_send_configured: !!(WATI_API_TOKEN && WATI_API_BASE), inventario_configurado: !!(SHOPIFY_ADMIN_TOKEN && SHOPIFY_ADMIN_API_BASE), resolve_configured: !!RESOLVE_SECRET, webhook_key_es_default: WEBHOOK_KEY_ES_DEFAULT, handoff_assist_min: HANDOFF_ASSIST_MIN, handoff_cold_hours: HANDOFF_COLD_HOURS, debounce_ms: DEBOUNCE_MS, sesion_gap_dias: SESION_GAP_DIAS, burbujas: BURBUJAS, burbuja_ms: BURBUJA_MS, audio_puente: AUDIO_PUENTE, sweep: SWEEP_MODE, sweep_espera_min: SWEEP_ESPERA_MIN, stt: STT_MODE, stt_raw: STT_RAW, stt_configurado: !!OPENAI_API_KEY, stt_model: STT_MODEL, busqueda_shadow: BUSQUEDA_SHADOW, busqueda_mcp: BUSQUEDA_MCP, busqueda_mcp_limit: BUSQUEDA_MCP_LIMIT, catalog_mcp_url: CATALOG_MCP_URL, ucp_profile_url: UCP_PROFILE_URL, live_targets: MODE === "live" ? (LIVE_ALL ? "all" : LIVE_ALLOWLIST.length) : 0, ts: new Date().toISOString() });
+    return Response.json({ status: "ok", function: "copilot-webhook", version: "v100-asesor-pide-envio", mode: MODE, mode_raw: MODE_RAW, model: MODEL, llm_configured: !!anthropic, wati_send_configured: !!(WATI_API_TOKEN && WATI_API_BASE), inventario_configurado: !!(SHOPIFY_ADMIN_TOKEN && SHOPIFY_ADMIN_API_BASE), resolve_configured: !!RESOLVE_SECRET, webhook_key_es_default: WEBHOOK_KEY_ES_DEFAULT, handoff_assist_min: HANDOFF_ASSIST_MIN, handoff_cold_hours: HANDOFF_COLD_HOURS, debounce_ms: DEBOUNCE_MS, sesion_gap_dias: SESION_GAP_DIAS, burbujas: BURBUJAS, burbuja_ms: BURBUJA_MS, audio_puente: AUDIO_PUENTE, sweep: SWEEP_MODE, sweep_espera_min: SWEEP_ESPERA_MIN, stt: STT_MODE, stt_raw: STT_RAW, stt_configurado: !!OPENAI_API_KEY, stt_model: STT_MODEL, busqueda_shadow: BUSQUEDA_SHADOW, busqueda_mcp: BUSQUEDA_MCP, busqueda_mcp_limit: BUSQUEDA_MCP_LIMIT, catalog_mcp_url: CATALOG_MCP_URL, ucp_profile_url: UCP_PROFILE_URL, live_targets: MODE === "live" ? (LIVE_ALL ? "all" : LIVE_ALLOWLIST.length) : 0, ts: new Date().toISOString() });
   }
   if (req.method !== "POST") return Response.json({ error: "method_not_allowed" }, { status: 405 });
   if (url.searchParams.get("key") !== WEBHOOK_KEY) return Response.json({ error: "forbidden" }, { status: 403 });
@@ -3806,16 +3834,23 @@ Deno.serve(async (req) => {
       // terminar lo que empezó. Los guardarraíles de contexto (interrumpe/HANDOFF_RE/pagos) siguen
       // mandando: están AND-eados abajo.
       let continuaBot = false;
+      // v100 — ¿el ASESOR acaba de pedir los datos de entrega? Entonces lo que el cliente responda es la
+      // dirección, aunque venga cruda ("Calle 50, edificio Torre A") y sin ninguna palabra que el filtro
+      // reconozca. Se mira el mismo último mensaje del equipo: si lo escribió un humano y pedía dirección,
+      // el bot captura; si lo escribió el bot, aplica la continuidad de v83.
+      let pidioEnvioElAsesor = false;
       {
-        const { data: ua } = await sb.from("messages").select("model,mode,created_at").eq("conversation_id", conv.id).eq("role", "assistant").order("created_at", { ascending: false }).limit(1);
+        const { data: ua } = await sb.from("messages").select("model,mode,content,created_at").eq("conversation_id", conv.id).eq("role", "assistant").order("created_at", { ascending: false }).limit(1);
         const u = ua?.[0] as any;
-        continuaBot = !!u && !!u.model && u.model !== "fallback" && u.mode === "live"
-          && (Date.now() - new Date(u.created_at).getTime()) < 30 * 60000;
+        const reciente = !!u && (Date.now() - new Date(u.created_at).getTime()) < 30 * 60000;
+        continuaBot = !!u && reciente && !!u.model && u.model !== "fallback" && u.mode === "live";
+        pidioEnvioElAsesor = !!u && reciente && u.model === "human-agent" && PIDE_ENVIO_RE.test(String(u.content ?? ""));
+        if (pidioEnvioElAsesor) await log("asesor_pidio_envio", true, { waId });
       }
       const puedeAsistir = !frio
         && conv.turns_today <= MAX_TURNS_DIA && !interrumpe && !HANDOFF_RE.test(rafagaHandoff)
         && !tocaPagos
-        && (BASIC_INFO_RE.test(texto) || NEEDS_TOOL_RE.test(texto) || continuaBot);
+        && (BASIC_INFO_RE.test(texto) || NEEDS_TOOL_RE.test(texto) || continuaBot || pidioEnvioElAsesor);
 
       if (frio) {
         // COLD-RETURN: el asesor lleva >umbral sin escribir → conversación fría. El bot la retoma por
@@ -3830,7 +3865,8 @@ Deno.serve(async (req) => {
         // buscar_producto, info de tienda, puntos del interior, estado de pedido), pero NO saca la
         // conversación de handoff, NO cierra/coordina la venta y NO le quita el caso al asesor.
         correrEnSegundoPlano(ejecutarAsistencia(conv, waId, texto, contenido, userCreatedAt, ultHumano as string, minsSinHumano, t0, true,
-          (BASIC_INFO_RE.test(texto) || NEEDS_TOOL_RE.test(texto)) ? "reactiva" : "continuacion")); // v83: trazabilidad de por qué asistió
+          // v83/v100: por qué asistió — señal en el mensaje, continuidad del bot, o el asesor pidió la dirección
+          (BASIC_INFO_RE.test(texto) || NEEDS_TOOL_RE.test(texto)) ? "reactiva" : pidioEnvioElAsesor ? "asesor_pidio_envio" : "continuacion"));
         return Response.json({ ok: true, asistencia: true });
       } else {
         // Asesor activo hace poco (<umbral), no es pregunta básica, o handoff sin asesor → callar (v30).
