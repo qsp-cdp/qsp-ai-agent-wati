@@ -989,7 +989,18 @@ async function insertarTicketPromesa(convId: string, waId: string, motivo: strin
 const PAGOS_ASESOR_RE = new RegExp([
   "\\bpago\\b", "\\bpagos\\b", "\\bpagar\\b", "pagu[eé]", "\\babon", "dep[oó]sit", "transferen", "\\byappy\\b", "\\bach\\b",
   "tarjeta", "efectivo", "\\bcuotas?\\b", "link de pago", "formas? de pago", "m[eé]todos? de pago", "factur", "\\bcobr",
+  // v102 — del diccionario minado: "pagado" (n=6) y "listo pagado" no matcheaban ninguna forma de
+  // arriba (\bpago\b exige la palabra exacta). "cancel" es doble en Panamá —cancelar=pagar y
+  // cancelar=anular el pedido— y AMBOS sentidos son del asesor en handoff.
+  "pagad[oa]s?\\b", "\\bcancel",
 ].join("|"), "i");
+
+// v102 — señales de que el ASESOR está cobrando/facturando/gestionando una devolución (se evalúa
+// sobre su último mensaje, no sobre el del cliente). Salen del diccionario minado
+// (docs/diccionario/pagos-quejas-silencio.md §2): datos bancarios, link de Yappy, factura en curso,
+// nota de crédito, devolución/reembolso, retención. NO incluye \bpago\b a secas a propósito:
+// "pago recibido, escríbame la dirección" (frase real) es el momento de CAPTURAR, no de callar.
+const COBRO_RE = /factur|link\.yappy|\byappy\b|cuenta (?:de )?(?:ahorro|corriente)|banco general|datos bancarios|nota de cr[eé]dito|devoluci[oó]n|reembols|retenci[oó]n|comprobante de (?:la )?retenci/i;
 
 const INTERRUPT_RE = new RegExp([
   // datos fiscales / facturación
@@ -1018,6 +1029,10 @@ const INTERRUPT_RE = new RegExp([
   // + formas PASIVAS/impersonales que escapaban: "el pago fue realizado", "ya se realizó la
   // transferencia", "transferencia realizada", "acabamos de pagar".)
   "pago (ya )?(fue |est[aá] |qued[oó] )?(realizado|hecho|efectuado|listo|enviado)", "transferencia (ya )?(fue |qued[oó] )?(realizada|hecha|enviada|lista)",
+  // v102 — del diccionario minado: el aviso viene también AL REVÉS ("listo el pago" n=7) o como
+  // participio solo ("pagado" n=6, "listo pagado"). El mensaje-participio se ancla a frase completa
+  // para no pisar usos descriptivos ("envío pagado por el cliente" no es un aviso).
+  "listo,? (el |la )?(pago|transferencia|yappy)\\b", "^\\s*(ya |todo )?pagad[oa]s?[\\s.!]*$",
   "se (le |les )?(hizo|realiz[oó]|envi[oó]|mand[oó]|deposit[oó]) (ya )?(el |la )?(pago|transferencia|dep[oó]sito|comprobante)",
   "demora\\w* .{0,20}transacci[oó]n", "(hacer|realizar|efectuar) el pago antes de que",
   "pagar\\s+(ya|ahora|de una|hoy|mañana)", // intención de pagar YA (no "pagar con tarjeta/yappy" — eso no lleva ya/ahora/hoy)
@@ -3356,7 +3371,7 @@ Deno.serve(async (req) => {
         texto: tr?.texto ?? null, ts: new Date().toISOString(),
       });
     }
-    return Response.json({ status: "ok", function: "copilot-webhook", version: "v101.1-prioridad-captura", mode: MODE, mode_raw: MODE_RAW, model: MODEL, llm_configured: !!anthropic, wati_send_configured: !!(WATI_API_TOKEN && WATI_API_BASE), inventario_configurado: !!(SHOPIFY_ADMIN_TOKEN && SHOPIFY_ADMIN_API_BASE), resolve_configured: !!RESOLVE_SECRET, webhook_key_es_default: WEBHOOK_KEY_ES_DEFAULT, handoff_assist_min: HANDOFF_ASSIST_MIN, handoff_cold_hours: HANDOFF_COLD_HOURS, debounce_ms: DEBOUNCE_MS, sesion_gap_dias: SESION_GAP_DIAS, burbujas: BURBUJAS, burbuja_ms: BURBUJA_MS, audio_puente: AUDIO_PUENTE, sweep: SWEEP_MODE, sweep_espera_min: SWEEP_ESPERA_MIN, stt: STT_MODE, stt_raw: STT_RAW, stt_configurado: !!OPENAI_API_KEY, stt_model: STT_MODEL, busqueda_shadow: BUSQUEDA_SHADOW, busqueda_mcp: BUSQUEDA_MCP, busqueda_mcp_limit: BUSQUEDA_MCP_LIMIT, catalog_mcp_url: CATALOG_MCP_URL, ucp_profile_url: UCP_PROFILE_URL, live_targets: MODE === "live" ? (LIVE_ALL ? "all" : LIVE_ALLOWLIST.length) : 0, ts: new Date().toISOString() });
+    return Response.json({ status: "ok", function: "copilot-webhook", version: "v102-blindaje-pagos", mode: MODE, mode_raw: MODE_RAW, model: MODEL, llm_configured: !!anthropic, wati_send_configured: !!(WATI_API_TOKEN && WATI_API_BASE), inventario_configurado: !!(SHOPIFY_ADMIN_TOKEN && SHOPIFY_ADMIN_API_BASE), resolve_configured: !!RESOLVE_SECRET, webhook_key_es_default: WEBHOOK_KEY_ES_DEFAULT, handoff_assist_min: HANDOFF_ASSIST_MIN, handoff_cold_hours: HANDOFF_COLD_HOURS, debounce_ms: DEBOUNCE_MS, sesion_gap_dias: SESION_GAP_DIAS, burbujas: BURBUJAS, burbuja_ms: BURBUJA_MS, audio_puente: AUDIO_PUENTE, sweep: SWEEP_MODE, sweep_espera_min: SWEEP_ESPERA_MIN, stt: STT_MODE, stt_raw: STT_RAW, stt_configurado: !!OPENAI_API_KEY, stt_model: STT_MODEL, busqueda_shadow: BUSQUEDA_SHADOW, busqueda_mcp: BUSQUEDA_MCP, busqueda_mcp_limit: BUSQUEDA_MCP_LIMIT, catalog_mcp_url: CATALOG_MCP_URL, ucp_profile_url: UCP_PROFILE_URL, live_targets: MODE === "live" ? (LIVE_ALL ? "all" : LIVE_ALLOWLIST.length) : 0, ts: new Date().toISOString() });
   }
   if (req.method !== "POST") return Response.json({ error: "method_not_allowed" }, { status: 405 });
   if (url.searchParams.get("key") !== WEBHOOK_KEY) return Response.json({ error: "forbidden" }, { status: 403 });
@@ -3849,9 +3864,24 @@ Deno.serve(async (req) => {
         pidioEnvioElAsesor = !!u && reciente && u.model === "human-agent" && PIDE_ENVIO_RE.test(String(u.content ?? ""));
         if (pidioEnvioElAsesor) await log("asesor_pidio_envio", true, { waId });
       }
+      // v102 — COBRO EN CURSO (evidencia del diccionario minado): los 3 mensajes más repetidos de TODO
+      // el corpus del asesor son los datos bancarios (n=673), el link de Yappy (n=461) y "factura
+      // emitida" (~380). Si el ÚLTIMO mensaje del asesor humano es de cobro/facturación/devolución, la
+      // conversación está en cierre de venta y el bot queda MUDO — tocaPagos solo miraba el mensaje del
+      // CLIENTE, así que "¿tienen tinta 664?" en pleno cobro se colaba. Sin ventana de tiempo: el mute
+      // dura hasta que el asesor escriba otro tema o la conversación se enfríe (cold-return la rescata).
+      // EXCEPCIÓN real del propio corpus: "factura emitida, donde seria la entrega?" cobra Y pide la
+      // dirección — ahí la captura gana (PIDE_ENVIO_RE sobre el mismo mensaje desactiva el mute).
+      let asesorCobrando = false;
+      {
+        const { data: uh } = await sb.from("messages").select("content").eq("conversation_id", conv.id).eq("model", "human-agent").order("created_at", { ascending: false }).limit(1);
+        const ch = String((uh?.[0] as any)?.content ?? "");
+        asesorCobrando = !!ch && COBRO_RE.test(ch) && !PIDE_ENVIO_RE.test(ch);
+        if (asesorCobrando) await log("asesor_cobrando", true, { waId });
+      }
       const puedeAsistir = !frio
         && conv.turns_today <= MAX_TURNS_DIA && !interrumpe && !HANDOFF_RE.test(rafagaHandoff)
-        && !tocaPagos
+        && !tocaPagos && !asesorCobrando
         && (BASIC_INFO_RE.test(texto) || NEEDS_TOOL_RE.test(texto) || continuaBot || pidioEnvioElAsesor);
 
       if (frio) {
