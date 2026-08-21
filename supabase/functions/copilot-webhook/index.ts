@@ -809,7 +809,7 @@ Un compañero del equipo tiene esta conversación y el cliente preguntó algo qu
 - SÍ puedes: dar precio/ITBMS/stock y el link de un producto (buscar_producto), el total de cantidades o varios productos (calcular_cotizacion — NUNCA sumes ni apliques ITBMS de memoria), una especificación técnica desde el folleto oficial (consultar_folleto), datos de la tienda (info_tienda), puntos de recogida del interior (sucursales_interior) y el estado de un pedido ya hecho (estado_pedido — sus 'compras_anteriores' también identifican una recompra tipo "lo mismo de la vez pasada": cotízala a precio de HOY con buscar_producto, nunca con montos viejos). Responde breve (1-2 oraciones) con lo que devuelva la herramienta.
 - Sé deferente: deja claro que un asesor sigue con su caso. Ej.: "Mientras tanto le confirmo: [dato]. Un asesor continúa con su solicitud enseguida."
 - NO cierres ni confirmes la venta, NO confirmes ni coordines un pedido ni una entrega, y NO contradigas ni renegocies algo que el asesor ya venía manejando (un precio especial, una cortesía).
-- DATOS DE ENTREGA (v84): si el cliente da su dirección, referencia o ubicación 📍 (o responde a una pregunta tuya sobre eso), SÍ guárdalos con guardar_datos_envio y confirma el costo que la tool devuelva (tarifa_entrega también vale). Al confirmar su ubicación nómbrala como el CLIENTE la conoce (el sector/corregimiento en zona.lugar o su propia dirección) — NUNCA el código interno de zona (Z1, Z2, Z4a…). El despacho igual lo confirma y lo lanza el asesor.
+- DATOS DE ENTREGA (v84): si el cliente da su dirección, referencia o ubicación 📍 (o responde a una pregunta tuya sobre eso), SÍ guárdalos con guardar_datos_envio y confirma ABRIENDO con el eco_guardado de la herramienta (SU dirección + el sector, tal cual — no solo el sector: repetir la dirección deja al cliente corregir al instante) + el costo que la tool devuelva (tarifa_entrega también vale). NUNCA menciones el código interno de zona (Z1, Z2, Z4a…). El despacho igual lo confirma y lo lanza el asesor.
 - PAGOS Y FACTURACIÓN — territorio del asesor, sin excepción: NO expliques ni ofrezcas formas de pago (Yappy/ACH/tarjeta/efectivo/cuotas), NO des números de cuenta ni links de pago, NO pidas ni proceses datos de factura (RUC, cédula, razón social), y NUNCA digas ni insinúes que un pago fue recibido, capturado, confirmado o aplicado — aunque el cliente lo afirme o mande un comprobante. Si el tema es pago o factura, responde en UNA línea que el asesor lo confirma y no agregues nada más.
 - NO HAGAS PROMESAS: nada de horas ni fechas de entrega ("le llega hoy/mañana"), ni de que algo "ya salió", ni disponibilidad que no venga de una herramienta en este turno. Si no tienes el dato, dilo y deja que el asesor confirme.
 - Si la pregunta toca un pago en curso, una cotización/factura formal, coordinar una entrega, o el caso puntual que lleva el asesor, NO escribas nada: que lo siga el humano.
@@ -822,7 +822,7 @@ const CAPTURA_SUFFIX = `
 
 MODO CAPTURA DE ENTREGA — un asesor del equipo te pidió capturar los datos de entrega de este cliente. Tu ÚNICO objetivo en este modo:
 - Obtener y guardar (con guardar_datos_envio, llamándola con cada dato que el cliente dé): la dirección completa (corregimiento o barrio, calle, edificio o casa) y un punto de referencia. El pin/ubicación (clip 📎) pídelo UNA sola vez y SOLO si la herramienta indica que la dirección no se reconoció o quedó incompleta; si el cliente no sabe o no responde, sigue sin insistir.
-- Repregunta SOLO lo que la herramienta diga que falta, UNA vez por dato, con calidez y sin sonar a formulario.
+- Repregunta SOLO lo que la herramienta diga que falta, UNA vez por dato, con calidez y sin sonar a formulario. Cuando acabas de guardar una dirección, ABRE con el eco_guardado de la herramienta (la dirección + su sector, tal cual) antes de repreguntar: así el cliente corrige al instante si algo quedó mal registrado.
 - Cuando la herramienta confirme que no falta nada: agradece, MUESTRA en 1-2 líneas lo que quedó guardado (la dirección, la referencia y si hay ubicación 📍) para que el cliente corrija si algo quedó mal, y di que el asesor continúa con el despacho. Al nombrar su ubicación usa lo que el CLIENTE conoce (el sector/corregimiento en zona.lugar o su dirección) — NUNCA el código interno de zona (Z1, Z2, Z4a…); el costo sí, tal cual.
 - NO vendas, NO cotices productos, NO coordines ni confirmes pagos, NO toques datos fiscales (RUC/cédula/factura), NO prometas hora de entrega. Si el cliente pregunta otra cosa, responde en UNA línea solo si una herramienta te da el dato; si no, dile que el asesor le confirma enseguida.`;
 
@@ -2398,6 +2398,13 @@ async function guardarDatosEnvio(waId: string, input: any): Promise<string> {
       },
       pin_ubicacion: pinFinal ? "sí" : "no (opcional: el cliente puede compartir su ubicación por el clip de WhatsApp)",
       zona,
+      // v105.1 — ECO DETERMINISTA (prueba en vivo 21-ago): el bot dijo "quedó registrada en El Cangrejo
+      // (Bella Vista)" pero NO repitió la dirección que guardó — y ese eco es lo que deja al cliente
+      // atrapar un error de captura al instante. La línea se arma en CÓDIGO (dirección — sector) y las
+      // notas de abajo obligan a abrir con ella, aunque todavía falte la referencia.
+      eco_guardado: dirFinal
+        ? [dirFinal, String((zona as any)?.lugar ?? "").trim()].filter(Boolean).join(" — ")
+        : undefined,
       nota: (() => {
         // v76 — el pin se pide SOLO como refuerzo: cuando la dirección no resolvió en el mapa de zonas
         // (sin_match/ambiguo/null) y aún no hay pin. Si la zona resolvió, NO se pide (menos fricción).
@@ -2418,9 +2425,9 @@ async function guardarDatosEnvio(waId: string, input: any): Promise<string> {
         // v94 — el estado de los datos SALE DE AQUÍ, no de la memoria del chat: el cliente pudo haber dado
         // un dato que después se limpió (corrección de dirección) y el modelo, leyendo el historial, lo da
         // por guardado y se lo confirma al cliente. Lo que está en `faltan` NO lo tenemos, punto.
-        if (!completo) return `Falta: ${faltan.join(" y ")}. Pídelo con naturalidad (UNA sola vez). IMPORTANTE: lo que aparece en "faltan" NO está guardado, aunque el cliente lo haya dicho antes en la conversación — NUNCA le digas que ya lo tienes ni lo des por registrado: pídeselo de nuevo (mira "en_libreta" para saber qué hay de verdad).${avisoCosto}`;
+        if (!completo) return `${dirFinal ? "ABRE tu respuesta confirmando lo que quedó guardado con el texto de eco_guardado TAL CUAL (la dirección y su sector) — así el cliente corrige al instante si algo quedó mal registrado. Luego, en la misma respuesta: " : ""}Falta: ${faltan.join(" y ")}. Pídelo con naturalidad (UNA sola vez). IMPORTANTE: lo que aparece en "faltan" NO está guardado, aunque el cliente lo haya dicho antes en la conversación — NUNCA le digas que ya lo tienes ni lo des por registrado: pídeselo de nuevo (mira "en_libreta" para saber qué hay de verdad).${avisoCosto}${avisoInterno}`;
         if (zonaDebil && !pinFinal) {
-          return "Datos completos, pero la dirección NO se reconoció bien en el mapa de zonas: muestra al cliente lo que quedó guardado (dirección y referencia, tal cual) y pídele UNA sola vez su ubicación por el clip 📎 o un link de Google Maps para ubicarlo exacto; si no sabe cómo o no responde, sigue sin insistir (el repartidor puede llamarlo)." + avisoCosto + " Cierra diciendo que un asesor confirma el despacho y el pago.";
+          return "Datos completos, pero la dirección NO se reconoció bien en el mapa de zonas: muestra al cliente lo que quedó guardado (abre con eco_guardado tal cual + la referencia) y pídele UNA sola vez su ubicación por el clip 📎 o un link de Google Maps para ubicarlo exacto; si no sabe cómo o no responde, sigue sin insistir (el repartidor puede llamarlo)." + avisoCosto + " Cierra diciendo que un asesor confirma el despacho y el pago.";
         }
         // v92 — con los datos completos y la zona resuelta, la confirmación deja de ser un resumen libre y
         // pasa a ser el BLOQUE de `confirmacion` (armado en código): el cliente ve exactamente lo que quedó
@@ -3221,7 +3228,7 @@ const PIDIO_ASESOR_SUFFIX = `
 const ENVIO_ASESOR_SUFFIX = `
 
 EL ASESOR ACABA DE PEDIRLE AL CLIENTE SUS DATOS DE ENTREGA (dirección/ubicación/referencia) y el último mensaje del cliente es su respuesta.
-- Tu único trabajo en este turno: GUARDA lo que el cliente dio con guardar_datos_envio (aunque venga crudo, sin la palabra "dirección"), y responde breve confirmando lo guardado + el costo si la herramienta lo devuelve.
+- Tu único trabajo en este turno: GUARDA lo que el cliente dio con guardar_datos_envio (aunque venga crudo, sin la palabra "dirección"), y responde breve ABRIENDO con el eco_guardado que devuelve la herramienta (la dirección + su sector, tal cual — así el cliente corrige al instante si algo quedó mal) + el costo si la herramienta lo devuelve.
 - Si la herramienta dice que falta algo, repregunta SOLO eso, UNA vez, con calidez.
 - Si el mensaje del cliente NO es una dirección/ubicación/referencia (cambió de tema, hizo otra pregunta), NO fuerces la captura: aplica las reglas normales del modo asistencia.
 - El despacho igual lo confirma y lo lanza el asesor — no prometas hora de entrega.`;
@@ -3457,7 +3464,7 @@ Deno.serve(async (req) => {
         texto: tr?.texto ?? null, ts: new Date().toISOString(),
       });
     }
-    return Response.json({ status: "ok", function: "copilot-webhook", version: "v105-asesoria-impresoras", mode: MODE, mode_raw: MODE_RAW, model: MODEL, llm_configured: !!anthropic, wati_send_configured: !!(WATI_API_TOKEN && WATI_API_BASE), inventario_configurado: !!(SHOPIFY_ADMIN_TOKEN && SHOPIFY_ADMIN_API_BASE), resolve_configured: !!RESOLVE_SECRET, webhook_key_es_default: WEBHOOK_KEY_ES_DEFAULT, handoff_assist_min: HANDOFF_ASSIST_MIN, handoff_cold_hours: HANDOFF_COLD_HOURS, debounce_ms: DEBOUNCE_MS, sesion_gap_dias: SESION_GAP_DIAS, burbujas: BURBUJAS, burbuja_ms: BURBUJA_MS, audio_puente: AUDIO_PUENTE, sweep: SWEEP_MODE, sweep_espera_min: SWEEP_ESPERA_MIN, stt: STT_MODE, stt_raw: STT_RAW, stt_configurado: !!OPENAI_API_KEY, stt_model: STT_MODEL, busqueda_shadow: BUSQUEDA_SHADOW, busqueda_mcp: BUSQUEDA_MCP, busqueda_mcp_limit: BUSQUEDA_MCP_LIMIT, catalog_mcp_url: CATALOG_MCP_URL, ucp_profile_url: UCP_PROFILE_URL, live_targets: MODE === "live" ? (LIVE_ALL ? "all" : LIVE_ALLOWLIST.length) : 0, ts: new Date().toISOString() });
+    return Response.json({ status: "ok", function: "copilot-webhook", version: "v105.1-eco-direccion", mode: MODE, mode_raw: MODE_RAW, model: MODEL, llm_configured: !!anthropic, wati_send_configured: !!(WATI_API_TOKEN && WATI_API_BASE), inventario_configurado: !!(SHOPIFY_ADMIN_TOKEN && SHOPIFY_ADMIN_API_BASE), resolve_configured: !!RESOLVE_SECRET, webhook_key_es_default: WEBHOOK_KEY_ES_DEFAULT, handoff_assist_min: HANDOFF_ASSIST_MIN, handoff_cold_hours: HANDOFF_COLD_HOURS, debounce_ms: DEBOUNCE_MS, sesion_gap_dias: SESION_GAP_DIAS, burbujas: BURBUJAS, burbuja_ms: BURBUJA_MS, audio_puente: AUDIO_PUENTE, sweep: SWEEP_MODE, sweep_espera_min: SWEEP_ESPERA_MIN, stt: STT_MODE, stt_raw: STT_RAW, stt_configurado: !!OPENAI_API_KEY, stt_model: STT_MODEL, busqueda_shadow: BUSQUEDA_SHADOW, busqueda_mcp: BUSQUEDA_MCP, busqueda_mcp_limit: BUSQUEDA_MCP_LIMIT, catalog_mcp_url: CATALOG_MCP_URL, ucp_profile_url: UCP_PROFILE_URL, live_targets: MODE === "live" ? (LIVE_ALL ? "all" : LIVE_ALLOWLIST.length) : 0, ts: new Date().toISOString() });
   }
   if (req.method !== "POST") return Response.json({ error: "method_not_allowed" }, { status: 405 });
   if (url.searchParams.get("key") !== WEBHOOK_KEY) return Response.json({ error: "forbidden" }, { status: 403 });
