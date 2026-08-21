@@ -2074,7 +2074,19 @@ async function guardarDatosEnvio(waId: string, input: any): Promise<string> {
     // viejos describen el domicilio ANTERIOR. Si no llegan nuevos en esta captura, se LIMPIAN — Shipday
     // prioriza el pin, y dejarlo enrutaría a la casa vieja (misma lección que upsertContactByPhone esCorreccion).
     const norm = (s: unknown) => String(s ?? "").toLowerCase().replace(/\s+/g, " ").trim();
-    const cambioDireccion = !!(direccion && existente?.address && norm(direccion) !== norm(existente.address));
+    // v93 — REFINAR NO ES MUDARSE. Caso real (prueba 21-ago): el cliente dijo "me equivoqué, la oficina no
+    // es la 3A", el bot quitó ese dato —correcto— y la dirección pasó a ser la MISMA menos el final. La
+    // regla de arriba lo leyó como domicilio nuevo y borró la referencia ("frente al banco") que el cliente
+    // acababa de dar y que sigue siendo válida: es el mismo edificio.
+    // El criterio es deliberadamente ESTRICTO (solo contención: una dirección es la otra más/menos texto),
+    // porque los dos errores no cuestan igual — tratar una mudanza como refinamiento conserva el pin viejo
+    // y manda al repartidor a la casa anterior (el bug de v75/v91); tratar un refinamiento como mudanza
+    // solo hace que el bot vuelva a pedir la referencia. Ante la duda, se limpia.
+    const nDir = norm(direccion), nPrev = norm(existente?.address);
+    const esRefinamiento = !!(nDir && nPrev && nDir !== nPrev
+      && (nDir.includes(nPrev) || nPrev.includes(nDir))
+      && Math.min(nDir.length, nPrev.length) >= 12);
+    const cambioDireccion = !!(direccion && existente?.address && nDir !== nPrev) && !esRefinamiento;
     if (cambioDireccion) {
       if (!referencia) fila.referencia = null;
       if (!coords && !mapsUrl) { fila.latitude = null; fila.longitude = null; fila.maps_url = null; }
@@ -3176,7 +3188,7 @@ Deno.serve(async (req) => {
         texto: tr?.texto ?? null, ts: new Date().toISOString(),
       });
     }
-    return Response.json({ status: "ok", function: "copilot-webhook", version: "v92-confirmacion-estructurada", mode: MODE, mode_raw: MODE_RAW, model: MODEL, llm_configured: !!anthropic, wati_send_configured: !!(WATI_API_TOKEN && WATI_API_BASE), inventario_configurado: !!(SHOPIFY_ADMIN_TOKEN && SHOPIFY_ADMIN_API_BASE), resolve_configured: !!RESOLVE_SECRET, webhook_key_es_default: WEBHOOK_KEY_ES_DEFAULT, handoff_assist_min: HANDOFF_ASSIST_MIN, handoff_cold_hours: HANDOFF_COLD_HOURS, debounce_ms: DEBOUNCE_MS, sesion_gap_dias: SESION_GAP_DIAS, burbujas: BURBUJAS, burbuja_ms: BURBUJA_MS, audio_puente: AUDIO_PUENTE, sweep: SWEEP_MODE, sweep_espera_min: SWEEP_ESPERA_MIN, stt: STT_MODE, stt_raw: STT_RAW, stt_configurado: !!OPENAI_API_KEY, stt_model: STT_MODEL, busqueda_shadow: BUSQUEDA_SHADOW, busqueda_mcp: BUSQUEDA_MCP, busqueda_mcp_limit: BUSQUEDA_MCP_LIMIT, catalog_mcp_url: CATALOG_MCP_URL, ucp_profile_url: UCP_PROFILE_URL, live_targets: MODE === "live" ? (LIVE_ALL ? "all" : LIVE_ALLOWLIST.length) : 0, ts: new Date().toISOString() });
+    return Response.json({ status: "ok", function: "copilot-webhook", version: "v93-refinar-no-es-mudarse", mode: MODE, mode_raw: MODE_RAW, model: MODEL, llm_configured: !!anthropic, wati_send_configured: !!(WATI_API_TOKEN && WATI_API_BASE), inventario_configurado: !!(SHOPIFY_ADMIN_TOKEN && SHOPIFY_ADMIN_API_BASE), resolve_configured: !!RESOLVE_SECRET, webhook_key_es_default: WEBHOOK_KEY_ES_DEFAULT, handoff_assist_min: HANDOFF_ASSIST_MIN, handoff_cold_hours: HANDOFF_COLD_HOURS, debounce_ms: DEBOUNCE_MS, sesion_gap_dias: SESION_GAP_DIAS, burbujas: BURBUJAS, burbuja_ms: BURBUJA_MS, audio_puente: AUDIO_PUENTE, sweep: SWEEP_MODE, sweep_espera_min: SWEEP_ESPERA_MIN, stt: STT_MODE, stt_raw: STT_RAW, stt_configurado: !!OPENAI_API_KEY, stt_model: STT_MODEL, busqueda_shadow: BUSQUEDA_SHADOW, busqueda_mcp: BUSQUEDA_MCP, busqueda_mcp_limit: BUSQUEDA_MCP_LIMIT, catalog_mcp_url: CATALOG_MCP_URL, ucp_profile_url: UCP_PROFILE_URL, live_targets: MODE === "live" ? (LIVE_ALL ? "all" : LIVE_ALLOWLIST.length) : 0, ts: new Date().toISOString() });
   }
   if (req.method !== "POST") return Response.json({ error: "method_not_allowed" }, { status: 405 });
   if (url.searchParams.get("key") !== WEBHOOK_KEY) return Response.json({ error: "forbidden" }, { status: 403 });
