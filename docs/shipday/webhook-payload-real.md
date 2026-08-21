@@ -39,3 +39,45 @@ Dos bugs simultáneos, ambos confirmados con datos reales:
    Fix: leer `delivery_details.phone`; y como respaldo, recuperar el wa_id de la fila `shopify`
    existente por `pedido_ref` (order_number).
 2. **Vocabulario incompleto**: ORDER_ACCEPTED_AND_STARTED, ORDER_PIKEDUP, ORDER_UNASSIGNED no estaban mapeados.
+
+---
+
+## Pierna de vuelta de direcciones (Shipday → Supabase → WATI)
+
+Añadida el 21-ago-2026. **No requiere registrar ningún webhook nuevo**: los eventos de estado que ya
+recibimos traen `delivery_details.address` y `delivery_details.location`, así que si un asesor corrige
+la dirección en Shipday, la versión corregida llega en el **siguiente evento de esa orden**.
+
+**Fuente de verdad: `contacts` en Supabase.** Es la única candidata: WATI solo guarda atributos planos
+(sin lat/lng ni historial) y Shipday guarda una copia *por orden*, no por cliente. WATI es la vista del
+asesor; Shipday, una copia por orden.
+
+**Anti-loop por diseño:** Supabase escribe hacia Shipday SOLO al crear la orden, nunca después;
+Shipday escribe hacia Supabase SOLO desde este webhook. No hay tercer camino.
+
+**Reglas** (`sincronizarDireccionDesdeShipday`):
+
+| Situación | Qué hace |
+|---|---|
+| Shipday manda una dirección distinta a la de la libreta | sincroniza, audita y espeja a la ficha de WATI |
+| Misma dirección (evento repetido o reenviado) | nada — la dedup es por texto normalizado |
+| **La libreta se tocó hace menos de 10 min** | **NO pisa**, solo audita: ese cambio puede ser más nuevo que el de Shipday y los eventos llegan fuera de orden |
+| El evento no trae dirección | no toca nada (nunca degrada) |
+| Dirección nueva sin coordenadas | limpia el pin viejo: apuntaba al domicilio anterior |
+
+La ventana de 10 minutos es deliberadamente conservadora: perder una corrección es recuperable (llega
+en el siguiente evento), pisar la dirección buena del cliente no lo es.
+
+**Auditoría:** cada cambio detectado —aplicado o no— deja fila en `public.direcciones_hist`
+(valor anterior, nuevo, origen, orden, si se aplicó y por qué no). Responde "¿por qué el repartidor
+fue a esa dirección?".
+
+```sql
+select created_at, origen, address_ant, address_nueva, aplicado, motivo
+from direcciones_hist order by created_at desc limit 20;
+```
+
+**Límite conocido:** si el asesor edita la dirección y la orden ya no emite más eventos, el cambio no
+viaja. El evento de entrega (`ORDER_COMPLETED`) cubre la mayoría de los casos.
+
+**Trazabilidad en job_log:** `direccion_shipday_sincronizada` (ok) · `direccion_shipday_no_aplicada`.
