@@ -2192,7 +2192,10 @@ async function responderLLM(history: { role: string; content: string; model?: st
   // guardar_datos_envio sigue FUERA de la asistencia normal (no capturar datos con un humano a cargo).
   const toolsActivas = modoCaptura
     ? TOOLS.filter((t) => ["guardar_datos_envio", "tarifa_entrega", "info_tienda", "sucursales_interior"].includes(t.name))
-    : modoAsistencia ? TOOLS.filter((t) => ["buscar_producto", "info_tienda", "sucursales_interior", "estado_pedido", "calcular_cotizacion", "consultar_folleto"].includes(t.name)) : TOOLS;
+    // v84 — la asistencia también puede GUARDAR datos de entrega y cotizar la tarifa: el bot preguntaba
+    // "¿me confirma su dirección?" en handoff y no tenía la tool para guardar la respuesta (21-ago).
+    // Capturar dirección/pin no es facturar: los guardarraíles de pagos siguen en el gate y el suffix.
+    : modoAsistencia ? TOOLS.filter((t) => ["buscar_producto", "info_tienda", "sucursales_interior", "estado_pedido", "calcular_cotizacion", "consultar_folleto", "guardar_datos_envio", "tarifa_entrega"].includes(t.name)) : TOOLS;
   // Los mensajes de un asesor humano se marcan para que el agente sepa que los dijo una persona.
   // v32: cada mensaje ANTERIOR (no el último/actual) se prefija con [hoy/ayer/fecha] para que el bot
   // ubique el historial en el tiempo. El último (el que se responde ahora) va limpio (es "ahora", y así
@@ -2958,7 +2961,7 @@ Deno.serve(async (req) => {
         texto: tr?.texto ?? null, ts: new Date().toISOString(),
       });
     }
-    return Response.json({ status: "ok", function: "copilot-webhook", version: "v83-asistencia-continua", mode: MODE, mode_raw: MODE_RAW, model: MODEL, llm_configured: !!anthropic, wati_send_configured: !!(WATI_API_TOKEN && WATI_API_BASE), inventario_configurado: !!(SHOPIFY_ADMIN_TOKEN && SHOPIFY_ADMIN_API_BASE), resolve_configured: !!RESOLVE_SECRET, webhook_key_es_default: WEBHOOK_KEY_ES_DEFAULT, handoff_assist_min: HANDOFF_ASSIST_MIN, handoff_cold_hours: HANDOFF_COLD_HOURS, debounce_ms: DEBOUNCE_MS, sesion_gap_dias: SESION_GAP_DIAS, burbujas: BURBUJAS, burbuja_ms: BURBUJA_MS, audio_puente: AUDIO_PUENTE, sweep: SWEEP_MODE, sweep_espera_min: SWEEP_ESPERA_MIN, stt: STT_MODE, stt_raw: STT_RAW, stt_configurado: !!OPENAI_API_KEY, stt_model: STT_MODEL, busqueda_shadow: BUSQUEDA_SHADOW, busqueda_mcp: BUSQUEDA_MCP, busqueda_mcp_limit: BUSQUEDA_MCP_LIMIT, catalog_mcp_url: CATALOG_MCP_URL, ucp_profile_url: UCP_PROFILE_URL, live_targets: MODE === "live" ? (LIVE_ALL ? "all" : LIVE_ALLOWLIST.length) : 0, ts: new Date().toISOString() });
+    return Response.json({ status: "ok", function: "copilot-webhook", version: "v84-pin-deterministico", mode: MODE, mode_raw: MODE_RAW, model: MODEL, llm_configured: !!anthropic, wati_send_configured: !!(WATI_API_TOKEN && WATI_API_BASE), inventario_configurado: !!(SHOPIFY_ADMIN_TOKEN && SHOPIFY_ADMIN_API_BASE), resolve_configured: !!RESOLVE_SECRET, webhook_key_es_default: WEBHOOK_KEY_ES_DEFAULT, handoff_assist_min: HANDOFF_ASSIST_MIN, handoff_cold_hours: HANDOFF_COLD_HOURS, debounce_ms: DEBOUNCE_MS, sesion_gap_dias: SESION_GAP_DIAS, burbujas: BURBUJAS, burbuja_ms: BURBUJA_MS, audio_puente: AUDIO_PUENTE, sweep: SWEEP_MODE, sweep_espera_min: SWEEP_ESPERA_MIN, stt: STT_MODE, stt_raw: STT_RAW, stt_configurado: !!OPENAI_API_KEY, stt_model: STT_MODEL, busqueda_shadow: BUSQUEDA_SHADOW, busqueda_mcp: BUSQUEDA_MCP, busqueda_mcp_limit: BUSQUEDA_MCP_LIMIT, catalog_mcp_url: CATALOG_MCP_URL, ucp_profile_url: UCP_PROFILE_URL, live_targets: MODE === "live" ? (LIVE_ALL ? "all" : LIVE_ALLOWLIST.length) : 0, ts: new Date().toISOString() });
   }
   if (req.method !== "POST") return Response.json({ error: "method_not_allowed" }, { status: 405 });
   if (url.searchParams.get("key") !== WEBHOOK_KEY) return Response.json({ error: "forbidden" }, { status: 403 });
@@ -3240,6 +3243,24 @@ Deno.serve(async (req) => {
         if (idPin) await sb.from("contacts").update(pinFila).eq("id", idPin);
         else await sb.from("contacts").insert({ name: p?.senderName || "Cliente WhatsApp", phone: `+${waId}`, address: "", source: "copilot", ...pinFila });
       } catch (e) { await log("error", false, { waId, fase: "pin_persistir", error: String(e).slice(0, 150) }); }
+      // v84 — ZONA Y FICHA SIN DEPENDER DEL LLM (caso real 21-ago): el pin llegó durante una asistencia
+      // de handoff, el LLM contestó "quedó registrada" SIN tool (en asistencia guardar_datos_envio no
+      // estaba) y la zona/ficha de WATI quedaron viejas. Ahora es determinístico: pin → polígono →
+      // zona, y espejo de la libreta a los atributos de WATI. En segundo plano: no retrasa el 200.
+      {
+        const latP = coordsLoc.lat, lngP = coordsLoc.lng, waIdP = waId;
+        correrEnSegundoPlano((async () => {
+          try {
+            const { data: zp } = await sb.rpc("zona_por_coordenadas", { p_lat: latP, p_lng: lngP });
+            const zOk = !!zp && (zp as any).estado === "ok";
+            await log("zona_por_pin", zOk, { waId: waIdP, via: "ubicacion_directa", zona: (zp as any)?.zona ?? (zp as any)?.estado ?? null, correg: (zp as any)?.corregimiento ?? null });
+            const { data: cLib } = await sb.from("contacts").select("address,referencia").eq("phone_digits", waIdP.slice(-8)).order("updated_at", { ascending: false }).limit(1);
+            const lib = (cLib ?? [])[0] as any;
+            const zonaTxt = zOk ? [(zp as any).zona, (zp as any).tarifa_usd != null ? `$${(zp as any).tarifa_usd}` : null].filter(Boolean).join(" · ") : "";
+            await espejarEnvioWati(waIdP, { direccion: String(lib?.address ?? ""), referencia: String(lib?.referencia ?? ""), pinUrl: `https://maps.google.com/?q=${latP},${lngP}`, zonaTxt });
+          } catch (e) { await log("error", false, { waId: waIdP, fase: "pin_zona_espejo", error: String(e).slice(0, 150) }); }
+        })());
+      }
       texto = `[el cliente compartió su ubicación 📍] https://maps.google.com/?q=${coordsLoc.lat},${coordsLoc.lng}`;
       tipo = "text";
       // Solo el CAMPO que traía las coordenadas (diagnóstico de shape); la coordenada en sí no va al log.
