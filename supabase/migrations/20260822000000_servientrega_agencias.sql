@@ -34,6 +34,10 @@ create table if not exists public.servientrega_agencias (
 
 alter table public.servientrega_agencias enable row level security;
 revoke all on public.servientrega_agencias from anon, authenticated;
+-- v106.1 — el GRANT explícito es OBLIGATORIO: las tablas creadas vía migración no heredan SELECT
+-- para service_role en este proyecto (caso real: "permission denied" en la primera prueba en vivo
+-- y sucursales_interior cayó al respaldo estático sin dirección ni mapa).
+grant select on public.servientrega_agencias to service_role;
 
 comment on table public.servientrega_agencias is
   'Puntos de retiro de Servientrega PA (fuente oficial, 21-ago-2026). sucursal=CDS Centro de Soluciones; agente_verde=comercio aliado donde llega el pedido. Los lee sucursales_interior (copilot-webhook, service role).';

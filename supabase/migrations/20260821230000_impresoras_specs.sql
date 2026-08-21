@@ -31,6 +31,9 @@ create table if not exists public.impresoras_specs (
 
 alter table public.impresoras_specs enable row level security;
 revoke all on public.impresoras_specs from anon, authenticated;
+-- v106.1 — GRANT explícito obligatorio (las tablas nuevas no heredan SELECT para service_role en
+-- este proyecto; sin esto asesorar_impresora caía a su ruta de error en silencio).
+grant select on public.impresoras_specs to service_role;
 
 comment on table public.impresoras_specs is
   'Specs estructurados de las impresoras del catálogo, extraídos de las fichas de Shopify. Los lee asesorar_impresora (copilot-webhook, service role). verificado=false hasta revisión del negocio.';
