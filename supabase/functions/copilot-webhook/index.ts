@@ -797,7 +797,8 @@ Un compañero del equipo tiene esta conversación y el cliente preguntó algo qu
 - DATOS DE ENTREGA (v84): si el cliente da su dirección, referencia o ubicación 📍 (o responde a una pregunta tuya sobre eso), SÍ guárdalos con guardar_datos_envio y confirma el costo que la tool devuelva (tarifa_entrega también vale). Al confirmar su ubicación nómbrala como el CLIENTE la conoce (el sector/corregimiento en zona.lugar o su propia dirección) — NUNCA el código interno de zona (Z1, Z2, Z4a…). El despacho igual lo confirma y lo lanza el asesor.
 - PAGOS Y FACTURACIÓN — territorio del asesor, sin excepción: NO expliques ni ofrezcas formas de pago (Yappy/ACH/tarjeta/efectivo/cuotas), NO des números de cuenta ni links de pago, NO pidas ni proceses datos de factura (RUC, cédula, razón social), y NUNCA digas ni insinúes que un pago fue recibido, capturado, confirmado o aplicado — aunque el cliente lo afirme o mande un comprobante. Si el tema es pago o factura, responde en UNA línea que el asesor lo confirma y no agregues nada más.
 - NO HAGAS PROMESAS: nada de horas ni fechas de entrega ("le llega hoy/mañana"), ni de que algo "ya salió", ni disponibilidad que no venga de una herramienta en este turno. Si no tienes el dato, dilo y deja que el asesor confirme.
-- Si la pregunta toca un pago en curso, una cotización/factura formal, coordinar una entrega, o el caso puntual que lleva el asesor, NO escribas nada (deja la respuesta vacía): que lo siga el humano.`;
+- Si la pregunta toca un pago en curso, una cotización/factura formal, coordinar una entrega, o el caso puntual que lleva el asesor, NO escribas nada: que lo siga el humano.
+- CÓMO CALLAR: TODO texto que escribas LE LLEGA AL CLIENTE por WhatsApp — no existe un canal aparte para tus notas. Para no responder, devuelve la respuesta LITERALMENTE vacía (cero caracteres): NUNCA escribas "No respondo", "(sin respuesta)", "[respuesta vacía]" ni expliques por qué no intervienes (caso real: un cliente recibió "No respondo (es un intercambio entre el asesor y el cliente)" y preguntó "¿cómo?").`;
 
 // v74 — MODO CAPTURA (P3-b): un asesor invocó al bot SOLO para capturar los datos de entrega mientras
 // la conversación sigue en handoff (endpoint ?captura=1 → conversations.captura_hasta). Reemplaza a
@@ -2342,6 +2343,23 @@ function pareceFuncionEnTexto(t: string): boolean {
     || /\bname\s*=\s*"(buscar_producto|info_tienda|guardar_lead|sucursales_interior|tarifa_entrega|estado_pedido|calcular_cotizacion|consultar_folleto)"/i.test(t);
 }
 
+// v87 — el modelo a veces ESCRIBE su abstención en vez de devolver la respuesta vacía ("No respondo
+// (el asesor lleva el caso)", "(sin respuesta)", "*[respuesta vacía]*", "Se detectó que un asesor…"):
+// 23 fugas reales al cliente entre el 14 y el 21-ago, al punto de que un asesor tuvo que explicar
+// "eso es el bot, pensando en voz alta". El prompt ya lo prohíbe, pero la última línea de defensa es
+// determinística: si el texto es una abstención/meta, se trata como respuesta VACÍA (ni se inserta
+// ni se envía). Se aplica en asistencia/barrido/captura, donde callar siempre es una salida válida.
+function esMetaAbstencion(t: string): boolean {
+  const s = (t ?? "").trim().replace(/^[*_~\s]+|[*_~\s]+$/g, "");
+  if (!s) return true;
+  if (/^\(.*\)$/s.test(s) || /^\[.*\]$/s.test(s)) return true; // TODO el mensaje entre paréntesis/corchetes = meta
+  if (/^no\s+respond(o|er|e)\b/i.test(s)) return true;
+  if (/^(sin\s+respuesta|respuesta\s+vac[ií]a|vac[ií]o\b|no\s+requiere\s+respuesta|no\s+hay\s+nada\s+que)/i.test(s)) return true;
+  if (/\bno\s+(debo|debemos|voy\s+a|puedo)\s+(intervenir|interrumpir|responder|escribir)\b/i.test(s)) return true;
+  if (/\bse\s+detect[oó]\b[\s\S]*\basesor\b/i.test(s)) return true;
+  return false;
+}
+
 // v29 — re-aplica el tracking a los links de producto que el modelo pudo "limpiar" (sacándole el
 // ?utm…&ref_code=). Reemplaza cada URL de producto por la versión con tracking generada este turno
 // (links: handle → URL apex+utm+ref_code). Determinista: no depende de que el LLM copie bien la URL.
@@ -2672,6 +2690,8 @@ async function ejecutarAsistencia(
           // v44 guard anti-fuga: si la tool-call se filtró como texto, no la enviamos (aquí un humano ya
           // tiene el caso → basta con no responder). Loggea para telemetría.
           if (salida && pareceFuncionEnTexto(salida)) { await log("fuga_tool_texto", false, { waId, fase: "asistencia", muestra: (r.text ?? "").slice(0, 200) }); salida = null; }
+          // v87 — el modelo escribió su abstención en vez de callar → cuenta como respuesta vacía.
+          if (salida && esMetaAbstencion(salida)) { await log("abstencion_meta", true, { waId, origen, muestra: salida.slice(0, 160) }); salida = null; }
           if (!salida) { await log("asistencia_handoff", true, { waId, enviado: false, motivo: "sin_respuesta" }); return; }
           // anti-duplicado (llegó otro mensaje del cliente) + anti-carrera (el asesor volvió a escribir
           // durante el LLM → reseteó el reloj → él sigue; o la conversación dejó de estar en handoff).
@@ -2745,7 +2765,7 @@ const SWEEP_SUFFIX = `
 
 RESPUESTA TARDÍA (esta conversación lleva rato sin atención y estás retomándola tú, no el cliente escribió recién)
 - Responde SOLO si tienes algo CONCRETO y útil que aportar AHORA: un precio con su ITBMS, disponibilidad, un dato de la tienda, el estado de un pedido o un punto de retiro — siempre traído de una herramienta.
-- Si el último mensaje del cliente era un agradecimiento, una confirmación, un "quedo pendiente" o cualquier cosa que ya no requiere acción, NO respondas NADA. Devuelve una respuesta vacía. Escribir "quedamos atentos" o "cualquier cosa aquí estoy" horas después no aporta y molesta.
+- Si el último mensaje del cliente era un agradecimiento, una confirmación, un "quedo pendiente" o cualquier cosa que ya no requiere acción, NO respondas NADA. Devuelve una respuesta LITERALMENTE vacía (cero caracteres) — NUNCA escribas "No respondo", "(sin respuesta)" ni expliques por qué callas: todo texto que escribas le llega al cliente por WhatsApp. Escribir "quedamos atentos" o "cualquier cosa aquí estoy" horas después no aporta y molesta.
 - Recuerda que pasó tiempo: no saludes como si la conversación fuera de este instante ni des por hecho que el cliente sigue esperando en el chat.`;
 
 // v72 — AVISO DE DESATENCIÓN a los asesores (por correo).
@@ -2972,7 +2992,7 @@ Deno.serve(async (req) => {
         texto: tr?.texto ?? null, ts: new Date().toISOString(),
       });
     }
-    return Response.json({ status: "ok", function: "copilot-webhook", version: "v86-pin-manda-primero", mode: MODE, mode_raw: MODE_RAW, model: MODEL, llm_configured: !!anthropic, wati_send_configured: !!(WATI_API_TOKEN && WATI_API_BASE), inventario_configurado: !!(SHOPIFY_ADMIN_TOKEN && SHOPIFY_ADMIN_API_BASE), resolve_configured: !!RESOLVE_SECRET, webhook_key_es_default: WEBHOOK_KEY_ES_DEFAULT, handoff_assist_min: HANDOFF_ASSIST_MIN, handoff_cold_hours: HANDOFF_COLD_HOURS, debounce_ms: DEBOUNCE_MS, sesion_gap_dias: SESION_GAP_DIAS, burbujas: BURBUJAS, burbuja_ms: BURBUJA_MS, audio_puente: AUDIO_PUENTE, sweep: SWEEP_MODE, sweep_espera_min: SWEEP_ESPERA_MIN, stt: STT_MODE, stt_raw: STT_RAW, stt_configurado: !!OPENAI_API_KEY, stt_model: STT_MODEL, busqueda_shadow: BUSQUEDA_SHADOW, busqueda_mcp: BUSQUEDA_MCP, busqueda_mcp_limit: BUSQUEDA_MCP_LIMIT, catalog_mcp_url: CATALOG_MCP_URL, ucp_profile_url: UCP_PROFILE_URL, live_targets: MODE === "live" ? (LIVE_ALL ? "all" : LIVE_ALLOWLIST.length) : 0, ts: new Date().toISOString() });
+    return Response.json({ status: "ok", function: "copilot-webhook", version: "v87-sin-pensar-en-voz-alta", mode: MODE, mode_raw: MODE_RAW, model: MODEL, llm_configured: !!anthropic, wati_send_configured: !!(WATI_API_TOKEN && WATI_API_BASE), inventario_configurado: !!(SHOPIFY_ADMIN_TOKEN && SHOPIFY_ADMIN_API_BASE), resolve_configured: !!RESOLVE_SECRET, webhook_key_es_default: WEBHOOK_KEY_ES_DEFAULT, handoff_assist_min: HANDOFF_ASSIST_MIN, handoff_cold_hours: HANDOFF_COLD_HOURS, debounce_ms: DEBOUNCE_MS, sesion_gap_dias: SESION_GAP_DIAS, burbujas: BURBUJAS, burbuja_ms: BURBUJA_MS, audio_puente: AUDIO_PUENTE, sweep: SWEEP_MODE, sweep_espera_min: SWEEP_ESPERA_MIN, stt: STT_MODE, stt_raw: STT_RAW, stt_configurado: !!OPENAI_API_KEY, stt_model: STT_MODEL, busqueda_shadow: BUSQUEDA_SHADOW, busqueda_mcp: BUSQUEDA_MCP, busqueda_mcp_limit: BUSQUEDA_MCP_LIMIT, catalog_mcp_url: CATALOG_MCP_URL, ucp_profile_url: UCP_PROFILE_URL, live_targets: MODE === "live" ? (LIVE_ALL ? "all" : LIVE_ALLOWLIST.length) : 0, ts: new Date().toISOString() });
   }
   if (req.method !== "POST") return Response.json({ error: "method_not_allowed" }, { status: 405 });
   if (url.searchParams.get("key") !== WEBHOOK_KEY) return Response.json({ error: "forbidden" }, { status: 403 });
