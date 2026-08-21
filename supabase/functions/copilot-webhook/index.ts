@@ -3326,7 +3326,7 @@ Deno.serve(async (req) => {
         texto: tr?.texto ?? null, ts: new Date().toISOString(),
       });
     }
-    return Response.json({ status: "ok", function: "copilot-webhook", version: "v98-lee-pdf", mode: MODE, mode_raw: MODE_RAW, model: MODEL, llm_configured: !!anthropic, wati_send_configured: !!(WATI_API_TOKEN && WATI_API_BASE), inventario_configurado: !!(SHOPIFY_ADMIN_TOKEN && SHOPIFY_ADMIN_API_BASE), resolve_configured: !!RESOLVE_SECRET, webhook_key_es_default: WEBHOOK_KEY_ES_DEFAULT, handoff_assist_min: HANDOFF_ASSIST_MIN, handoff_cold_hours: HANDOFF_COLD_HOURS, debounce_ms: DEBOUNCE_MS, sesion_gap_dias: SESION_GAP_DIAS, burbujas: BURBUJAS, burbuja_ms: BURBUJA_MS, audio_puente: AUDIO_PUENTE, sweep: SWEEP_MODE, sweep_espera_min: SWEEP_ESPERA_MIN, stt: STT_MODE, stt_raw: STT_RAW, stt_configurado: !!OPENAI_API_KEY, stt_model: STT_MODEL, busqueda_shadow: BUSQUEDA_SHADOW, busqueda_mcp: BUSQUEDA_MCP, busqueda_mcp_limit: BUSQUEDA_MCP_LIMIT, catalog_mcp_url: CATALOG_MCP_URL, ucp_profile_url: UCP_PROFILE_URL, live_targets: MODE === "live" ? (LIVE_ALL ? "all" : LIVE_ALLOWLIST.length) : 0, ts: new Date().toISOString() });
+    return Response.json({ status: "ok", function: "copilot-webhook", version: "v99-pdf-en-rafaga", mode: MODE, mode_raw: MODE_RAW, model: MODEL, llm_configured: !!anthropic, wati_send_configured: !!(WATI_API_TOKEN && WATI_API_BASE), inventario_configurado: !!(SHOPIFY_ADMIN_TOKEN && SHOPIFY_ADMIN_API_BASE), resolve_configured: !!RESOLVE_SECRET, webhook_key_es_default: WEBHOOK_KEY_ES_DEFAULT, handoff_assist_min: HANDOFF_ASSIST_MIN, handoff_cold_hours: HANDOFF_COLD_HOURS, debounce_ms: DEBOUNCE_MS, sesion_gap_dias: SESION_GAP_DIAS, burbujas: BURBUJAS, burbuja_ms: BURBUJA_MS, audio_puente: AUDIO_PUENTE, sweep: SWEEP_MODE, sweep_espera_min: SWEEP_ESPERA_MIN, stt: STT_MODE, stt_raw: STT_RAW, stt_configurado: !!OPENAI_API_KEY, stt_model: STT_MODEL, busqueda_shadow: BUSQUEDA_SHADOW, busqueda_mcp: BUSQUEDA_MCP, busqueda_mcp_limit: BUSQUEDA_MCP_LIMIT, catalog_mcp_url: CATALOG_MCP_URL, ucp_profile_url: UCP_PROFILE_URL, live_targets: MODE === "live" ? (LIVE_ALL ? "all" : LIVE_ALLOWLIST.length) : 0, ts: new Date().toISOString() });
   }
   if (req.method !== "POST") return Response.json({ error: "method_not_allowed" }, { status: 405 });
   if (url.searchParams.get("key") !== WEBHOOK_KEY) return Response.json({ error: "forbidden" }, { status: 403 });
@@ -3938,13 +3938,24 @@ Deno.serve(async (req) => {
         // texto y las fotos se perdían ("No logro visualizar…" — caso real auditado el 08-jul).
         const hace5min = Date.now() - 5 * 60 * 1000;
         const urlsRafaga: string[] = [];
+        // v99 — el PDF también se busca en la RÁFAGA, no solo en el mensaje que dispara el turno. Caso
+        // real (prueba 21-ago): el cliente mandó el PDF y 5 segundos después "hágame una cotización igual
+        // a esta"; con el debounce responde el mensaje de TEXTO, así que el adjunto quedaba fuera y el bot
+        // decía honestamente que no pudo abrirlo… sin haberlo intentado nunca. Es el mismo agujero que
+        // tuvieron las imágenes (v49) y se cierra igual: mirando los mensajes de cliente de los últimos
+        // 5 minutos.
+        let pdfEnRafaga = "";
         for (let i = history.length - 1; i >= 0 && (history[i] as any).role === "user"; i--) {
           const m = history[i] as any;
           // v68 — SOLO imágenes: desde v67/v68 las notas de voz también guardan media_url, y colarlas aquí
           // hacía que un .opus se mandara a Claude como si fuera una foto → 400 "Could not process image"
           // (el turno moría y salía la respuesta de respaldo; caso real 13-ago). Se filtran por contenido.
           const esAudioFila = m.content === "[audio]" || String(m.content ?? "").startsWith("[nota de voz]");
-          if (m.media_url && !esAudioFila && new Date(m.created_at).getTime() > hace5min) urlsRafaga.unshift(String(m.media_url));
+          if (!m.media_url || esAudioFila || new Date(m.created_at).getTime() <= hace5min) continue;
+          const u = String(m.media_url);
+          // El PDF va por su propio camino (bloque `document`), nunca al de visión.
+          if (/\.pdf($|\?|&)/i.test(u)) { if (!pdfEnRafaga) pdfEnRafaga = u; continue; }
+          urlsRafaga.unshift(u);
         }
         const imagenes: { b64: string; mediaType: string }[] = [];
         for (const u of urlsRafaga.slice(-3)) { // máx 3 (payload); las más recientes, en orden cronológico
@@ -3957,9 +3968,10 @@ Deno.serve(async (req) => {
         // v98 — el PDF se baja AQUÍ, en segundo plano: WATI ya recibió su 200 y solo se paga la descarga
         // del documento que de verdad se va a responder. Si falla, el turno sigue: el modelo recibe una
         // nota para pedirlo de nuevo con honestidad en vez de contestar a ciegas sobre un adjunto que no vio.
-        const pdfAdjunto = pdfUrlPendiente ? await descargarPdfWati(pdfUrlPendiente) : null;
-        if (pdfUrlPendiente) await log("pdf_cliente", !!pdfAdjunto, { waId, descargado: !!pdfAdjunto });
-        if (pdfUrlPendiente && !pdfAdjunto && history.length) {
+        const pdfUrl = pdfUrlPendiente || pdfEnRafaga; // v99: el del turno, o el de la ráfaga
+        const pdfAdjunto = pdfUrl ? await descargarPdfWati(pdfUrl) : null;
+        if (pdfUrl) await log("pdf_cliente", !!pdfAdjunto, { waId, descargado: !!pdfAdjunto, de_rafaga: !pdfUrlPendiente });
+        if (pdfUrl && !pdfAdjunto && history.length) {
           const ult = history[history.length - 1] as any;
           if (ult?.role === "user") ult.content = String(ult.content ?? "") + " [Nota interna: el cliente adjuntó un PDF que no se pudo abrir. Dile con honestidad que no pudiste leer el archivo y pídele que te escriba los productos y cantidades, o deriva a un asesor. NO adivines el contenido.]";
         }
