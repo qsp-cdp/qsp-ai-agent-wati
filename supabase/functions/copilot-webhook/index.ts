@@ -690,6 +690,7 @@ REGLA DE ORO — precio, stock y promociones
 - CANTIDADES / VARIOS PRODUCTOS: si el cliente pide 2+ unidades de algo, o el total combinado de varios productos, NUNCA multipliques, sumes ni apliques el ITBMS de memoria (aplicar el 7% dos veces cobra de más — es un error grave de plata). Llama a calcular_cotizacion pasándole cada producto con su precio_usd (el UNITARIO SIN ITBMS que te dio buscar_producto) y su cantidad; toma el subtotal, el ITBMS y el total EXACTAMENTE de lo que devuelva (relaya respuesta_sugerida). El ITBMS va UNA sola vez, sobre el subtotal — jamás sobre precios que ya lo incluyen.
 - STOCK / CANTIDAD: indica la disponibilidad usando el campo "stock" que devuelve la tool, TAL CUAL — CONSERVANDO el emoji con el que viene (✅ disponible, ⚠️ stock bajo, ❌ sin stock, 🔎 por verificar): ese emoji hace que la disponibilidad se vea de un vistazo en el chat. No lo cambies por otro ni lo quites. Si dice "X unidades", dilo; si dice "stock bajo — un asesor verifica…", dilo así. NUNCA inventes ni adivines una cantidad: di solo lo que aparezca en ese campo "stock".
 - OFERTA / PRECIO REBAJADO: si el resultado trae oferta:true, el artículo está en PRECIO DE OFERTA — destácalo al cotizarlo usando SOLO los valores de la tool: "está en OFERTA 🏷️: antes B/.[precio_antes_usd], ahora B/.[precio_usd] + ITBMS (7%) = B/.[total_con_itbms] (ahorra B/.[ahorro_usd])". Si el resultado NO trae oferta:true, NUNCA digas que está en oferta ni insinúes descuentos; NUNCA calcules el ahorro ni el porcentaje de memoria; y NUNCA prometas hasta cuándo dura la oferta (no lo sabemos — si preguntan, un asesor confirma).
+- COTIZAR NO ES CONFIRMAR EXISTENCIAS: cuando cotices cantidades (calcular_cotizacion), pásale SIEMPRE el campo "stock" de cada producto tal como lo devolvió buscar_producto. Si la herramienta detecta que alguna cantidad no alcanza, su "respuesta_sugerida" empieza con un aviso ⚠️ — relayala COMPLETA y EN ESE ORDEN, con el aviso primero. NUNCA muevas ese aviso al final, lo suavices ni lo omitas: el cliente lee la cotización como confirmación de que hay existencias y decide con esa idea (caso real reportado por los asesores: pidió 3 de cada color, se le cotizó todo y el faltante iba en una nota al pie que nadie leyó).
 - SIN STOCK — AVISO AUTOMÁTICO: si el campo "stock" dice "sin stock", además de indicar que un asesor puede confirmar el reingreso, comparte el link del producto y dile al cliente que EN ESA PÁGINA puede activar el botón de aviso de disponibilidad ("Avísame cuando esté disponible") para recibir una notificación automática apenas el producto reingrese. No prometas fechas de reingreso (eso lo confirma un asesor).
 - RESPUESTA EN PARTES (BURBUJAS) — SOLO al cotizar UN producto específico: cuando presentes UN solo producto con datos de buscar_producto, estructura la respuesta en 2-3 partes separadas por el marcador [[---]] en su propia línea: (1) una frase corta de contexto + el TÍTULO del producto y su link pelado — nada más en esa parte, así WhatsApp muestra la tarjeta con la foto; [[---]] (2) el precio con ITBMS (o el bloque de OFERTA 🏷️ si aplica), con los valores exactos de la tool; [[---]] (3) el stock (conservando su emoji) y una pregunta corta de cierre. El marcador va EXACTO como [[---]] y máximo 2 veces (3 partes). NUNCA uses el marcador en: listas o comparaciones de VARIOS productos, respuestas de categoría, cotizaciones con calcular_cotizacion, info de tienda/envíos/tarifas, estado de pedidos, ni en MODO ASISTENCIA — todas esas van en UN solo mensaje, como siempre.
 - Si la tool no encuentra el producto, o piden algo fuera de catálogo: discúlpate breve e indica que un asesor confirmará disponibilidad y opciones.
@@ -843,8 +844,8 @@ const TOOLS: Anthropic.Tool[] = [{
   input_schema: { type: "object", properties: {} },
 } as Anthropic.Tool, {
   name: "calcular_cotizacion",
-  description: "Calcula el TOTAL de una compra de varias unidades y/o varios productos, con ITBMS, en código (aritmética exacta). Úsala SIEMPRE que el cliente pida 2+ unidades de un producto, o el total combinado de varios productos — NUNCA multipliques, sumes ni apliques el ITBMS de memoria (aplicar el 7% dos veces cobra de más: es un error grave). Pásale 'items', una entrada por producto con su precio_usd (el precio UNITARIO SIN ITBMS que te devolvió buscar_producto — cópialo TAL CUAL, no lo inventes ni le sumes el impuesto) y la cantidad. Devuelve el subtotal, el ITBMS (7% una sola vez sobre el subtotal), el total y una 'respuesta_sugerida' ya armada: relaya esos números EXACTAMENTE. Si devuelve error (falta un precio), busca el producto con buscar_producto y vuelve a llamarla con su precio_usd.",
-  input_schema: { type: "object", properties: { items: { type: "array", description: "Una entrada por producto a cotizar.", items: { type: "object", properties: { descripcion: { type: "string", description: "Nombre del producto para la etiqueta de la línea, ej. 'Tinta Canon PG-145XL Negro'." }, precio_usd: { type: "number", description: "Precio UNITARIO SIN ITBMS, copiado EXACTAMENTE del campo precio_usd de buscar_producto." }, cantidad: { type: "number", description: "Cantidad de unidades de este producto (entero ≥ 1)." } }, required: ["precio_usd", "cantidad"] } } }, required: ["items"] },
+  description: "Calcula el TOTAL de una compra de varias unidades y/o varios productos, con ITBMS, en código (aritmética exacta). Úsala SIEMPRE que el cliente pida 2+ unidades de un producto, o el total combinado de varios productos — NUNCA multipliques, sumes ni apliques el ITBMS de memoria (aplicar el 7% dos veces cobra de más: es un error grave). Pásale 'items', una entrada por producto con su precio_usd (el precio UNITARIO SIN ITBMS que te devolvió buscar_producto — cópialo TAL CUAL, no lo inventes ni le sumes el impuesto), la cantidad y el 'stock' tal como lo devolvió buscar_producto. Con el stock, la herramienta compara contra la cantidad pedida y, si no alcanza, arma la respuesta ABRIENDO con el aviso de inventario insuficiente — relayala completa y en ese orden. Devuelve el subtotal, el ITBMS (7% una sola vez sobre el subtotal), el total y una 'respuesta_sugerida' ya armada: relaya esos números EXACTAMENTE. Si devuelve error (falta un precio), busca el producto con buscar_producto y vuelve a llamarla con su precio_usd.",
+  input_schema: { type: "object", properties: { items: { type: "array", description: "Una entrada por producto a cotizar.", items: { type: "object", properties: { descripcion: { type: "string", description: "Nombre del producto para la etiqueta de la línea, ej. 'Tinta Canon PG-145XL Negro'." }, precio_usd: { type: "number", description: "Precio UNITARIO SIN ITBMS, copiado EXACTAMENTE del campo precio_usd de buscar_producto." }, cantidad: { type: "number", description: "Cantidad de unidades de este producto (entero ≥ 1)." }, stock: { type: "string", description: "El campo 'stock' de buscar_producto COPIADO TAL CUAL, con su emoji (ej. '✅ 12 unidades disponibles', '⚠️ stock bajo — un asesor verifica…', '❌ sin stock…'). Pásalo SIEMPRE que lo tengas: con él la herramienta avisa al cliente cuando la cantidad pedida no alcanza. No lo traduzcas ni lo resumas." } }, required: ["precio_usd", "cantidad"] } } }, required: ["items"] },
 } as Anthropic.Tool, {
   name: "consultar_folleto",
   description: "Consulta el FOLLETO PDF oficial de un EQUIPO para responder una especificación técnica que el campo 'especificaciones' de buscar_producto NO respondió (velocidad, resolución, bandejas, dúplex, conectividad, dimensiones, ciclo de trabajo…). Pasa la URL del producto EXACTAMENTE como la devolvió buscar_producto (campo url) y la pregunta puntual del cliente. Devuelve la especificación extraída del folleto (citable como dato oficial) o indica que el folleto no trae ese dato / no existe folleto. NO sirve para precio, stock ni promociones (eso sale SOLO de buscar_producto — los folletos traen precios de otros mercados que NO aplican). Orden correcto: primero revisa 'especificaciones'; si NO trae el dato explícito, llama esta herramienta ANTES de derivar a un asesor — nunca respondas 'no está especificado' sin haberla intentado.",
@@ -1179,12 +1180,29 @@ function datosOferta(precio: any, precioLista: any): Record<string, unknown> {
 // buscarProducto), cantidad} por línea y computa TODO determinista: línea = precio×cantidad, subtotal = Σ
 // líneas, ITBMS UNA sola vez sobre el subtotal, total = subtotal+ITBMS. Trabaja en centavos (evita el drift
 // de floats). El modelo relaya respuesta_sugerida sin recalcular (regla de prompt CANTIDADES / VARIOS PRODUCTOS).
+// v96 — LEE EL STOCK QUE YA DEVOLVIÓ buscar_producto. No se le pide al modelo que traduzca a un número:
+// el campo `stock` a veces NO trae cifra a propósito (con 1-3 unidades dice "stock bajo" para no
+// comprometer cantidades que un asesor debe verificar físicamente). El modelo copia esa cadena tal cual
+// y aquí se interpreta, que es donde no puede equivocarse.
+function leerStock(txt: unknown): { nivel: "ok" | "bajo" | "sin" | "desconocido"; cantidad: number | null } {
+  const s = String(txt ?? "").trim();
+  if (!s) return { nivel: "desconocido", cantidad: null };
+  const m = s.match(/(\d+)\s*unidades/i);
+  if (m) return { nivel: "ok", cantidad: parseInt(m[1], 10) };
+  if (/sin\s*stock|❌/i.test(s)) return { nivel: "sin", cantidad: 0 };
+  if (/stock\s*bajo|⚠/i.test(s)) return { nivel: "bajo", cantidad: null }; // 1 a 3 unidades
+  return { nivel: "desconocido", cantidad: null };
+}
+
 function calcularCotizacion(items: any): string {
   try {
     const arr = Array.isArray(items) ? items : [];
     if (!arr.length) return JSON.stringify({ error: "sin_items", nota: "No hay productos para cotizar. Busca el producto con buscar_producto primero." });
     const lineas = [];
     let subtotalCent = 0;
+    // v96 — se clasifica cada línea contra su disponibilidad real (ver aviso más abajo).
+    const insuficientes: string[] = [];
+    const porVerificar: string[] = [];
     for (const it of arr) {
       const precio = parseFloat(String((it && it.precio_usd) ?? "").replace(/[^0-9.]/g, ""));
       let cant = Math.floor(Number(it && it.cantidad));
@@ -1197,14 +1215,63 @@ function calcularCotizacion(items: any): string {
       const precioCent = Math.round(precio * 100);
       const lineaCent = precioCent * cant;
       subtotalCent += lineaCent;
-      lineas.push({ descripcion: desc || "Producto", cantidad: cant, precio_unitario_usd: (precioCent / 100).toFixed(2), subtotal_linea_usd: (lineaCent / 100).toFixed(2) });
+      const st = leerStock(it && it.stock);
+      // "bajo" son 1-3 unidades: pedir 4 o más NO alcanza; pedir 1-3 puede alcanzar, pero solo un
+      // asesor lo confirma físicamente. "desconocido" (🔎) no genera ruido: no hay señal de faltante.
+      const noAlcanza = st.nivel === "sin"
+        || (st.nivel === "ok" && st.cantidad != null && st.cantidad < cant)
+        || (st.nivel === "bajo" && cant >= 4);
+      const dudoso = !noAlcanza && st.nivel === "bajo";
+      const etiqueta = desc || "Producto";
+      if (noAlcanza) insuficientes.push(etiqueta);
+      else if (dudoso) porVerificar.push(etiqueta);
+      lineas.push({
+        descripcion: etiqueta, cantidad: cant,
+        precio_unitario_usd: (precioCent / 100).toFixed(2),
+        subtotal_linea_usd: (lineaCent / 100).toFixed(2),
+        disponibilidad: st.nivel === "desconocido" ? undefined : String((it as any).stock ?? "").trim() || undefined,
+        alcanza: st.nivel === "desconocido" ? undefined : !noAlcanza,
+      });
     }
     const itbmsCent = Math.round(subtotalCent * 0.07);
     const totalCent = subtotalCent + itbmsCent;
     const fmt = (c: any) => (c / 100).toFixed(2);
-    const lineasTxt = lineas.map((l: any) => `${l.descripcion} ×${l.cantidad}: $${l.subtotal_linea_usd}`).join("\n");
-    const respuesta = `${lineasTxt}\nSubtotal: $${fmt(subtotalCent)} + ITBMS (7%) $${fmt(itbmsCent)} = *$${fmt(totalCent)}*`;
-    return JSON.stringify({ ok: true, lineas, subtotal_usd: fmt(subtotalCent), itbms_7pct: fmt(itbmsCent), total_con_itbms: fmt(totalCent), respuesta_sugerida: respuesta });
+    // v96 — EL AVISO VA PRIMERO. Observación de los asesores: el cliente lee la cotización como
+    // confirmación de disponibilidad y la nota de faltante quedaba al final, donde ya había decidido.
+    // Ahora la advertencia ABRE el mensaje y cada línea lleva su disponibilidad al lado; el total se
+    // calcula sobre lo SOLICITADO (es lo que el cliente pidió saber) — ajustar cantidades es su decisión.
+    // En la línea va la versión CORTA del stock ("⚠️ stock bajo", no la frase entera con el "un asesor
+    // verifica…"): en WhatsApp una línea larga por producto vuelve la cotización ilegible, y esa aclaración
+    // ya viaja en el encabezado y el cierre. El texto completo queda igual en `lineas[].disponibilidad`.
+    const corto = (l: any) => {
+      const st = leerStock(l.disponibilidad);
+      return st.nivel === "ok" ? `✅ ${st.cantidad} unidades`
+        : st.nivel === "sin" ? "❌ sin stock"
+        : st.nivel === "bajo" ? "⚠️ stock bajo"
+        : "";
+    };
+    const lineasTxt = lineas.map((l: any) => {
+      const d = l.disponibilidad ? corto(l) : "";
+      return `${l.descripcion} ×${l.cantidad}: $${l.subtotal_linea_usd}${d ? ` — disponible: ${d}` : ""}`;
+    }).join("\n");
+    const encabezado = insuficientes.length
+      ? "⚠️ No tenemos inventario suficiente para completar las cantidades que pide. Le detallo la cotización con la disponibilidad actual de cada producto:\n\n"
+      : porVerificar.length
+      ? "⚠️ Hay productos con inventario limitado: un asesor confirma la cantidad exacta antes de cerrar el pedido.\n\n"
+      : "";
+    const cierre = insuficientes.length
+      ? "\n\nUn asesor le confirma en cuánto podemos completar el resto."
+      : "";
+    const respuesta = `${encabezado}${lineasTxt}\nSubtotal: $${fmt(subtotalCent)} + ITBMS (7%) $${fmt(itbmsCent)} = *$${fmt(totalCent)}*${cierre}`;
+    return JSON.stringify({
+      ok: true, lineas, subtotal_usd: fmt(subtotalCent), itbms_7pct: fmt(itbmsCent), total_con_itbms: fmt(totalCent),
+      inventario_insuficiente: insuficientes.length ? insuficientes : undefined,
+      inventario_por_verificar: porVerificar.length ? porVerificar : undefined,
+      nota: (insuficientes.length || porVerificar.length)
+        ? "IMPORTANTE: relaya `respuesta_sugerida` COMPLETA y EMPEZANDO por la línea de ⚠️ — nunca muevas ese aviso al final ni lo suavices: una cotización sin él se lee como confirmación de que hay existencias. NO prometas cuándo llega el faltante (eso lo confirma un asesor)."
+        : undefined,
+      respuesta_sugerida: respuesta,
+    });
   } catch (e) {
     return JSON.stringify({ error: String(e).slice(0, 200) });
   }
@@ -3202,7 +3269,7 @@ Deno.serve(async (req) => {
         texto: tr?.texto ?? null, ts: new Date().toISOString(),
       });
     }
-    return Response.json({ status: "ok", function: "copilot-webhook", version: "v95-confirmar-lo-que-cambio", mode: MODE, mode_raw: MODE_RAW, model: MODEL, llm_configured: !!anthropic, wati_send_configured: !!(WATI_API_TOKEN && WATI_API_BASE), inventario_configurado: !!(SHOPIFY_ADMIN_TOKEN && SHOPIFY_ADMIN_API_BASE), resolve_configured: !!RESOLVE_SECRET, webhook_key_es_default: WEBHOOK_KEY_ES_DEFAULT, handoff_assist_min: HANDOFF_ASSIST_MIN, handoff_cold_hours: HANDOFF_COLD_HOURS, debounce_ms: DEBOUNCE_MS, sesion_gap_dias: SESION_GAP_DIAS, burbujas: BURBUJAS, burbuja_ms: BURBUJA_MS, audio_puente: AUDIO_PUENTE, sweep: SWEEP_MODE, sweep_espera_min: SWEEP_ESPERA_MIN, stt: STT_MODE, stt_raw: STT_RAW, stt_configurado: !!OPENAI_API_KEY, stt_model: STT_MODEL, busqueda_shadow: BUSQUEDA_SHADOW, busqueda_mcp: BUSQUEDA_MCP, busqueda_mcp_limit: BUSQUEDA_MCP_LIMIT, catalog_mcp_url: CATALOG_MCP_URL, ucp_profile_url: UCP_PROFILE_URL, live_targets: MODE === "live" ? (LIVE_ALL ? "all" : LIVE_ALLOWLIST.length) : 0, ts: new Date().toISOString() });
+    return Response.json({ status: "ok", function: "copilot-webhook", version: "v96-inventario-primero", mode: MODE, mode_raw: MODE_RAW, model: MODEL, llm_configured: !!anthropic, wati_send_configured: !!(WATI_API_TOKEN && WATI_API_BASE), inventario_configurado: !!(SHOPIFY_ADMIN_TOKEN && SHOPIFY_ADMIN_API_BASE), resolve_configured: !!RESOLVE_SECRET, webhook_key_es_default: WEBHOOK_KEY_ES_DEFAULT, handoff_assist_min: HANDOFF_ASSIST_MIN, handoff_cold_hours: HANDOFF_COLD_HOURS, debounce_ms: DEBOUNCE_MS, sesion_gap_dias: SESION_GAP_DIAS, burbujas: BURBUJAS, burbuja_ms: BURBUJA_MS, audio_puente: AUDIO_PUENTE, sweep: SWEEP_MODE, sweep_espera_min: SWEEP_ESPERA_MIN, stt: STT_MODE, stt_raw: STT_RAW, stt_configurado: !!OPENAI_API_KEY, stt_model: STT_MODEL, busqueda_shadow: BUSQUEDA_SHADOW, busqueda_mcp: BUSQUEDA_MCP, busqueda_mcp_limit: BUSQUEDA_MCP_LIMIT, catalog_mcp_url: CATALOG_MCP_URL, ucp_profile_url: UCP_PROFILE_URL, live_targets: MODE === "live" ? (LIVE_ALL ? "all" : LIVE_ALLOWLIST.length) : 0, ts: new Date().toISOString() });
   }
   if (req.method !== "POST") return Response.json({ error: "method_not_allowed" }, { status: 405 });
   if (url.searchParams.get("key") !== WEBHOOK_KEY) return Response.json({ error: "forbidden" }, { status: 403 });
