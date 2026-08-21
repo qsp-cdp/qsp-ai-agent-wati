@@ -755,7 +755,7 @@ CAPTURA DE DATOS DE ENTREGA (cuando el cliente quiere ENVÍO a domicilio)
 - PIN/UBICACIÓN (clip 📎 de WhatsApp o link de Maps) — es un REFUERZO, no lo pidas de entrada: pídelo UNA sola vez únicamente cuando guardar_datos_envio te indique que la dirección NO se reconoció o quedó incompleta. Si el cliente no responde, no sabe cómo compartirla o no quiere, sigue adelante sin insistir (el repartidor puede llamarlo al llegar).
 - Si el cliente comparte su ubicación por el clip, te llegará como un mensaje "[el cliente compartió su ubicación 📍]" con un link de Maps: guárdalo DE INMEDIATO con guardar_datos_envio (campo maps_url, el link tal cual) y confírmale que quedó registrada. Si en cambio envía un código Plus Code (patrón tipo "XFQM+5W" o "XFQM+5W Panamá"): guárdalo con guardar_datos_envio en el campo direccion tal cual lo escribió (el sistema lo resuelve en el mapa); si la tool responde que la zona no se pudo resolver, ahí sí pídele UNA vez la ubicación por el clip 📎 o un link de Google Maps, y si no, sigue sin insistir.
 - Cada dato que el cliente dé, guárdalo AL MOMENTO con guardar_datos_envio (puedes llamarla varias veces a medida que los da). La herramienta te dice qué falta: repregunta SOLO eso, UNA vez, sin convertirlo en formulario. Si el cliente lo ignora o cambia de tema, no insistas.
-- Si guardar_datos_envio devuelve la zona con costo, confírmalo tal cual (es el mismo dato determinista de tarifa_entrega). Si la zona sale del INTERIOR, aplica las reglas del interior (Servientrega: retiro o domicilio, costos de info_tienda) — no ofrezcas flota propia.
+- Si guardar_datos_envio devuelve la zona con costo, confirma el COSTO tal cual (es el mismo dato determinista de tarifa_entrega), pero NUNCA le digas al cliente el código de zona (Z1, Z2, Z4a, "Z1 Centro"…): eso es nomenclatura interna de QSP. Su ubicación nómbrala como el CLIENTE la conoce — el sector/corregimiento que la tool devuelve en zona.lugar (ej. "Betania") o su propia dirección. Ej.: "Su ubicación quedó registrada en Betania; el envío cuesta $6.00 + ITBMS". Si la zona sale del INTERIOR, aplica las reglas del interior (Servientrega: retiro o domicilio, costos de info_tienda) — no ofrezcas flota propia.
 - Al completar (dirección + referencia): MUESTRA al cliente lo que quedó guardado, tal cual y en 1-2 líneas (la dirección, la referencia y "con ubicación 📍" si compartió el pin), para que pueda corregir si algo quedó mal, y di que un asesor confirma el despacho y el pago. Tú NO despachas, NO cobras y NO prometes hora de entrega — eso lo lanza el asesor.
 - Esto NO cambia la regla anti-interrupción: si un humano está coordinando la entrega en ese momento, no te metas.
 
@@ -793,7 +793,8 @@ MODO ASISTENCIA — un asesor humano está atendiendo este chat
 Un compañero del equipo tiene esta conversación y el cliente preguntó algo que TÚ puedes responder con datos reales. Adelántale esa respuesta ÚTIL sin retomar la venta ni quitarle el caso. Todo lo que digas debe salir de una herramienta (NUNCA de memoria):
 - SÍ puedes: dar precio/ITBMS/stock y el link de un producto (buscar_producto), el total de cantidades o varios productos (calcular_cotizacion — NUNCA sumes ni apliques ITBMS de memoria), una especificación técnica desde el folleto oficial (consultar_folleto), datos de la tienda (info_tienda), puntos de recogida del interior (sucursales_interior) y el estado de un pedido ya hecho (estado_pedido). Responde breve (1-2 oraciones) con lo que devuelva la herramienta.
 - Sé deferente: deja claro que un asesor sigue con su caso. Ej.: "Mientras tanto le confirmo: [dato]. Un asesor continúa con su solicitud enseguida."
-- NO cierres ni confirmes la venta, NO confirmes ni coordines un pedido ni una entrega, NO pidas ni guardes datos del cliente, NO cotices el costo/método de envío de un sector concreto (eso compromete una entrega: la coordina el asesor), y NO contradigas ni renegocies algo que el asesor ya venía manejando (un precio especial, una cortesía).
+- NO cierres ni confirmes la venta, NO confirmes ni coordines un pedido ni una entrega, y NO contradigas ni renegocies algo que el asesor ya venía manejando (un precio especial, una cortesía).
+- DATOS DE ENTREGA (v84): si el cliente da su dirección, referencia o ubicación 📍 (o responde a una pregunta tuya sobre eso), SÍ guárdalos con guardar_datos_envio y confirma el costo que la tool devuelva (tarifa_entrega también vale). Al confirmar su ubicación nómbrala como el CLIENTE la conoce (el sector/corregimiento en zona.lugar o su propia dirección) — NUNCA el código interno de zona (Z1, Z2, Z4a…). El despacho igual lo confirma y lo lanza el asesor.
 - PAGOS Y FACTURACIÓN — territorio del asesor, sin excepción: NO expliques ni ofrezcas formas de pago (Yappy/ACH/tarjeta/efectivo/cuotas), NO des números de cuenta ni links de pago, NO pidas ni proceses datos de factura (RUC, cédula, razón social), y NUNCA digas ni insinúes que un pago fue recibido, capturado, confirmado o aplicado — aunque el cliente lo afirme o mande un comprobante. Si el tema es pago o factura, responde en UNA línea que el asesor lo confirma y no agregues nada más.
 - NO HAGAS PROMESAS: nada de horas ni fechas de entrega ("le llega hoy/mañana"), ni de que algo "ya salió", ni disponibilidad que no venga de una herramienta en este turno. Si no tienes el dato, dilo y deja que el asesor confirme.
 - Si la pregunta toca un pago en curso, una cotización/factura formal, coordinar una entrega, o el caso puntual que lleva el asesor, NO escribas nada (deja la respuesta vacía): que lo siga el humano.`;
@@ -806,7 +807,7 @@ const CAPTURA_SUFFIX = `
 MODO CAPTURA DE ENTREGA — un asesor del equipo te pidió capturar los datos de entrega de este cliente. Tu ÚNICO objetivo en este modo:
 - Obtener y guardar (con guardar_datos_envio, llamándola con cada dato que el cliente dé): la dirección completa (corregimiento o barrio, calle, edificio o casa) y un punto de referencia. El pin/ubicación (clip 📎) pídelo UNA sola vez y SOLO si la herramienta indica que la dirección no se reconoció o quedó incompleta; si el cliente no sabe o no responde, sigue sin insistir.
 - Repregunta SOLO lo que la herramienta diga que falta, UNA vez por dato, con calidez y sin sonar a formulario.
-- Cuando la herramienta confirme que no falta nada: agradece, MUESTRA en 1-2 líneas lo que quedó guardado (la dirección, la referencia y si hay ubicación 📍) para que el cliente corrija si algo quedó mal, y di que el asesor continúa con el despacho.
+- Cuando la herramienta confirme que no falta nada: agradece, MUESTRA en 1-2 líneas lo que quedó guardado (la dirección, la referencia y si hay ubicación 📍) para que el cliente corrija si algo quedó mal, y di que el asesor continúa con el despacho. Al nombrar su ubicación usa lo que el CLIENTE conoce (el sector/corregimiento en zona.lugar o su dirección) — NUNCA el código interno de zona (Z1, Z2, Z4a…); el costo sí, tal cual.
 - NO vendas, NO cotices productos, NO coordines ni confirmes pagos, NO toques datos fiscales (RUC/cédula/factura), NO prometas hora de entrega. Si el cliente pregunta otra cosa, responde en UNA línea solo si una herramienta te da el dato; si no, dile que el asesor le confirma enseguida.`;
 
 const TOOLS: Anthropic.Tool[] = [{
@@ -2004,7 +2005,7 @@ async function guardarDatosEnvio(waId: string, input: any): Promise<string> {
           if (g?.estado === "ok" && g?.zona) {
             const { data: z2 } = await sb.rpc("zona_por_corregimiento", { p_correg: g.corregimiento });
             const f = Array.isArray(z2) ? z2[0] : z2;
-            zona = { estado: "ok", ambito: "metro", zona: g.zona,
+            zona = { estado: "ok", ambito: "metro", zona: g.zona, lugar: g.corregimiento ?? null,
                      tarifa_usd: (f as any)?.tarifa_usd ?? null, metodo: (f as any)?.metodo ?? "propia",
                      origen: g.origen === "cache" ? "geo_cache" : "geo_google" };
             await log("zona_por_geocode", true, { waId, zona: g.zona, correg: g.corregimiento, origen: g.origen });
@@ -2022,7 +2023,7 @@ async function guardarDatosEnvio(waId: string, input: any): Promise<string> {
       try {
         const { data: zp } = await sb.rpc("zona_por_coordenadas", { p_lat: latZ, p_lng: lngZ });
         if (zp && (zp as any).estado === "ok") {
-          zona = { estado: "ok", ambito: (zp as any).ambito ?? "metro", zona: (zp as any).zona, tarifa_usd: (zp as any).tarifa_usd ?? null, metodo: (zp as any).metodo ?? null };
+          zona = { estado: "ok", ambito: (zp as any).ambito ?? "metro", zona: (zp as any).zona, lugar: (zp as any).corregimiento ?? null, tarifa_usd: (zp as any).tarifa_usd ?? null, metodo: (zp as any).metodo ?? null };
           await log("zona_por_pin", true, { waId, zona: (zp as any).zona, correg: (zp as any).corregimiento ?? null });
         }
       } catch { /* la zona es un extra: sin ella la captura sigue válida */ }
@@ -2057,12 +2058,15 @@ async function guardarDatosEnvio(waId: string, input: any): Promise<string> {
         // v76.1 — sin zona resuelta está PROHIBIDO citar un costo de envío: el modelo arrastraba el precio
         // de la dirección ANTERIOR de la conversación (caso real: cambió a "Vía Brasil" → sin_match → el
         // bot igual dijo "B/.6.00" heredado de Betania). El costo de la dirección nueva puede ser otro.
+        // v85 — los CÓDIGOS DE ZONA son nomenclatura interna (caso real 21-ago: el bot le dijo al cliente
+        // "según esa zona (Z1 Centro)"). Al cliente se le nombra SU lugar (zona.lugar o su dirección).
         const avisoCosto = zonaDebil ? " IMPORTANTE: esta dirección NO resolvió zona — NO cites NINGÚN costo de envío (ni de memoria ni de mensajes anteriores de esta conversación); di que el costo exacto se confirma con la ubicación o con un asesor." : "";
+        const avisoInterno = " OJO: el código de zona (Z1, Z2, Z4a, 'Z1 Centro'…) es NOMENCLATURA INTERNA de QSP — NUNCA lo menciones al cliente. Para confirmar su ubicación nómbrala como ÉL la conoce: el sector/corregimiento en zona.lugar (ej. 'Betania') o su propia dirección. El costo sí se dice tal cual.";
         if (!completo) return `Falta: ${faltan.join(" y ")}. Pídelo con naturalidad (UNA sola vez).${avisoCosto}`;
         if (zonaDebil && !pinFinal) {
           return "Datos completos, pero la dirección NO se reconoció bien en el mapa de zonas: muestra al cliente lo que quedó guardado (dirección y referencia, tal cual) y pídele UNA sola vez su ubicación por el clip 📎 o un link de Google Maps para ubicarlo exacto; si no sabe cómo o no responde, sigue sin insistir (el repartidor puede llamarlo)." + avisoCosto + " Cierra diciendo que un asesor confirma el despacho y el pago.";
         }
-        return "Datos completos. Muestra al cliente lo que quedó guardado, tal cual (la dirección, la referencia y si hay ubicación 📍), para que corrija si algo quedó mal, y dile que un asesor confirma el despacho y el pago. NO pidas el pin (la dirección se reconoció) y NO prometas hora de entrega.";
+        return "Datos completos. Muestra al cliente lo que quedó guardado, tal cual (la dirección, la referencia y si hay ubicación 📍), para que corrija si algo quedó mal, y dile que un asesor confirma el despacho y el pago. NO pidas el pin (la dirección se reconoció) y NO prometas hora de entrega." + avisoInterno;
       })(),
     });
   } catch (e) {
@@ -2961,7 +2965,7 @@ Deno.serve(async (req) => {
         texto: tr?.texto ?? null, ts: new Date().toISOString(),
       });
     }
-    return Response.json({ status: "ok", function: "copilot-webhook", version: "v84-pin-deterministico", mode: MODE, mode_raw: MODE_RAW, model: MODEL, llm_configured: !!anthropic, wati_send_configured: !!(WATI_API_TOKEN && WATI_API_BASE), inventario_configurado: !!(SHOPIFY_ADMIN_TOKEN && SHOPIFY_ADMIN_API_BASE), resolve_configured: !!RESOLVE_SECRET, webhook_key_es_default: WEBHOOK_KEY_ES_DEFAULT, handoff_assist_min: HANDOFF_ASSIST_MIN, handoff_cold_hours: HANDOFF_COLD_HOURS, debounce_ms: DEBOUNCE_MS, sesion_gap_dias: SESION_GAP_DIAS, burbujas: BURBUJAS, burbuja_ms: BURBUJA_MS, audio_puente: AUDIO_PUENTE, sweep: SWEEP_MODE, sweep_espera_min: SWEEP_ESPERA_MIN, stt: STT_MODE, stt_raw: STT_RAW, stt_configurado: !!OPENAI_API_KEY, stt_model: STT_MODEL, busqueda_shadow: BUSQUEDA_SHADOW, busqueda_mcp: BUSQUEDA_MCP, busqueda_mcp_limit: BUSQUEDA_MCP_LIMIT, catalog_mcp_url: CATALOG_MCP_URL, ucp_profile_url: UCP_PROFILE_URL, live_targets: MODE === "live" ? (LIVE_ALL ? "all" : LIVE_ALLOWLIST.length) : 0, ts: new Date().toISOString() });
+    return Response.json({ status: "ok", function: "copilot-webhook", version: "v85-sin-jerga-interna", mode: MODE, mode_raw: MODE_RAW, model: MODEL, llm_configured: !!anthropic, wati_send_configured: !!(WATI_API_TOKEN && WATI_API_BASE), inventario_configurado: !!(SHOPIFY_ADMIN_TOKEN && SHOPIFY_ADMIN_API_BASE), resolve_configured: !!RESOLVE_SECRET, webhook_key_es_default: WEBHOOK_KEY_ES_DEFAULT, handoff_assist_min: HANDOFF_ASSIST_MIN, handoff_cold_hours: HANDOFF_COLD_HOURS, debounce_ms: DEBOUNCE_MS, sesion_gap_dias: SESION_GAP_DIAS, burbujas: BURBUJAS, burbuja_ms: BURBUJA_MS, audio_puente: AUDIO_PUENTE, sweep: SWEEP_MODE, sweep_espera_min: SWEEP_ESPERA_MIN, stt: STT_MODE, stt_raw: STT_RAW, stt_configurado: !!OPENAI_API_KEY, stt_model: STT_MODEL, busqueda_shadow: BUSQUEDA_SHADOW, busqueda_mcp: BUSQUEDA_MCP, busqueda_mcp_limit: BUSQUEDA_MCP_LIMIT, catalog_mcp_url: CATALOG_MCP_URL, ucp_profile_url: UCP_PROFILE_URL, live_targets: MODE === "live" ? (LIVE_ALL ? "all" : LIVE_ALLOWLIST.length) : 0, ts: new Date().toISOString() });
   }
   if (req.method !== "POST") return Response.json({ error: "method_not_allowed" }, { status: 405 });
   if (url.searchParams.get("key") !== WEBHOOK_KEY) return Response.json({ error: "forbidden" }, { status: 403 });
