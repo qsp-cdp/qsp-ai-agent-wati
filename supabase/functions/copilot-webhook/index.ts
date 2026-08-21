@@ -1023,6 +1023,9 @@ const NEEDS_TOOL_RE = new RegExp([
   // Ninguno de los patrones de arriba cubría "oficina"/"piso": ahora estos datos del local SIEMPRE fuerzan
   // info_tienda para que salgan del dato real y nunca de la memoria del modelo.
   "oficina", "\\bpiso\\b", "\\blocal\\b", "\\bsuite\\b", "\\bapto\\b", "c[oó]mo llego", "c[oó]mo los ubico", "en qu[eé] parte",
+  // v88 — mismo motivo que "oficina"/"piso": el dato de estacionamiento vive en store_facts
+  // (Piso 1, techados) y jamás debe salir de la memoria del modelo.
+  "estacion(amiento|ar)", "parqu(eo|ear)", "parking",
   "repar", "soporte t[eé]cnico", "averi", "da[ñn]ad", "no enciende", "no prende", "no imprime", "sucursal", "recoger", "retir",
   // v52 (auditoría real): un cliente dijo "el sábado trataré de ir" y el bot confirmó "puede pasar el
   // sábado" sin consultar nada (la tienda NO atiende sábados). El patrón de INTERRUPT_RE para esto
@@ -1073,6 +1076,7 @@ const NEEDS_TOOL_RE = new RegExp([
 const BASIC_INFO_RE = new RegExp([
   // ubicación / cómo llegar
   "ubicaci", "direcci", "\\bd[oó]nde\\b", "\\bqueda", "ubicad", "c[oó]mo llego", "\\bmapa\\b", "\\bwaze\\b", "google maps", "local\\b", "tienda f[ií]sica",
+  "estacion(amiento|ar)", "parqu(eo|ear)", "parking", // v88: "¿tienen estacionamiento?" es info básica de la tienda
   // horario
   "horario", "a qu[eé] hora", "\\bhasta qu[eé] hora", "\\babren\\b", "\\bcierran\\b", "abiert", "cerrad", "atienden", "\\bd[ií]as\\b",
   // formas de pago (métodos que aceptamos; NO pago en curso — eso lo filtra INTERRUPT_RE)
@@ -1735,15 +1739,29 @@ async function buscarProducto(consulta: string, waId: string = "", linksTracked?
   return JSON.stringify({ resultado: "sin coincidencias en el catálogo" });
 }
 
+// v88 — LLAVES INTERNAS QUE NUNCA VAN AL MODELO. store_facts mezcla datos públicos de la tienda con
+// operativos (`cotizador_key`, que consume la Edge Function del cotizador). infoTienda devolvía la
+// tabla ENTERA al LLM en cada consulta de envío/horario/pago: nada garantizaba que no la escribiera
+// en un chat — el bot ya demostró (v87) que a veces escribe lo que debería quedarse adentro. La
+// exclusión es por lista explícita MÁS un patrón, para que una llave futura quede fuera por defecto
+// (fail-closed) aunque nadie se acuerde de tocar este archivo.
+const FACTS_PRIVADOS = new Set(["cotizador_key"]);
+const FACTS_PRIVADOS_RE = /(^_|_key$|_token$|_secret$|_password$|api_?key|webhook)/i;
+function factEsPublico(key: string): boolean {
+  return !FACTS_PRIVADOS.has(key) && !FACTS_PRIVADOS_RE.test(key);
+}
+
 // Fase 1.5 — datos de tienda desde una fuente única (tabla store_facts, espejo del
-// metaobjeto Shopify store_facts/datos-tienda). Devuelve TODOS los pares key→value con
-// valor; omite vacíos. Si no hay datos, el bot deriva a un asesor.
+// metaobjeto Shopify store_facts/datos-tienda). Devuelve los pares key→value PÚBLICOS con
+// valor; omite vacíos e internos. Si no hay datos, el bot deriva a un asesor.
 async function infoTienda(): Promise<string> {
   try {
     const { data, error } = await sb.from("store_facts").select("key,value").not("value", "is", null).neq("value", "");
     if (error) return JSON.stringify({ error: `store_facts: ${error.message}` });
     const facts: Record<string, string> = {};
-    for (const f of (data ?? []) as { key: string; value: string }[]) facts[f.key] = f.value;
+    for (const f of (data ?? []) as { key: string; value: string }[]) {
+      if (factEsPublico(f.key)) facts[f.key] = f.value;
+    }
     return JSON.stringify(Object.keys(facts).length ? facts : { resultado: "sin datos disponibles; deriva a un asesor" });
   } catch (e) { return JSON.stringify({ error: String(e).slice(0, 200) }); }
 }
@@ -2992,7 +3010,7 @@ Deno.serve(async (req) => {
         texto: tr?.texto ?? null, ts: new Date().toISOString(),
       });
     }
-    return Response.json({ status: "ok", function: "copilot-webhook", version: "v87-sin-pensar-en-voz-alta", mode: MODE, mode_raw: MODE_RAW, model: MODEL, llm_configured: !!anthropic, wati_send_configured: !!(WATI_API_TOKEN && WATI_API_BASE), inventario_configurado: !!(SHOPIFY_ADMIN_TOKEN && SHOPIFY_ADMIN_API_BASE), resolve_configured: !!RESOLVE_SECRET, webhook_key_es_default: WEBHOOK_KEY_ES_DEFAULT, handoff_assist_min: HANDOFF_ASSIST_MIN, handoff_cold_hours: HANDOFF_COLD_HOURS, debounce_ms: DEBOUNCE_MS, sesion_gap_dias: SESION_GAP_DIAS, burbujas: BURBUJAS, burbuja_ms: BURBUJA_MS, audio_puente: AUDIO_PUENTE, sweep: SWEEP_MODE, sweep_espera_min: SWEEP_ESPERA_MIN, stt: STT_MODE, stt_raw: STT_RAW, stt_configurado: !!OPENAI_API_KEY, stt_model: STT_MODEL, busqueda_shadow: BUSQUEDA_SHADOW, busqueda_mcp: BUSQUEDA_MCP, busqueda_mcp_limit: BUSQUEDA_MCP_LIMIT, catalog_mcp_url: CATALOG_MCP_URL, ucp_profile_url: UCP_PROFILE_URL, live_targets: MODE === "live" ? (LIVE_ALL ? "all" : LIVE_ALLOWLIST.length) : 0, ts: new Date().toISOString() });
+    return Response.json({ status: "ok", function: "copilot-webhook", version: "v88-fase0-tienda", mode: MODE, mode_raw: MODE_RAW, model: MODEL, llm_configured: !!anthropic, wati_send_configured: !!(WATI_API_TOKEN && WATI_API_BASE), inventario_configurado: !!(SHOPIFY_ADMIN_TOKEN && SHOPIFY_ADMIN_API_BASE), resolve_configured: !!RESOLVE_SECRET, webhook_key_es_default: WEBHOOK_KEY_ES_DEFAULT, handoff_assist_min: HANDOFF_ASSIST_MIN, handoff_cold_hours: HANDOFF_COLD_HOURS, debounce_ms: DEBOUNCE_MS, sesion_gap_dias: SESION_GAP_DIAS, burbujas: BURBUJAS, burbuja_ms: BURBUJA_MS, audio_puente: AUDIO_PUENTE, sweep: SWEEP_MODE, sweep_espera_min: SWEEP_ESPERA_MIN, stt: STT_MODE, stt_raw: STT_RAW, stt_configurado: !!OPENAI_API_KEY, stt_model: STT_MODEL, busqueda_shadow: BUSQUEDA_SHADOW, busqueda_mcp: BUSQUEDA_MCP, busqueda_mcp_limit: BUSQUEDA_MCP_LIMIT, catalog_mcp_url: CATALOG_MCP_URL, ucp_profile_url: UCP_PROFILE_URL, live_targets: MODE === "live" ? (LIVE_ALL ? "all" : LIVE_ALLOWLIST.length) : 0, ts: new Date().toISOString() });
   }
   if (req.method !== "POST") return Response.json({ error: "method_not_allowed" }, { status: 405 });
   if (url.searchParams.get("key") !== WEBHOOK_KEY) return Response.json({ error: "forbidden" }, { status: 403 });
