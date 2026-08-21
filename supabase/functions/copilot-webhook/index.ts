@@ -2340,8 +2340,20 @@ function reaplicarTracking(texto: string, links: Record<string, string>): string
 async function enviarWati(waId: string, texto: string): Promise<boolean> {
   if (!WATI_API_TOKEN || !WATI_API_BASE) return false;
   const u = `${WATI_API_BASE}/api/v1/sendSessionMessage/${encodeURIComponent(waId)}?messageText=${encodeURIComponent(texto)}`;
-  const r = await fetch(u, { method: "POST", headers: { Authorization: `Bearer ${WATI_API_TOKEN}` }, signal: AbortSignal.timeout(10000) });
-  return r.ok;
+  try {
+    const r = await fetch(u, { method: "POST", headers: { Authorization: `Bearer ${WATI_API_TOKEN}` }, signal: AbortSignal.timeout(20000) });
+    return r.ok;
+  } catch (e) {
+    // v82 — sin este catch, un WATI lento (>timeout) reventaba TODO el flujo DESPUÉS de insertar la
+    // respuesta buena, y el catch general mandaba la disculpa de "alto volumen" encima (17 casos reales
+    // jun–ago; en todos WATI SÍ entregó el mensaje, solo tardó en responder el HTTP). Timeout con la
+    // petición ya emitida → tratar como entregado (true): reintentar duplicaría la burbuja y marcar
+    // shadow escondería un mensaje que el cliente ya vio. Fallo de red real (DNS/conexión) → false
+    // (camino normal: shadow + envio_fallido).
+    const esTimeout = /TimeoutError|timed out/i.test(String((e as any)?.name ?? "") + String(e));
+    await log(esTimeout ? "envio_timeout" : "envio_excepcion", false, { waId, error: String(e).slice(0, 120) });
+    return esTimeout;
+  }
 }
 
 // v25 (captura de lead) — guarda el correo (y empresa) del cliente en los atributos de WATI vía
@@ -2946,7 +2958,7 @@ Deno.serve(async (req) => {
         texto: tr?.texto ?? null, ts: new Date().toISOString(),
       });
     }
-    return Response.json({ status: "ok", function: "copilot-webhook", version: "v81-geocode-fallback", mode: MODE, mode_raw: MODE_RAW, model: MODEL, llm_configured: !!anthropic, wati_send_configured: !!(WATI_API_TOKEN && WATI_API_BASE), inventario_configurado: !!(SHOPIFY_ADMIN_TOKEN && SHOPIFY_ADMIN_API_BASE), resolve_configured: !!RESOLVE_SECRET, webhook_key_es_default: WEBHOOK_KEY_ES_DEFAULT, handoff_assist_min: HANDOFF_ASSIST_MIN, handoff_cold_hours: HANDOFF_COLD_HOURS, debounce_ms: DEBOUNCE_MS, sesion_gap_dias: SESION_GAP_DIAS, burbujas: BURBUJAS, burbuja_ms: BURBUJA_MS, audio_puente: AUDIO_PUENTE, sweep: SWEEP_MODE, sweep_espera_min: SWEEP_ESPERA_MIN, stt: STT_MODE, stt_raw: STT_RAW, stt_configurado: !!OPENAI_API_KEY, stt_model: STT_MODEL, busqueda_shadow: BUSQUEDA_SHADOW, busqueda_mcp: BUSQUEDA_MCP, busqueda_mcp_limit: BUSQUEDA_MCP_LIMIT, catalog_mcp_url: CATALOG_MCP_URL, ucp_profile_url: UCP_PROFILE_URL, live_targets: MODE === "live" ? (LIVE_ALL ? "all" : LIVE_ALLOWLIST.length) : 0, ts: new Date().toISOString() });
+    return Response.json({ status: "ok", function: "copilot-webhook", version: "v82-envio-resiliente", mode: MODE, mode_raw: MODE_RAW, model: MODEL, llm_configured: !!anthropic, wati_send_configured: !!(WATI_API_TOKEN && WATI_API_BASE), inventario_configurado: !!(SHOPIFY_ADMIN_TOKEN && SHOPIFY_ADMIN_API_BASE), resolve_configured: !!RESOLVE_SECRET, webhook_key_es_default: WEBHOOK_KEY_ES_DEFAULT, handoff_assist_min: HANDOFF_ASSIST_MIN, handoff_cold_hours: HANDOFF_COLD_HOURS, debounce_ms: DEBOUNCE_MS, sesion_gap_dias: SESION_GAP_DIAS, burbujas: BURBUJAS, burbuja_ms: BURBUJA_MS, audio_puente: AUDIO_PUENTE, sweep: SWEEP_MODE, sweep_espera_min: SWEEP_ESPERA_MIN, stt: STT_MODE, stt_raw: STT_RAW, stt_configurado: !!OPENAI_API_KEY, stt_model: STT_MODEL, busqueda_shadow: BUSQUEDA_SHADOW, busqueda_mcp: BUSQUEDA_MCP, busqueda_mcp_limit: BUSQUEDA_MCP_LIMIT, catalog_mcp_url: CATALOG_MCP_URL, ucp_profile_url: UCP_PROFILE_URL, live_targets: MODE === "live" ? (LIVE_ALL ? "all" : LIVE_ALLOWLIST.length) : 0, ts: new Date().toISOString() });
   }
   if (req.method !== "POST") return Response.json({ error: "method_not_allowed" }, { status: 405 });
   if (url.searchParams.get("key") !== WEBHOOK_KEY) return Response.json({ error: "forbidden" }, { status: 403 });
@@ -3588,6 +3600,7 @@ Deno.serve(async (req) => {
               sinEnviar = partes.length - bi; break;
             }
             enviado = true;
+            respondido = true; // v82: con una burbuja ya entregada, jamás mandar la disculpa de respaldo encima
             if (bi < partes.length - 1 && BURBUJA_MS > 0) await new Promise((res) => setTimeout(res, BURBUJA_MS));
           }
           await log("respuesta_burbujas", sinEnviar === 0, { waId, partes: partes.length, sin_enviar: sinEnviar });
