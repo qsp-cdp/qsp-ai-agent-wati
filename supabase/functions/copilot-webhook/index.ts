@@ -3356,7 +3356,7 @@ Deno.serve(async (req) => {
         texto: tr?.texto ?? null, ts: new Date().toISOString(),
       });
     }
-    return Response.json({ status: "ok", function: "copilot-webhook", version: "v101-diccionario-minado", mode: MODE, mode_raw: MODE_RAW, model: MODEL, llm_configured: !!anthropic, wati_send_configured: !!(WATI_API_TOKEN && WATI_API_BASE), inventario_configurado: !!(SHOPIFY_ADMIN_TOKEN && SHOPIFY_ADMIN_API_BASE), resolve_configured: !!RESOLVE_SECRET, webhook_key_es_default: WEBHOOK_KEY_ES_DEFAULT, handoff_assist_min: HANDOFF_ASSIST_MIN, handoff_cold_hours: HANDOFF_COLD_HOURS, debounce_ms: DEBOUNCE_MS, sesion_gap_dias: SESION_GAP_DIAS, burbujas: BURBUJAS, burbuja_ms: BURBUJA_MS, audio_puente: AUDIO_PUENTE, sweep: SWEEP_MODE, sweep_espera_min: SWEEP_ESPERA_MIN, stt: STT_MODE, stt_raw: STT_RAW, stt_configurado: !!OPENAI_API_KEY, stt_model: STT_MODEL, busqueda_shadow: BUSQUEDA_SHADOW, busqueda_mcp: BUSQUEDA_MCP, busqueda_mcp_limit: BUSQUEDA_MCP_LIMIT, catalog_mcp_url: CATALOG_MCP_URL, ucp_profile_url: UCP_PROFILE_URL, live_targets: MODE === "live" ? (LIVE_ALL ? "all" : LIVE_ALLOWLIST.length) : 0, ts: new Date().toISOString() });
+    return Response.json({ status: "ok", function: "copilot-webhook", version: "v101.1-prioridad-captura", mode: MODE, mode_raw: MODE_RAW, model: MODEL, llm_configured: !!anthropic, wati_send_configured: !!(WATI_API_TOKEN && WATI_API_BASE), inventario_configurado: !!(SHOPIFY_ADMIN_TOKEN && SHOPIFY_ADMIN_API_BASE), resolve_configured: !!RESOLVE_SECRET, webhook_key_es_default: WEBHOOK_KEY_ES_DEFAULT, handoff_assist_min: HANDOFF_ASSIST_MIN, handoff_cold_hours: HANDOFF_COLD_HOURS, debounce_ms: DEBOUNCE_MS, sesion_gap_dias: SESION_GAP_DIAS, burbujas: BURBUJAS, burbuja_ms: BURBUJA_MS, audio_puente: AUDIO_PUENTE, sweep: SWEEP_MODE, sweep_espera_min: SWEEP_ESPERA_MIN, stt: STT_MODE, stt_raw: STT_RAW, stt_configurado: !!OPENAI_API_KEY, stt_model: STT_MODEL, busqueda_shadow: BUSQUEDA_SHADOW, busqueda_mcp: BUSQUEDA_MCP, busqueda_mcp_limit: BUSQUEDA_MCP_LIMIT, catalog_mcp_url: CATALOG_MCP_URL, ucp_profile_url: UCP_PROFILE_URL, live_targets: MODE === "live" ? (LIVE_ALL ? "all" : LIVE_ALLOWLIST.length) : 0, ts: new Date().toISOString() });
   }
   if (req.method !== "POST") return Response.json({ error: "method_not_allowed" }, { status: 405 });
   if (url.searchParams.get("key") !== WEBHOOK_KEY) return Response.json({ error: "forbidden" }, { status: 403 });
@@ -3867,8 +3867,12 @@ Deno.serve(async (req) => {
         // buscar_producto, info de tienda, puntos del interior, estado de pedido), pero NO saca la
         // conversación de handoff, NO cierra/coordina la venta y NO le quita el caso al asesor.
         correrEnSegundoPlano(ejecutarAsistencia(conv, waId, texto, contenido, userCreatedAt, ultHumano as string, minsSinHumano, t0, true,
-          // v83/v100: por qué asistió — señal en el mensaje, continuidad del bot, o el asesor pidió la dirección
-          (BASIC_INFO_RE.test(texto) || NEEDS_TOOL_RE.test(texto)) ? "reactiva" : pidioEnvioElAsesor ? "asesor_pidio_envio" : "continuacion"));
+          // v83/v100: por qué asistió — señal en el mensaje, continuidad del bot, o el asesor pidió la
+          // dirección. v101: asesor_pidio_envio tiene PRIORIDAD sobre reactiva — en la prueba en vivo la
+          // dirección traía "apto" (señal de NEEDS_TOOL_RE), entró como "reactiva" y el sufijo de captura
+          // no se aplicó; el contexto "el asesor acaba de pedir la dirección" es el más específico y es el
+          // que debe guiar el turno (el propio sufijo ya prevé el caso de que el cliente cambie de tema).
+          pidioEnvioElAsesor ? "asesor_pidio_envio" : (BASIC_INFO_RE.test(texto) || NEEDS_TOOL_RE.test(texto)) ? "reactiva" : "continuacion"));
         return Response.json({ ok: true, asistencia: true });
       } else {
         // Asesor activo hace poco (<umbral), no es pregunta básica, o handoff sin asesor → callar (v30).
