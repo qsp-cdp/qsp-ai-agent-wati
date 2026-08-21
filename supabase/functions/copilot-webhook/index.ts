@@ -1958,7 +1958,7 @@ async function jerarquiaDeLugar(zona: any): Promise<{ provincia: string; distrit
 // espejadas y las nuevas se vean idénticas.
 async function espejarEnvioWati(waId: string, d: {
   direccion: string; referencia: string; pinUrl: string; zonaTxt: string;
-  provincia?: string; distrito?: string; corregimiento?: string; completo?: boolean;
+  provincia?: string; distrito?: string; corregimiento?: string; completo?: boolean; discrepancia?: string;
 }): Promise<void> {
   if (!WATI_API_TOKEN || !WATI_API_BASE) return;
   // v75.1 — SIEMPRE se escriben TODOS los atributos: un campo vacío se manda como "-" para PISAR el valor
@@ -1970,7 +1970,12 @@ async function espejarEnvioWati(waId: string, d: {
   const jerarquia = [d.provincia, d.distrito, d.corregimiento].filter(lleno).map((s) => String(s).trim()).join(" › ");
   const cuerpo = [d.direccion, d.referencia].filter(lleno).map((s) => String(s).trim()).join(" — ");
   const resumen = [cuerpo, jerarquia].filter(Boolean).join("  ·  ").slice(0, 250);
-  const estado = !cuerpo ? "" : (lleno(d.pinUrl)
+  // v90 — la advertencia MANDA sobre "lista para despacho": con la dirección escrita y el pin en
+  // corregimientos distintos, el dato NO está listo aunque haya pin (Shipday prioriza el pin y el
+  // repartidor iría a donde el cliente quizá no quería). El asesor debe verlo antes de despachar.
+  const estado = !cuerpo ? "" : (lleno(d.discrepancia)
+    ? `\u{26A0}\u{FE0F} Verificar antes de despachar: ${d.discrepancia}`
+    : lleno(d.pinUrl)
     ? "\u{1F4CD} Lista para despacho (con pin)"
     : "\u{1F4DD} Sin pin — confirmar ubicacion con el cliente");
   const params: { name: string; value: string }[] = [
@@ -2072,6 +2077,9 @@ async function guardarDatosEnvio(waId: string, input: any): Promise<string> {
         if (z) zona = { estado: (z as any).estado ?? null, ambito: (z as any).ambito ?? null, zona: (z as any).zona ?? null, tarifa_usd: (z as any).tarifa_usd ?? null, metodo: (z as any).metodo ?? null, ubicacion: (z as any).ubicacion ?? null, provincia: (z as any).provincia ?? null };
       } catch { /* la zona es un extra: sin ella la captura sigue válida */ }
     }
+    // v90 — se recuerda a QUÉ corregimiento apuntaba el TEXTO antes de que el pin lo pise (abajo), para
+    // poder detectar que dirección escrita y pin señalan lugares distintos.
+    const corregTexto = String((zona as any)?.ubicacion?.corregimiento ?? "").trim();
     // v80/v86 — EL PIN MANDA (de verdad y PRIMERO): un pin FRESCO en ESTA llamada define la zona y el
     // lugar aunque el texto ya hubiera resuelto otra cosa. Caso real 21-ago: la dirección VIEJA en
     // texto ("Vía Brasil, Local de Emtop") geocodificó "Bella Vista" por caché y LE GANÓ al pin real
@@ -2120,13 +2128,24 @@ async function guardarDatosEnvio(waId: string, input: any): Promise<string> {
       : mapsUrl ? mapsUrl
       : (!cambioDireccion && existente?.latitude != null) ? `https://maps.google.com/?q=${existente.latitude},${existente.longitude}`
       : (!cambioDireccion && existente?.maps_url) ? String(existente.maps_url) : "";
-    const zonaTxt = zona ? [(zona as any).zona ?? (zona as any).estado, (zona as any).tarifa_usd != null ? `$${(zona as any).tarifa_usd}` : null, (zona as any).lugar ?? null].filter(Boolean).join(" · ") : "";
+    // v90 — el corregimiento va SIEMPRE en zona_envio: cuando la zona resuelve por diccionario viaja en
+    // `ubicacion` y no en `lugar` (que solo ponen las vías de pin/Google), así que la ficha lo perdía.
+    const zonaTxt = zona ? [(zona as any).zona ?? (zona as any).estado, (zona as any).tarifa_usd != null ? `$${(zona as any).tarifa_usd}` : null, (zona as any).lugar ?? (zona as any).ubicacion?.corregimiento ?? null].filter(Boolean).join(" · ") : "";
     // v89 — JERARQUÍA a la libreta y a la ficha. Las columnas provincia/distrito/corregimiento de
     // `contacts` existen desde el sistema anterior (pobladas en 4,340 contactos) y la captura del
     // copiloto no las escribía: quedaban congeladas mientras la dirección cambiaba. Se escriben en un
     // update aparte porque la jerarquía solo se conoce DESPUÉS de resolver la zona (la fila principal ya
     // se guardó arriba). Best-effort: un fallo aquí no invalida la captura, que es lo que importa.
     const jer = await jerarquiaDeLugar(zona);
+    // v90 — DISCREPANCIA TEXTO ↔ PIN. Caso real (prueba 21-ago): la dirección escrita decía "San Francisco,
+    // Calle 74, Torre Delta" y el pin caía en Betania. El bot lo notó y preguntó al cliente — pero la FICHA
+    // igual decía "📍 Lista para despacho", así que un asesor que la abriera en ese momento habría
+    // despachado con los dos datos peleados (y Shipday prioriza el pin: el repartidor iba a Betania con una
+    // dirección escrita de San Francisco). Mientras el cliente no aclare cuál vale, la ficha debe DECIRLO.
+    const discrepa = !!(corregTexto && jer.corregimiento && norm(corregTexto) !== norm(jer.corregimiento));
+    if (discrepa) {
+      await log("discrepancia_texto_pin", false, { waId, correg_texto: corregTexto, correg_pin: jer.corregimiento });
+    }
     if (jer.provincia || jer.distrito || jer.corregimiento) {
       try {
         await sb.from("contacts")
@@ -2137,6 +2156,7 @@ async function guardarDatosEnvio(waId: string, input: any): Promise<string> {
     await espejarEnvioWati(digitos, {
       direccion: dirFinal, referencia: refFinal, pinUrl, zonaTxt,
       provincia: jer.provincia, distrito: jer.distrito, corregimiento: jer.corregimiento, completo,
+      discrepancia: discrepa ? `${corregTexto} (escrito) vs ${jer.corregimiento} (pin)` : "",
     });
     // v78 — ¿el bot sigue ESPERANDO algo del cliente? (faltan datos, o pidió el pin porque la zona no
     // resolvió). Mientras espere, la ventana de captura queda ABIERTA: si un asesor entra a la
@@ -2163,6 +2183,13 @@ async function guardarDatosEnvio(waId: string, input: any): Promise<string> {
         // "según esa zona (Z1 Centro)"). Al cliente se le nombra SU lugar (zona.lugar o su dirección).
         const avisoCosto = zonaDebil ? " IMPORTANTE: esta dirección NO resolvió zona — NO cites NINGÚN costo de envío (ni de memoria ni de mensajes anteriores de esta conversación); di que el costo exacto se confirma con la ubicación o con un asesor." : "";
         const avisoInterno = " OJO: el código de zona (Z1, Z2, Z4a, 'Z1 Centro'…) es NOMENCLATURA INTERNA de QSP — NUNCA lo menciones al cliente. Para confirmar su ubicación nómbrala como ÉL la conoce: el sector/corregimiento en zona.lugar (ej. 'Betania') o su propia dirección. El costo sí se dice tal cual.";
+        // v90 — la dirección escrita y el pin caen en corregimientos distintos: hay que PREGUNTAR cuál
+        // vale, nunca elegir por el cliente (el repartidor se guía por el pin; si el cliente quería la
+        // otra dirección, la entrega falla). En la prueba del 21-ago el modelo lo hizo por criterio
+        // propio; esta nota lo vuelve una regla, no una casualidad.
+        if (discrepa) {
+          return `ATENCIÓN: la dirección escrita queda en ${corregTexto} pero la ubicación 📍 que compartió cae en ${jer.corregimiento}. NO elijas tú: dile en una línea que ambas quedaron registradas y PREGÚNTALE a cuál de las dos quiere que se le entregue (nómbralas por el sector, nunca por el código de zona). No confirmes el despacho hasta que lo aclare.`;
+        }
         if (!completo) return `Falta: ${faltan.join(" y ")}. Pídelo con naturalidad (UNA sola vez).${avisoCosto}`;
         if (zonaDebil && !pinFinal) {
           return "Datos completos, pero la dirección NO se reconoció bien en el mapa de zonas: muestra al cliente lo que quedó guardado (dirección y referencia, tal cual) y pídele UNA sola vez su ubicación por el clip 📎 o un link de Google Maps para ubicarlo exacto; si no sabe cómo o no responde, sigue sin insistir (el repartidor puede llamarlo)." + avisoCosto + " Cierra diciendo que un asesor confirma el despacho y el pago.";
@@ -3085,7 +3112,7 @@ Deno.serve(async (req) => {
         texto: tr?.texto ?? null, ts: new Date().toISOString(),
       });
     }
-    return Response.json({ status: "ok", function: "copilot-webhook", version: "v89-ficha-unificada", mode: MODE, mode_raw: MODE_RAW, model: MODEL, llm_configured: !!anthropic, wati_send_configured: !!(WATI_API_TOKEN && WATI_API_BASE), inventario_configurado: !!(SHOPIFY_ADMIN_TOKEN && SHOPIFY_ADMIN_API_BASE), resolve_configured: !!RESOLVE_SECRET, webhook_key_es_default: WEBHOOK_KEY_ES_DEFAULT, handoff_assist_min: HANDOFF_ASSIST_MIN, handoff_cold_hours: HANDOFF_COLD_HOURS, debounce_ms: DEBOUNCE_MS, sesion_gap_dias: SESION_GAP_DIAS, burbujas: BURBUJAS, burbuja_ms: BURBUJA_MS, audio_puente: AUDIO_PUENTE, sweep: SWEEP_MODE, sweep_espera_min: SWEEP_ESPERA_MIN, stt: STT_MODE, stt_raw: STT_RAW, stt_configurado: !!OPENAI_API_KEY, stt_model: STT_MODEL, busqueda_shadow: BUSQUEDA_SHADOW, busqueda_mcp: BUSQUEDA_MCP, busqueda_mcp_limit: BUSQUEDA_MCP_LIMIT, catalog_mcp_url: CATALOG_MCP_URL, ucp_profile_url: UCP_PROFILE_URL, live_targets: MODE === "live" ? (LIVE_ALL ? "all" : LIVE_ALLOWLIST.length) : 0, ts: new Date().toISOString() });
+    return Response.json({ status: "ok", function: "copilot-webhook", version: "v90-discrepancia-visible", mode: MODE, mode_raw: MODE_RAW, model: MODEL, llm_configured: !!anthropic, wati_send_configured: !!(WATI_API_TOKEN && WATI_API_BASE), inventario_configurado: !!(SHOPIFY_ADMIN_TOKEN && SHOPIFY_ADMIN_API_BASE), resolve_configured: !!RESOLVE_SECRET, webhook_key_es_default: WEBHOOK_KEY_ES_DEFAULT, handoff_assist_min: HANDOFF_ASSIST_MIN, handoff_cold_hours: HANDOFF_COLD_HOURS, debounce_ms: DEBOUNCE_MS, sesion_gap_dias: SESION_GAP_DIAS, burbujas: BURBUJAS, burbuja_ms: BURBUJA_MS, audio_puente: AUDIO_PUENTE, sweep: SWEEP_MODE, sweep_espera_min: SWEEP_ESPERA_MIN, stt: STT_MODE, stt_raw: STT_RAW, stt_configurado: !!OPENAI_API_KEY, stt_model: STT_MODEL, busqueda_shadow: BUSQUEDA_SHADOW, busqueda_mcp: BUSQUEDA_MCP, busqueda_mcp_limit: BUSQUEDA_MCP_LIMIT, catalog_mcp_url: CATALOG_MCP_URL, ucp_profile_url: UCP_PROFILE_URL, live_targets: MODE === "live" ? (LIVE_ALL ? "all" : LIVE_ALLOWLIST.length) : 0, ts: new Date().toISOString() });
   }
   if (req.method !== "POST") return Response.json({ error: "method_not_allowed" }, { status: 405 });
   if (url.searchParams.get("key") !== WEBHOOK_KEY) return Response.json({ error: "forbidden" }, { status: 403 });
