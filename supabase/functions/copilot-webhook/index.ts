@@ -1221,7 +1221,11 @@ function calcularCotizacion(items: any): string {
       const noAlcanza = st.nivel === "sin"
         || (st.nivel === "ok" && st.cantidad != null && st.cantidad < cant)
         || (st.nivel === "bajo" && cant >= 4);
-      const dudoso = !noAlcanza && st.nivel === "bajo";
+      // v97 — con "stock bajo" NO sabemos si hay 1, 2 o 3: pedir 2+ puede perfectamente no alcanzar.
+      // La primera versión asumía el mejor caso (3) y en la prueba real —3 de cada tinta HP 951XL, con
+      // UNA unidad de cada una en Shopify— dio el aviso suave cuando la cantidad no alcanzaba ni de
+      // cerca. Pedir 1 sí es seguro: "bajo" garantiza al menos una unidad.
+      const dudoso = !noAlcanza && st.nivel === "bajo" && cant >= 2;
       const etiqueta = desc || "Producto";
       if (noAlcanza) insuficientes.push(etiqueta);
       else if (dudoso) porVerificar.push(etiqueta);
@@ -1257,7 +1261,8 @@ function calcularCotizacion(items: any): string {
     const encabezado = insuficientes.length
       ? "⚠️ No tenemos inventario suficiente para completar las cantidades que pide. Le detallo la cotización con la disponibilidad actual de cada producto:\n\n"
       : porVerificar.length
-      ? "⚠️ Hay productos con inventario limitado: un asesor confirma la cantidad exacta antes de cerrar el pedido.\n\n"
+      // No afirma que falte (podría alcanzar) ni que alcance (podría no): dice lo único que sabemos.
+      ? "⚠️ Estos productos tienen inventario limitado y puede que no alcancen para las cantidades que pide. Un asesor confirma la cantidad exacta antes de cerrar el pedido:\n\n"
       : "";
     const cierre = insuficientes.length
       ? "\n\nUn asesor le confirma en cuánto podemos completar el resto."
@@ -1268,7 +1273,7 @@ function calcularCotizacion(items: any): string {
       inventario_insuficiente: insuficientes.length ? insuficientes : undefined,
       inventario_por_verificar: porVerificar.length ? porVerificar : undefined,
       nota: (insuficientes.length || porVerificar.length)
-        ? "IMPORTANTE: relaya `respuesta_sugerida` COMPLETA y EMPEZANDO por la línea de ⚠️ — nunca muevas ese aviso al final ni lo suavices: una cotización sin él se lee como confirmación de que hay existencias. NO prometas cuándo llega el faltante (eso lo confirma un asesor)."
+        ? "IMPORTANTE: relaya `respuesta_sugerida` COMPLETA y TAL CUAL — el aviso ⚠️ va PRIMERO y cada línea conserva su '— disponible: …'. No la reescribas con tus palabras ni quites la disponibilidad de las líneas: el cliente necesita ver, producto por producto, con qué contamos hoy (sin eso la cotización se lee como confirmación de existencias). NO prometas cuándo llega el faltante (eso lo confirma un asesor)."
         : undefined,
       respuesta_sugerida: respuesta,
     });
@@ -3269,7 +3274,7 @@ Deno.serve(async (req) => {
         texto: tr?.texto ?? null, ts: new Date().toISOString(),
       });
     }
-    return Response.json({ status: "ok", function: "copilot-webhook", version: "v96-inventario-primero", mode: MODE, mode_raw: MODE_RAW, model: MODEL, llm_configured: !!anthropic, wati_send_configured: !!(WATI_API_TOKEN && WATI_API_BASE), inventario_configurado: !!(SHOPIFY_ADMIN_TOKEN && SHOPIFY_ADMIN_API_BASE), resolve_configured: !!RESOLVE_SECRET, webhook_key_es_default: WEBHOOK_KEY_ES_DEFAULT, handoff_assist_min: HANDOFF_ASSIST_MIN, handoff_cold_hours: HANDOFF_COLD_HOURS, debounce_ms: DEBOUNCE_MS, sesion_gap_dias: SESION_GAP_DIAS, burbujas: BURBUJAS, burbuja_ms: BURBUJA_MS, audio_puente: AUDIO_PUENTE, sweep: SWEEP_MODE, sweep_espera_min: SWEEP_ESPERA_MIN, stt: STT_MODE, stt_raw: STT_RAW, stt_configurado: !!OPENAI_API_KEY, stt_model: STT_MODEL, busqueda_shadow: BUSQUEDA_SHADOW, busqueda_mcp: BUSQUEDA_MCP, busqueda_mcp_limit: BUSQUEDA_MCP_LIMIT, catalog_mcp_url: CATALOG_MCP_URL, ucp_profile_url: UCP_PROFILE_URL, live_targets: MODE === "live" ? (LIVE_ALL ? "all" : LIVE_ALLOWLIST.length) : 0, ts: new Date().toISOString() });
+    return Response.json({ status: "ok", function: "copilot-webhook", version: "v97-stock-bajo-honesto", mode: MODE, mode_raw: MODE_RAW, model: MODEL, llm_configured: !!anthropic, wati_send_configured: !!(WATI_API_TOKEN && WATI_API_BASE), inventario_configurado: !!(SHOPIFY_ADMIN_TOKEN && SHOPIFY_ADMIN_API_BASE), resolve_configured: !!RESOLVE_SECRET, webhook_key_es_default: WEBHOOK_KEY_ES_DEFAULT, handoff_assist_min: HANDOFF_ASSIST_MIN, handoff_cold_hours: HANDOFF_COLD_HOURS, debounce_ms: DEBOUNCE_MS, sesion_gap_dias: SESION_GAP_DIAS, burbujas: BURBUJAS, burbuja_ms: BURBUJA_MS, audio_puente: AUDIO_PUENTE, sweep: SWEEP_MODE, sweep_espera_min: SWEEP_ESPERA_MIN, stt: STT_MODE, stt_raw: STT_RAW, stt_configurado: !!OPENAI_API_KEY, stt_model: STT_MODEL, busqueda_shadow: BUSQUEDA_SHADOW, busqueda_mcp: BUSQUEDA_MCP, busqueda_mcp_limit: BUSQUEDA_MCP_LIMIT, catalog_mcp_url: CATALOG_MCP_URL, ucp_profile_url: UCP_PROFILE_URL, live_targets: MODE === "live" ? (LIVE_ALL ? "all" : LIVE_ALLOWLIST.length) : 0, ts: new Date().toISOString() });
   }
   if (req.method !== "POST") return Response.json({ error: "method_not_allowed" }, { status: 405 });
   if (url.searchParams.get("key") !== WEBHOOK_KEY) return Response.json({ error: "forbidden" }, { status: 403 });
