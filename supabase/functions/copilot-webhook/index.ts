@@ -1002,6 +1002,16 @@ const PAGOS_ASESOR_RE = new RegExp([
 // "pago recibido, escríbame la dirección" (frase real) es el momento de CAPTURAR, no de callar.
 const COBRO_RE = /factur|link\.yappy|\byappy\b|cuenta (?:de )?(?:ahorro|corriente)|banco general|datos bancarios|nota de cr[eé]dito|devoluci[oó]n|reembols|retenci[oó]n|comprobante de (?:la )?retenci/i;
 
+// v103 — AUTORESPONDER DE OTRO NEGOCIO. El diccionario minado encontró ~60 mensajes role='user' que
+// son bots de OTRAS empresas ("gracias por comunicarte con X… ¿cómo podemos ayudarte?"): muchos
+// clientes de QSP son a su vez comercios con su propio contestador de WhatsApp. Traen "?" y arrancan
+// con "gracias", así que ni parecen ack ni se quedan callados: cualquier regla "pregunta → responder"
+// arma un loop bot-contra-bot. La señal es la DIRECCIÓN del pronombre: la máquina agradece hacia sí
+// ("escribirNOS", "comunicarte CON [empresa]", "TU mensaje"); un humano que responde al re-enganche
+// agradece hacia él ("escribirME", "contactarME", "conmigo") y NO debe caer aquí. El \b tras "con"
+// descarta "conmigo". Se guarda el mensaje (contexto) y NO se responde.
+const BOT_AJENO_RE = /^\s*[¡!]?\s*gracias por (?:comunicar(?:te|se)\s+con\b|contactarnos\b|contactar(?:se)?\s+(?:a|con)\b|escribirnos\b|escribir\s+a\b|pon(?:er)?(?:te|se) en contacto con\b|(?:tu|su|el) mensaje\b)/i;
+
 const INTERRUPT_RE = new RegExp([
   // datos fiscales / facturación
   "\\bruc\\b", "\\bdv\\b", "c[eé]dula", "raz[oó]n social", "factura a nombre", "facturar a", "datos (de|para) (la )?factura", "a nombre de",
@@ -3371,7 +3381,7 @@ Deno.serve(async (req) => {
         texto: tr?.texto ?? null, ts: new Date().toISOString(),
       });
     }
-    return Response.json({ status: "ok", function: "copilot-webhook", version: "v102-blindaje-pagos", mode: MODE, mode_raw: MODE_RAW, model: MODEL, llm_configured: !!anthropic, wati_send_configured: !!(WATI_API_TOKEN && WATI_API_BASE), inventario_configurado: !!(SHOPIFY_ADMIN_TOKEN && SHOPIFY_ADMIN_API_BASE), resolve_configured: !!RESOLVE_SECRET, webhook_key_es_default: WEBHOOK_KEY_ES_DEFAULT, handoff_assist_min: HANDOFF_ASSIST_MIN, handoff_cold_hours: HANDOFF_COLD_HOURS, debounce_ms: DEBOUNCE_MS, sesion_gap_dias: SESION_GAP_DIAS, burbujas: BURBUJAS, burbuja_ms: BURBUJA_MS, audio_puente: AUDIO_PUENTE, sweep: SWEEP_MODE, sweep_espera_min: SWEEP_ESPERA_MIN, stt: STT_MODE, stt_raw: STT_RAW, stt_configurado: !!OPENAI_API_KEY, stt_model: STT_MODEL, busqueda_shadow: BUSQUEDA_SHADOW, busqueda_mcp: BUSQUEDA_MCP, busqueda_mcp_limit: BUSQUEDA_MCP_LIMIT, catalog_mcp_url: CATALOG_MCP_URL, ucp_profile_url: UCP_PROFILE_URL, live_targets: MODE === "live" ? (LIVE_ALL ? "all" : LIVE_ALLOWLIST.length) : 0, ts: new Date().toISOString() });
+    return Response.json({ status: "ok", function: "copilot-webhook", version: "v103-bot-ajeno", mode: MODE, mode_raw: MODE_RAW, model: MODEL, llm_configured: !!anthropic, wati_send_configured: !!(WATI_API_TOKEN && WATI_API_BASE), inventario_configurado: !!(SHOPIFY_ADMIN_TOKEN && SHOPIFY_ADMIN_API_BASE), resolve_configured: !!RESOLVE_SECRET, webhook_key_es_default: WEBHOOK_KEY_ES_DEFAULT, handoff_assist_min: HANDOFF_ASSIST_MIN, handoff_cold_hours: HANDOFF_COLD_HOURS, debounce_ms: DEBOUNCE_MS, sesion_gap_dias: SESION_GAP_DIAS, burbujas: BURBUJAS, burbuja_ms: BURBUJA_MS, audio_puente: AUDIO_PUENTE, sweep: SWEEP_MODE, sweep_espera_min: SWEEP_ESPERA_MIN, stt: STT_MODE, stt_raw: STT_RAW, stt_configurado: !!OPENAI_API_KEY, stt_model: STT_MODEL, busqueda_shadow: BUSQUEDA_SHADOW, busqueda_mcp: BUSQUEDA_MCP, busqueda_mcp_limit: BUSQUEDA_MCP_LIMIT, catalog_mcp_url: CATALOG_MCP_URL, ucp_profile_url: UCP_PROFILE_URL, live_targets: MODE === "live" ? (LIVE_ALL ? "all" : LIVE_ALLOWLIST.length) : 0, ts: new Date().toISOString() });
   }
   if (req.method !== "POST") return Response.json({ error: "method_not_allowed" }, { status: 405 });
   if (url.searchParams.get("key") !== WEBHOOK_KEY) return Response.json({ error: "forbidden" }, { status: 403 });
@@ -3772,6 +3782,13 @@ Deno.serve(async (req) => {
     if (conv.status === "cerrada") {
       await log("conversacion_cerrada", true, { waId, motivo: "no_es_cliente" });
       return Response.json({ ok: true, skipped: "conversacion_cerrada" });
+    }
+    // v103 — autoresponder de otro negocio (ver BOT_AJENO_RE): jamás responderle a otra máquina.
+    // Va ANTES del gate de handoff a propósito: también corta la continuidad de asistencia (v83),
+    // que era el camino por donde un contestador ajeno podía enganchar al bot en un loop.
+    if (BOT_AJENO_RE.test(texto)) {
+      await log("bot_ajeno", true, { waId, muestra: texto.slice(0, 120) });
+      return Response.json({ ok: true, skipped: "bot_ajeno" });
     }
     if (conv.status === "handoff") {
       const { data: ha } = await sb.from("messages").select("created_at")
