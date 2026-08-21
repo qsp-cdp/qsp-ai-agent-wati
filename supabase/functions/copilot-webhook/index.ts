@@ -1922,7 +1922,12 @@ async function espejarEnvioWati(waId: string, d: { direccion: string; referencia
       body: JSON.stringify({ customParams: params }),
       signal: AbortSignal.timeout(8000),
     });
-    await log("captura_envio_wati", r.ok, { waId, campos: params.map((x) => x.name), wati_status: r.status });
+    // v86 — WATI puede responder 200 con {"result":false,...} (contacto no hallado, atributo inexistente):
+    // el status solo no basta — caso real 21-ago: dos espejos "200 ok" y la ficha sin cambiar. Se lee el
+    // cuerpo, result:false cuenta como fallo y el cuerpo queda en el log para diagnosticar.
+    const cuerpo = (await r.text().catch(() => "")).slice(0, 200);
+    const okReal = r.ok && !/"result"\s*:\s*false/i.test(cuerpo);
+    await log("captura_envio_wati", okReal, { waId, campos: params.map((x) => x.name), wati_status: r.status, respuesta: cuerpo.slice(0, 160) });
   } catch (err) {
     await log("captura_envio_wati", false, { waId, error: String(err).slice(0, 150) });
   }
@@ -1989,12 +1994,29 @@ async function guardarDatosEnvio(waId: string, input: any): Promise<string> {
         if (z) zona = { estado: (z as any).estado ?? null, ambito: (z as any).ambito ?? null, zona: (z as any).zona ?? null, tarifa_usd: (z as any).tarifa_usd ?? null, metodo: (z as any).metodo ?? null };
       } catch { /* la zona es un extra: sin ella la captura sigue válida */ }
     }
-    // v81 — CAPA 3: el diccionario no reconoció la dirección (caso real "Vía Brasil, Local de Emtop":
+    // v80/v86 — EL PIN MANDA (de verdad y PRIMERO): un pin FRESCO en ESTA llamada define la zona y el
+    // lugar aunque el texto ya hubiera resuelto otra cosa. Caso real 21-ago: la dirección VIEJA en
+    // texto ("Vía Brasil, Local de Emtop") geocodificó "Bella Vista" por caché y LE GANÓ al pin real
+    // del cliente (Betania) porque este bloque corría después — el bot le confirmó al cliente un lugar
+    // donde no estaba. El pin GUARDADO de antes solo complementa (no pisa un texto ok). Con pin fresco
+    // resuelto, además, ni se llama a Google (gratis y más preciso). Best-effort.
+    const latZ = coords?.lat ?? ((!cambioDireccion && existente?.latitude != null) ? Number(existente.latitude) : null);
+    const lngZ = coords?.lng ?? ((!cambioDireccion && existente?.longitude != null) ? Number(existente.longitude) : null);
+    if (latZ != null && lngZ != null && (coords || !zona || (zona as any).estado !== "ok")) {
+      try {
+        const { data: zp } = await sb.rpc("zona_por_coordenadas", { p_lat: latZ, p_lng: lngZ });
+        if (zp && (zp as any).estado === "ok") {
+          zona = { estado: "ok", ambito: (zp as any).ambito ?? "metro", zona: (zp as any).zona, lugar: (zp as any).corregimiento ?? null, tarifa_usd: (zp as any).tarifa_usd ?? null, metodo: (zp as any).metodo ?? null };
+          await log("zona_por_pin", true, { waId, zona: (zp as any).zona, correg: (zp as any).corregimiento ?? null, fresco: !!coords });
+        }
+      } catch { /* la zona es un extra: sin ella la captura sigue válida */ }
+    }
+    // v81 — CAPA 3: ni el diccionario ni el pin resolvieron (caso real "Vía Brasil, Local de Emtop":
     // un comercio, no un barrio). Se le pregunta a Google DÓNDE queda y la zona la decide nuestro
     // polígono a partir de esas coordenadas — Google traduce, nunca pone la tarifa. La función
     // geo-fallback tiene caché (no se paga dos veces la misma dirección) y tope diario de llamadas.
     // Best-effort y en línea: si falla o tarda, la captura sigue igual que antes (zona sin resolver).
-    if (dirFinal && (!zona || String((zona as any).estado) === "sin_match")) {
+    if (dirFinal && (!zona || ["sin_match", "ambiguo"].includes(String((zona as any).estado)))) {
       try {
         const rg = await fetch(`${SB_URL}/functions/v1/geo-fallback?key=geofb-7k2m9x4q1w`, {
           method: "POST", headers: { "Content-Type": "application/json" },
@@ -2013,21 +2035,6 @@ async function guardarDatosEnvio(waId: string, input: any): Promise<string> {
         }
       } catch (e) { await log("zona_por_geocode", false, { waId, error: String(e).slice(0, 150) }); }
     }
-    // v80 — EL PIN MANDA: si hay coordenadas (pin nuevo, o el registrado si la dirección no cambió) y
-    // el TEXTO no resolvió zona, se resuelve por point-in-polygon (RPC zona_por_coordenadas: polígonos
-    // oficiales de corregimientos → zona del diccionario). Es la vía más precisa: no depende de cómo el
-    // cliente escribió la dirección ("Local de Emtop", "donde está Farmacias Arrocha"). Best-effort.
-    const latZ = coords?.lat ?? ((!cambioDireccion && existente?.latitude != null) ? Number(existente.latitude) : null);
-    const lngZ = coords?.lng ?? ((!cambioDireccion && existente?.longitude != null) ? Number(existente.longitude) : null);
-    if (latZ != null && lngZ != null && (!zona || (zona as any).estado !== "ok")) {
-      try {
-        const { data: zp } = await sb.rpc("zona_por_coordenadas", { p_lat: latZ, p_lng: lngZ });
-        if (zp && (zp as any).estado === "ok") {
-          zona = { estado: "ok", ambito: (zp as any).ambito ?? "metro", zona: (zp as any).zona, lugar: (zp as any).corregimiento ?? null, tarifa_usd: (zp as any).tarifa_usd ?? null, metodo: (zp as any).metodo ?? null };
-          await log("zona_por_pin", true, { waId, zona: (zp as any).zona, correg: (zp as any).corregimiento ?? null });
-        }
-      } catch { /* la zona es un extra: sin ella la captura sigue válida */ }
-    }
     const completo = faltan.length === 0;
     const zonaDebil = !zona || ["sin_match", "ambiguo", "error"].includes(String((zona as any)?.estado ?? ""));
     // v75 — espejo a los atributos de WATI (best-effort). El pin se guarda como link de Maps clicable.
@@ -2035,7 +2042,7 @@ async function guardarDatosEnvio(waId: string, input: any): Promise<string> {
       : mapsUrl ? mapsUrl
       : (!cambioDireccion && existente?.latitude != null) ? `https://maps.google.com/?q=${existente.latitude},${existente.longitude}`
       : (!cambioDireccion && existente?.maps_url) ? String(existente.maps_url) : "";
-    const zonaTxt = zona ? [(zona as any).zona ?? (zona as any).estado, (zona as any).tarifa_usd != null ? `$${(zona as any).tarifa_usd}` : null].filter(Boolean).join(" · ") : "";
+    const zonaTxt = zona ? [(zona as any).zona ?? (zona as any).estado, (zona as any).tarifa_usd != null ? `$${(zona as any).tarifa_usd}` : null, (zona as any).lugar ?? null].filter(Boolean).join(" · ") : "";
     await espejarEnvioWati(digitos, { direccion: dirFinal, referencia: refFinal, pinUrl, zonaTxt });
     // v78 — ¿el bot sigue ESPERANDO algo del cliente? (faltan datos, o pidió el pin porque la zona no
     // resolvió). Mientras espere, la ventana de captura queda ABIERTA: si un asesor entra a la
@@ -2965,7 +2972,7 @@ Deno.serve(async (req) => {
         texto: tr?.texto ?? null, ts: new Date().toISOString(),
       });
     }
-    return Response.json({ status: "ok", function: "copilot-webhook", version: "v85-sin-jerga-interna", mode: MODE, mode_raw: MODE_RAW, model: MODEL, llm_configured: !!anthropic, wati_send_configured: !!(WATI_API_TOKEN && WATI_API_BASE), inventario_configurado: !!(SHOPIFY_ADMIN_TOKEN && SHOPIFY_ADMIN_API_BASE), resolve_configured: !!RESOLVE_SECRET, webhook_key_es_default: WEBHOOK_KEY_ES_DEFAULT, handoff_assist_min: HANDOFF_ASSIST_MIN, handoff_cold_hours: HANDOFF_COLD_HOURS, debounce_ms: DEBOUNCE_MS, sesion_gap_dias: SESION_GAP_DIAS, burbujas: BURBUJAS, burbuja_ms: BURBUJA_MS, audio_puente: AUDIO_PUENTE, sweep: SWEEP_MODE, sweep_espera_min: SWEEP_ESPERA_MIN, stt: STT_MODE, stt_raw: STT_RAW, stt_configurado: !!OPENAI_API_KEY, stt_model: STT_MODEL, busqueda_shadow: BUSQUEDA_SHADOW, busqueda_mcp: BUSQUEDA_MCP, busqueda_mcp_limit: BUSQUEDA_MCP_LIMIT, catalog_mcp_url: CATALOG_MCP_URL, ucp_profile_url: UCP_PROFILE_URL, live_targets: MODE === "live" ? (LIVE_ALL ? "all" : LIVE_ALLOWLIST.length) : 0, ts: new Date().toISOString() });
+    return Response.json({ status: "ok", function: "copilot-webhook", version: "v86-pin-manda-primero", mode: MODE, mode_raw: MODE_RAW, model: MODEL, llm_configured: !!anthropic, wati_send_configured: !!(WATI_API_TOKEN && WATI_API_BASE), inventario_configurado: !!(SHOPIFY_ADMIN_TOKEN && SHOPIFY_ADMIN_API_BASE), resolve_configured: !!RESOLVE_SECRET, webhook_key_es_default: WEBHOOK_KEY_ES_DEFAULT, handoff_assist_min: HANDOFF_ASSIST_MIN, handoff_cold_hours: HANDOFF_COLD_HOURS, debounce_ms: DEBOUNCE_MS, sesion_gap_dias: SESION_GAP_DIAS, burbujas: BURBUJAS, burbuja_ms: BURBUJA_MS, audio_puente: AUDIO_PUENTE, sweep: SWEEP_MODE, sweep_espera_min: SWEEP_ESPERA_MIN, stt: STT_MODE, stt_raw: STT_RAW, stt_configurado: !!OPENAI_API_KEY, stt_model: STT_MODEL, busqueda_shadow: BUSQUEDA_SHADOW, busqueda_mcp: BUSQUEDA_MCP, busqueda_mcp_limit: BUSQUEDA_MCP_LIMIT, catalog_mcp_url: CATALOG_MCP_URL, ucp_profile_url: UCP_PROFILE_URL, live_targets: MODE === "live" ? (LIVE_ALL ? "all" : LIVE_ALLOWLIST.length) : 0, ts: new Date().toISOString() });
   }
   if (req.method !== "POST") return Response.json({ error: "method_not_allowed" }, { status: 405 });
   if (url.searchParams.get("key") !== WEBHOOK_KEY) return Response.json({ error: "forbidden" }, { status: 403 });
@@ -3260,7 +3267,7 @@ Deno.serve(async (req) => {
             await log("zona_por_pin", zOk, { waId: waIdP, via: "ubicacion_directa", zona: (zp as any)?.zona ?? (zp as any)?.estado ?? null, correg: (zp as any)?.corregimiento ?? null });
             const { data: cLib } = await sb.from("contacts").select("address,referencia").eq("phone_digits", waIdP.slice(-8)).order("updated_at", { ascending: false }).limit(1);
             const lib = (cLib ?? [])[0] as any;
-            const zonaTxt = zOk ? [(zp as any).zona, (zp as any).tarifa_usd != null ? `$${(zp as any).tarifa_usd}` : null].filter(Boolean).join(" · ") : "";
+            const zonaTxt = zOk ? [(zp as any).zona, (zp as any).tarifa_usd != null ? `$${(zp as any).tarifa_usd}` : null, (zp as any).corregimiento ?? null].filter(Boolean).join(" · ") : "";
             await espejarEnvioWati(waIdP, { direccion: String(lib?.address ?? ""), referencia: String(lib?.referencia ?? ""), pinUrl: `https://maps.google.com/?q=${latP},${lngP}`, zonaTxt });
           } catch (e) { await log("error", false, { waId: waIdP, fase: "pin_zona_espejo", error: String(e).slice(0, 150) }); }
         })());
