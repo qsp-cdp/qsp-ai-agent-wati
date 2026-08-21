@@ -747,7 +747,7 @@ LOGÍSTICA, PAGOS Y DATOS DE LA TIENDA (envíos, ubicación, horarios, métodos 
 - DÍA DE LA SEMANA (caso real: un cliente dijo "el sábado paso a verificar" y el bot confirmó "puede pasar el sábado" sin consultar nada — la tienda NO atiende sábados, un cliente pudo hacer un viaje en vano): si el cliente menciona CUALQUIER día de la semana (lunes a domingo) al hablar de visitar, pasar, retirar o coordinar algo con la tienda, llama a info_tienda ANTES de confirmar o negar que ese día atienden — nunca lo asumas por la conversación ni por inercia ("sin problema, ahí estamos"). Si el día que menciona es sábado, domingo o feriado, acláralo con el horario real de info_tienda en vez de seguirle la corriente.
 - TIENDA FÍSICA — COMPRA DIRECTA: QSP tiene una tienda física real (la ubicación y el horario los da info_tienda) donde el cliente puede LLEGAR Y COMPRAR directamente en el momento, sin pedido previo ni compra por la web. Cuando pregunten si pueden pasar, comprar en tienda o retirar, responde que sí pueden venir directo a comprar (con el horario de info_tienda). NUNCA presentes la tienda como "solo un punto de retiro" NI des a entender que primero hay que comprar en línea: la opción "Recoger en tienda" del checkout web es una ALTERNATIVA para quien prefiere dejar pagado en línea y pasar a buscar — menciónala como opcional, no como requisito.
 - POLÍTICAS COMERCIALES (descuentos, precios especiales, cliente frecuente, mayoreo/revendedor, crédito): si info_tienda NO trae el dato, NO las afirmes NI las niegues — nada de "no manejamos descuentos" ni "el precio es el mismo para todos" (solo un asesor decide precios especiales, y a veces los da). Di que un asesor le confirma si hay alguna opción para su caso.
-- SUCURSALES DEL INTERIOR (recogida) — EXPLICA EL PROCESO, no sueltes solo el dato: QSP NO tiene tiendas propias en el interior; el envío va por la red de Servientrega (sucursales y agentes/aliados autorizados). Si el cliente del interior pregunta dónde recoger/retirar o si hay sucursal/agencia en su zona, usa la herramienta sucursales_interior con su provincia o ciudad (ej. "David", "Chiriquí", "Penonomé") y arma la respuesta como PROCESO: "puede optar por enviarlo a [ciudad] ([provincia]) y retirarlo en el punto Servientrega [nombre]" + el teléfono y horario que devuelva la tool. NUNCA digas "tenemos el punto/sucursal en [ciudad]" (suena a tienda propia de QSP) — deja claro que el pedido SE ENVÍA ahí para que el cliente lo retire (con su cédula). NUNCA inventes una sucursal, dirección ni teléfono: usa solo lo que devuelva la tool. Si la ciudad exacta no aparece, deduce la provincia (sabes la geografía de Panamá) y vuelve a consultar por la provincia; si aun así no hay punto, dilo y comparte el listado completo. Para el interior hay DOS formas de entrega y debes ofrecer las DOS (no solo el retiro): (1) RETIRO en el punto Servientrega que devuelva la tool (lo más económico), o (2) ENTREGA A DOMICILIO puerta a puerta por Servientrega. Los costos y plazos de AMBAS salen de info_tienda (claves tarifa_interior y plazo_interior): relaya los dos precios TAL CUAL los trae (NUNCA omitas el de puerta a puerta ni lo inventes). Si el cliente no dice cuál prefiere, menciónale las dos opciones y deja que elija.
+- SUCURSALES DEL INTERIOR (recogida) — EXPLICA EL PROCESO, no sueltes solo el dato: QSP NO tiene tiendas propias en el interior; el envío va por la red de Servientrega (sucursales y agentes/aliados autorizados). Si el cliente del interior pregunta dónde recoger/retirar o si hay sucursal/agencia en su zona, usa la herramienta sucursales_interior con su provincia o ciudad (ej. "David", "Chiriquí", "Penonomé") y arma la respuesta como PROCESO: "puede optar por enviarlo a [ciudad] ([provincia]) y retirarlo en [nombre del punto]" — NOMBRANDO el punto y diciendo QUÉ ES con el campo tipo que devuelve la tool: una "Sucursal de Servientrega" (punto propio) o un "Agente Verde" (comercio aliado autorizado donde LLEGA el pedido y el cliente lo retira) — más su dirección, teléfono, horario y el link del mapa si viene: que el cliente reconozca el punto de SU sector. NUNCA digas "tenemos el punto/sucursal en [ciudad]" (suena a tienda propia de QSP) — deja claro que el pedido SE ENVÍA ahí para que el cliente lo retire (con su cédula), y NUNCA uses las siglas internas "CDS"/"AV" sin explicarlas (di "Sucursal de Servientrega" / "Agente Verde"). NUNCA inventes una sucursal, dirección ni teléfono: usa solo lo que devuelva la tool. Si la ciudad exacta no aparece, deduce la provincia (sabes la geografía de Panamá) y vuelve a consultar por la provincia; si aun así no hay punto, dilo y comparte el listado completo. Para el interior hay DOS formas de entrega y debes ofrecer las DOS (no solo el retiro): (1) RETIRO en el punto Servientrega que devuelva la tool (lo más económico), o (2) ENTREGA A DOMICILIO puerta a puerta por Servientrega. Los costos y plazos de AMBAS salen de info_tienda (claves tarifa_interior y plazo_interior): relaya los dos precios TAL CUAL los trae (NUNCA omitas el de puerta a puerta ni lo inventes). Si el cliente no dice cuál prefiere, menciónale las dos opciones y deja que elija.
 - COSTO/MÉTODO DE ENVÍO POR SECTOR (Ciudad de Panamá y San Miguelito): cuando el cliente pida cuánto cuesta el envío, cómo le llega, o DÓNDE RETIRAR en un lugar CONCRETO de la ciudad (su corregimiento o barrio: Tocumen, Betania, Juan Díaz, San Miguelito, Las Cumbres…), usa la herramienta tarifa_entrega con ese lugar y RELAYA su "respuesta_sugerida" (puedes adaptar el tono, pero NUNCA cambies el método ni el precio que devuelve). OJO — el error más grave a evitar: en algunas zonas NO ofrecemos entrega a domicilio, SOLO retiro en un punto Servientrega; dilo tal cual y NO ofrezcas domicilio ahí. IMPORTANTE — el punto de retiro de un SECTOR DE LA CIUDAD (ej. "¿dónde retiro en Tocumen?") sale de tarifa_entrega, NO de sucursales_interior (esa herramienta es SOLO para el INTERIOR/provincias). Si tarifa_entrega devuelve estado "ambiguo", pregunta en qué corregimiento está; si "sin_match" y el cliente es del INTERIOR, usa sucursales_interior + info_tienda; si "sin_match" y no ubicas el lugar, o "error"/"sin_dato", deriva a un asesor. (El método "asesor" llega como estado "ok" con la respuesta ya armada: relayala.) Para el costo GENÉRICO de envío (sin un sector concreto) usa info_tienda.
 - ENVÍO GRATIS — SOLO compra por la WEB (>US$300): el envío gratis en compras mayores a US$300 aplica ÚNICAMENTE cuando el cliente COMPLETA la compra en línea por la web (checkout en el sitio). En un pedido o cotización que se coordina por WhatsApp, el envío gratis NO aplica: se cobra la tarifa de envío normal según la zona (cotízala con tarifa_entrega o info_tienda). Por eso NUNCA digas "califica" ni "sigue calificando para envío gratis" al armar una cotización por WhatsApp, aunque el subtotal pase de US$300. Si viene al caso PUEDES mencionarlo como opción ("si completa la compra por nuestra web con más de US$300, el envío es gratis"), pero el pedido por WhatsApp lleva su costo de envío. Cuando SÍ aplica (compra web >US$300): en la Ciudad de Panamá es gratis a domicilio; en el interior es a la sucursal Servientrega para RETIRO, no puerta a puerta.
 
@@ -845,7 +845,7 @@ const TOOLS: Anthropic.Tool[] = [{
   input_schema: { type: "object", properties: { direccion: { type: "string", description: "Dirección de entrega tal como la dio el cliente (corregimiento/barrio, calle, edificio o casa, apto)." }, referencia: { type: "string", description: "Punto de referencia para el repartidor (ej. 'frente al parque, portón negro')." }, maps_url: { type: "string", description: "Link de Google Maps o ubicación compartida por WhatsApp, tal cual llegó." }, nombre: { type: "string", description: "Nombre de quien recibe el pedido, si el cliente lo dio." }, descartar_pin: { type: "boolean", description: "true SOLO cuando el cliente aclara que la entrega va a la DIRECCIÓN ESCRITA y no a la ubicación 📍 que había compartido (p. ej. mandó su ubicación actual desde otro lugar). Borra ese pin: si se queda, el repartidor va al pin y no a la dirección." } } },
 } as Anthropic.Tool, {
   name: "sucursales_interior",
-  description: "Puntos de recogida en el INTERIOR del país / provincias (red Servientrega, 45 sucursales con teléfono y horario) — NO para la Ciudad de Panamá / San Miguelito (para el retiro o el costo en un sector de la CIUDAD usa tarifa_entrega). Úsala cuando el cliente del interior (David, Chiriquí, Chitré, Bocas, etc.) pregunte dónde recoger/retirar, si hay sucursal/agencia/punto en su zona, o pida la ubicación de un punto. Pasa 'lugar' = la provincia o ciudad del cliente (ej. 'Chiriquí', 'David', 'Penonomé', 'Chitré'). Si el cliente da una ciudad y no aparece, deduce TÚ la provincia (sabes la geografía de Panamá) y vuelve a llamarla con la provincia. Devuelve SOLO puntos reales — NUNCA inventes sucursales, direcciones ni teléfonos.",
+  description: "Puntos de recogida en el INTERIOR del país / provincias (red oficial Servientrega: 45 puntos con TIPO —Sucursal o Agente Verde—, dirección, teléfono, horario y link de mapa) — NO para la Ciudad de Panamá / San Miguelito (para el retiro o el costo en un sector de la CIUDAD usa tarifa_entrega). Úsala cuando el cliente del interior (David, Chiriquí, Chitré, Bocas, etc.) pregunte dónde recoger/retirar, si hay sucursal/agencia/punto en su zona, o pida la ubicación de un punto. Pasa 'lugar' = la provincia o ciudad del cliente (ej. 'Chiriquí', 'David', 'Penonomé', 'Chitré'). Si el cliente da una ciudad y no aparece, deduce TÚ la provincia (sabes la geografía de Panamá) y vuelve a llamarla con la provincia. Al responder, NOMBRA el punto y di qué es (Sucursal de Servientrega, o Agente Verde: comercio aliado donde llega el pedido y se retira con cédula), con su dirección y el link del mapa si viene. Devuelve SOLO puntos reales — NUNCA inventes sucursales, direcciones ni teléfonos.",
   input_schema: { type: "object", properties: { lugar: { type: "string", description: "Provincia o ciudad del cliente (ej. Chiriquí, David, Penonomé, Coclé). Vacío = resumen por provincia." } } },
 } as Anthropic.Tool, {
   name: "tarifa_entrega",
@@ -1970,21 +1970,51 @@ const SUCURSALES: { prov: string; nombre: string; datos: string }[] = [
   { prov: "Otras ubicaciones", nombre: "AV Servicios y Utilería M&C", datos: "+507 64540865 · Lun–Sáb 8:30 AM–7:00 PM" },
   { prov: "Otras ubicaciones", nombre: "AV Jece Soluciones", datos: "+507 308-6977 / 62132930 / 6201-7543 · Lun–Vie 8 AM–5 PM · Sáb 8 AM–12 PM" },
 ];
-// Devuelve los puntos de recogida del interior que coincidan con `lugar` (provincia o ciudad). Match por
-// substring sin acentos contra provincia y nombre del punto. Sin `lugar`: resumen por provincia. Sin
-// coincidencia: invita a dar la provincia + el listado completo. NUNCA inventa: solo lo de SUCURSALES.
-function sucursalesInterior(lugar: string = ""): string {
+// Devuelve los puntos de recogida del interior que coincidan con `lugar` (provincia o ciudad).
+// v106 — la fuente pasa a ser la TABLA servientrega_agencias (extraída de la página oficial de
+// Servientrega, con dirección, teléfono, horario, provincia derivada por polígono y link de mapa;
+// migración 20260822000000). El TIPO viaja YA EXPLICADO —Sucursal (CDS, punto propio de Servientrega)
+// o Agente Verde (comercio aliado donde LLEGA el pedido y el cliente lo retira)— para que el bot lo
+// nombre y el prospecto reconozca el punto de su sector. La lista hardcodeada SUCURSALES queda SOLO
+// como respaldo si la lectura de la tabla falla (sin dirección ni mapa, como antes de v106).
+async function sucursalesInterior(lugar: string = ""): Promise<string> {
   const norm = (s: string) => (s || "").toLowerCase().replace(/[áàä]/g, "a").replace(/[éèë]/g, "e").replace(/[íìï]/g, "i").replace(/[óòö]/g, "o").replace(/[úùü]/g, "u").replace(/ñ/g, "n").trim();
   const q = norm(lugar);
-  if (!q) {
-    const provs = [...new Set(SUCURSALES.map((s) => s.prov))].map((p) => `${p} (${SUCURSALES.filter((s) => s.prov === p).length})`);
-    return JSON.stringify({ resultado: "pide la provincia o ciudad del cliente para dar el punto exacto", provincias_con_puntos: provs, listado_completo: SUCURSALES_URL });
+  try {
+    const { data, error } = await sb.from("servientrega_agencias")
+      .select("nombre,tipo,direccion,telefono,horario,provincia,maps_url").order("tipo").order("nombre");
+    if (error || !data?.length) throw new Error(String(error?.message ?? "tabla vacía"));
+    const etiqueta = (t: string) => t === "sucursal"
+      ? "Sucursal de Servientrega (Centro de Soluciones — punto propio)"
+      : "Agente Verde de Servientrega (comercio aliado autorizado: ahí LLEGA el pedido y el cliente lo retira)";
+    const compacto = (s: any) => ({
+      nombre: s.nombre, tipo: etiqueta(s.tipo), provincia: s.provincia,
+      direccion: s.direccion ?? undefined, telefono: s.telefono ?? "por confirmar con un asesor",
+      horario: s.horario ?? "por confirmar con un asesor", mapa: s.maps_url ?? undefined,
+    });
+    const provs = () => [...new Set(data.map((s: any) => String(s.provincia)))].map((p) => `${p} (${data.filter((s: any) => s.provincia === p).length})`);
+    if (!q) return JSON.stringify({ resultado: "pide la provincia o ciudad del cliente para dar el punto exacto", provincias_con_puntos: provs(), listado_completo: SUCURSALES_URL });
+    const hits = data.filter((s: any) => {
+      const p = norm(s.provincia ?? ""), n = norm(s.nombre), d = norm(s.direccion ?? "");
+      return (p && (p.includes(q) || q.includes(p))) || n.includes(q) || d.includes(q);
+    });
+    if (!hits.length) {
+      return JSON.stringify({ resultado: `no hay un punto que coincida con "${lugar}"`, sugerencia: "si sabes la provincia (Chiriquí, Coclé, Los Santos, etc.), vuelve a buscar por la provincia; o comparte el listado completo", provincias_con_puntos: provs(), listado_completo: SUCURSALES_URL });
+    }
+    return JSON.stringify({
+      puntos: hits.slice(0, 6).map(compacto), total_coincidencias: hits.length, listado_completo: SUCURSALES_URL,
+      nota: "Nombra el punto por su NOMBRE y di QUÉ es con el campo tipo (una Sucursal de Servientrega, o un Agente Verde: un comercio aliado donde llega su pedido y lo retira con su cédula) — así el cliente reconoce el punto de su sector. Da la dirección y el teléfono tal cual, y comparte el link del campo mapa si viene. No olvides ofrecer TAMBIÉN la entrega puerta a puerta con su costo (tarifa_interior/plazo_interior de info_tienda).",
+    });
+  } catch (e) {
+    await log("error", false, { fase: "sucursales_interior", error: String(e).slice(0, 150) });
+    if (!q) {
+      const provsF = [...new Set(SUCURSALES.map((s) => s.prov))].map((p) => `${p} (${SUCURSALES.filter((s) => s.prov === p).length})`);
+      return JSON.stringify({ resultado: "pide la provincia o ciudad del cliente para dar el punto exacto", provincias_con_puntos: provsF, listado_completo: SUCURSALES_URL });
+    }
+    const hitsF = SUCURSALES.filter((s) => { const p = norm(s.prov), n = norm(s.nombre); return p.includes(q) || q.includes(p) || n.includes(q); });
+    if (!hitsF.length) return JSON.stringify({ resultado: `no hay un punto que coincida con "${lugar}"`, sugerencia: "si sabes la provincia (Chiriquí, Coclé, Los Santos, etc.), vuelve a buscar por la provincia; o comparte el listado completo", listado_completo: SUCURSALES_URL });
+    return JSON.stringify({ sucursales: hitsF.slice(0, 8).map((h) => ({ provincia: h.prov, nombre: h.nombre, datos: h.datos })), total_coincidencias: hitsF.length, listado_completo: SUCURSALES_URL });
   }
-  const hits = SUCURSALES.filter((s) => { const p = norm(s.prov), n = norm(s.nombre); return p.includes(q) || q.includes(p) || n.includes(q); });
-  if (!hits.length) {
-    return JSON.stringify({ resultado: `no hay un punto que coincida con "${lugar}"`, sugerencia: "si sabes la provincia (Chiriquí, Coclé, Los Santos, etc.), vuelve a buscar por la provincia; o comparte el listado completo", listado_completo: SUCURSALES_URL });
-  }
-  return JSON.stringify({ sucursales: hits.slice(0, 8).map((h) => ({ provincia: h.prov, nombre: h.nombre, datos: h.datos })), total_coincidencias: hits.length, listado_completo: SUCURSALES_URL });
 }
 
 // v47 — TARIFA/MÉTODO DE ENVÍO POR SECTOR (Ciudad de Panamá + San Miguelito). El veredicto lo calcula el
@@ -2705,7 +2735,7 @@ async function responderLLM(history: { role: string; content: string; model?: st
           : block.name === "guardar_datos_envio"
           ? await guardarDatosEnvio(waId, block.input as any)
           : block.name === "sucursales_interior"
-          ? sucursalesInterior((block.input as any).lugar ?? "")
+          ? await sucursalesInterior((block.input as any).lugar ?? "")
           : block.name === "tarifa_entrega"
           ? await tarifaEntrega((block.input as any).lugar ?? "")
           : block.name === "estado_pedido"
@@ -3464,7 +3494,7 @@ Deno.serve(async (req) => {
         texto: tr?.texto ?? null, ts: new Date().toISOString(),
       });
     }
-    return Response.json({ status: "ok", function: "copilot-webhook", version: "v105.1-eco-direccion", mode: MODE, mode_raw: MODE_RAW, model: MODEL, llm_configured: !!anthropic, wati_send_configured: !!(WATI_API_TOKEN && WATI_API_BASE), inventario_configurado: !!(SHOPIFY_ADMIN_TOKEN && SHOPIFY_ADMIN_API_BASE), resolve_configured: !!RESOLVE_SECRET, webhook_key_es_default: WEBHOOK_KEY_ES_DEFAULT, handoff_assist_min: HANDOFF_ASSIST_MIN, handoff_cold_hours: HANDOFF_COLD_HOURS, debounce_ms: DEBOUNCE_MS, sesion_gap_dias: SESION_GAP_DIAS, burbujas: BURBUJAS, burbuja_ms: BURBUJA_MS, audio_puente: AUDIO_PUENTE, sweep: SWEEP_MODE, sweep_espera_min: SWEEP_ESPERA_MIN, stt: STT_MODE, stt_raw: STT_RAW, stt_configurado: !!OPENAI_API_KEY, stt_model: STT_MODEL, busqueda_shadow: BUSQUEDA_SHADOW, busqueda_mcp: BUSQUEDA_MCP, busqueda_mcp_limit: BUSQUEDA_MCP_LIMIT, catalog_mcp_url: CATALOG_MCP_URL, ucp_profile_url: UCP_PROFILE_URL, live_targets: MODE === "live" ? (LIVE_ALL ? "all" : LIVE_ALLOWLIST.length) : 0, ts: new Date().toISOString() });
+    return Response.json({ status: "ok", function: "copilot-webhook", version: "v106-agencias-servientrega", mode: MODE, mode_raw: MODE_RAW, model: MODEL, llm_configured: !!anthropic, wati_send_configured: !!(WATI_API_TOKEN && WATI_API_BASE), inventario_configurado: !!(SHOPIFY_ADMIN_TOKEN && SHOPIFY_ADMIN_API_BASE), resolve_configured: !!RESOLVE_SECRET, webhook_key_es_default: WEBHOOK_KEY_ES_DEFAULT, handoff_assist_min: HANDOFF_ASSIST_MIN, handoff_cold_hours: HANDOFF_COLD_HOURS, debounce_ms: DEBOUNCE_MS, sesion_gap_dias: SESION_GAP_DIAS, burbujas: BURBUJAS, burbuja_ms: BURBUJA_MS, audio_puente: AUDIO_PUENTE, sweep: SWEEP_MODE, sweep_espera_min: SWEEP_ESPERA_MIN, stt: STT_MODE, stt_raw: STT_RAW, stt_configurado: !!OPENAI_API_KEY, stt_model: STT_MODEL, busqueda_shadow: BUSQUEDA_SHADOW, busqueda_mcp: BUSQUEDA_MCP, busqueda_mcp_limit: BUSQUEDA_MCP_LIMIT, catalog_mcp_url: CATALOG_MCP_URL, ucp_profile_url: UCP_PROFILE_URL, live_targets: MODE === "live" ? (LIVE_ALL ? "all" : LIVE_ALLOWLIST.length) : 0, ts: new Date().toISOString() });
   }
   if (req.method !== "POST") return Response.json({ error: "method_not_allowed" }, { status: 405 });
   if (url.searchParams.get("key") !== WEBHOOK_KEY) return Response.json({ error: "forbidden" }, { status: 403 });
