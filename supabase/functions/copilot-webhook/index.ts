@@ -887,16 +887,16 @@ const TOOLS: Anthropic.Tool[] = [{
 // La alternativa era pedirle al asesor un comando o que editara un atributo del contacto: tedioso, y el
 // negocio lo descartó con razón. Esto no le pide NADA: sigue preguntando como siempre y el bot entiende
 // por contexto que lo que venga es la dirección. Solo mira el ÚLTIMO mensaje del asesor (<30 min).
-const PIDE_ENVIO_RE = new RegExp([
-  "(su|la|tu|una|qu[eé]|cual) (direcci[oó]n|ubicaci[oó]n)",
-  "direcci[oó]n (de|para) (entrega|env[ií]o|despacho)",
-  "(a|para) d[oó]nde (se )?(lo|la|los|las|le)? ?(env[ií]|manda|mand[oa]|entrega|llev)",
-  "d[oó]nde (se )?(lo|la|le)? ?(entreg|env[ií]|dej)",
-  "datos (de|para) (entrega|env[ií]o|despacho)",
-  "(me )?(confirma|indica|pasa|regala|comparte)( me)? (su|la|el)? ?(direcci|ubicaci|punto de referencia)",
-  "punto de referencia",
-  "comparta (su|la) (ubicaci|direcci)",
-].join("|"), "i");
+// v101 — regex REESCRITO con evidencia real: se minaron los ~14,500 mensajes de asesores humanos
+// (docs/diccionario-frases.md). La frase dominante es "a que dirección desea el envío?" (n=70) y la
+// familia "¿dónde es/sería la entrega?" (n≈15) se escapaba del patrón de v100; a la inversa, la red
+// ancha `articulo + dirección/ubicación` matcheaba ~30 mensajes que NO piden nada ("las entregas
+// tienen un costo adicional según la ubicación", "guardamos tu dirección ✅" n=12, "va en ruta hacia
+// su ubicación"). Diseño: 4 familias ancladas — interrogativo (cuál/qué/dónde), verbo de petición +
+// dirección/ubicación en ventana corta, datos de entrega, y flujos de pin/referencia. Ventanas sin
+// `.` `;` ni salto de línea evitan cruces de cláusula; sin `\b` después de `qu[eé]` (en JS `é` no es
+// word-char). Validado contra 22 frases reales que piden y 14 que no: 0 FN, 0 FP.
+const PIDE_ENVIO_RE = /\b(?:cu[aá]l|qu[eé])\s[^?.!\n]{0,30}(?:direcci[oó]n|ubicaci[oó]n|sucursal)|\b(?:a|para|hacia) d[oó]nde\b[^?.!\n]{0,20}(?:env[ií]|entreg|mand|llev|despach|ser[ií]a)|\bd[oó]nde (?:es|ser[aá]|ser[ií]a|queda)\b[^?.!\n]{0,25}(?:entreg|env[ií]|delivery|despach|ubicaci|direcci)|\bd[oó]nde se l[oa]s? ?(?:entreg|env[ií]|dej|llev|mand)|\b(?:permit[ae]|confirm[ae]|indi(?:ca|que)|facilit[ae]|brind[ae]|regal[ae]|deme|dame|escr[ií]b[ae]|env[ií][ae]|enviar(?:me|nos)?|avis[ae]|necesit|quedo atent[oa] a)[^.;!\n]{0,20}(?:direcci[oó]n|ubicaci[oó]n)|\bp[aá]s[ae](?:me|nos|rme|rnos)?[^.;\n]{0,15}(?:direcci[oó]n|ubicaci[oó]n)|compart[ae](?:me|nos)?[^.;\n]{0,15}(?:tu|su)s? (?:ubicaci[oó]n|direcci[oó]n)|\bdatos\b[^.;\n]{0,35}(?:entrega|env[ií]o|despacho)|\b(?:confirmar?|indicar?|indique|facilitar?|d[ií]game|me diga)[^.;\n]{0,25}lugar de entrega|punto de referencia|alguna referencia\s*\?|peg(?:a|ue)[^.;\n]{0,30}(?:google maps|ubicaci[oó]n)|(?:esta|esa) (?:es|ser[ií]a) la (?:direcci[oó]n|ubicaci[oó]n) de (?:entrega|env[ií]o)|adjuntar[^.;\n]{0,15}ubicaci[oó]n/i;
 
 const HANDOFF_RE = /\b(humano|persona|asesor|agente|reclamo|queja|hablar con alguien|supervisor|quiero devolver|devolver (el|la|lo|los|las|un|una|mi|este|esta|esto|eso)|devolverl[oa]s?|devuelvan|cambiarl[oa]s?|(una|la|mi|su|esa|esta) devoluci[oó]n|(aplicar|usar|reclamar|validar|activar|hacer (v[aá]lida|efectiva)) (la |mi |su )?garant[ií]a|(mi|su) garant[ií]a|en garant[ií]a|tiene garant[ií]a|sali[oó] (mal|malo|mala|da[ñn]ad[oa]|defectuos[oa])|(lleg[oó]|vino) (mal|malo|mala|da[ñn]ad[oa]|roto|rota|defectuos[oa])|defectuos[oa]s?|me vendieron (uno|una|algo) (malo|mala|da[ñn]ad[oa]|defectuos[oa])|nota de cr[eé]dito|me factur(aron|a|[oó]) (de m[aá]s|mal|otra cantidad)|me cobr(aron|a|[oó]) de m[aá]s|factura(ci[oó]n)? (incorrecta|equivocada|mal (hecha|emitida))|(solo|nom[aá]s|pero) .{0,40}(entregaron|entreg[oó]|dieron|lleg(aron|[oó])) .{0,60}factur\w*|factur\w* .{0,60}(solo|nom[aá]s|pero) .{0,40}(entregaron|entreg[oó]|dieron|lleg(aron|[oó]))|(precios?|descuentos?) (de |del |de la |para |al )?(distribuidor|mayorista|revendedor)\w*|al por mayor)\b/i;
 // v73 — PEDIR UN ASESOR NO ES LO MISMO QUE UN RECLAMO. HANDOFF_RE mezcla las dos cosas y el barrido las
@@ -1043,7 +1043,9 @@ const NEEDS_TOOL_RE = new RegExp([
   "impresor", "multifuncional", "\\btinta", "t[oó]ner", "toner", "cartuch", "consumible", "\\bpapel", "resma",
   "precio", "cu[aá]nto", "cuesta", "cotiza", "disponib", "stock", "existenc", "\\bmodelo", "\\bvende", "manejan",
   "epson", "canon", "\\bhp\\b", "brother", "pixma", "ecotank", "workforce", "laserjet", "deskjet", "officejet", "\\bg\\d{3,4}\\b", "\\bl\\d{3,4}\\b", "gi-?\\d",
-  "env[ií]o", "entrega", "delivery", "domicilio", "horario", "ubicaci", "direcci", "\\bd[oó]nde\\b", "\\bpago", "pagar", "yappy", "\\bach\\b", "transferen", "tarjeta", "reembols",
+  // v101: "encomienda" y "me lo traen / lo traen hoy" salieron del minado de conversaciones reales
+  // (docs/diccionario-frases.md) — piden envío sin usar ninguna palabra que las redes cubrieran.
+  "env[ií]o", "entrega", "delivery", "domicilio", "encomienda", "l[oa]s? traen\\b", "tr[aá]ig[ae]n", "horario", "ubicaci", "direcci", "\\bd[oó]nde\\b", "\\bpago", "pagar", "yappy", "\\bach\\b", "transferen", "tarjeta", "reembols",
   // v61.3 (caso real 04-ago, conv 50766740669): la clienta preguntó "Q oficina es" y el bot respondió
   // "oficina 4008" DE MEMORIA (la real es la 454) y la reconfirmó cuando ella dudó — su esposo iba subiendo.
   // Ninguno de los patrones de arriba cubría "oficina"/"piso": ahora estos datos del local SIEMPRE fuerzan
@@ -1108,7 +1110,7 @@ const BASIC_INFO_RE = new RegExp([
   // formas de pago (métodos que aceptamos; NO pago en curso — eso lo filtra INTERRUPT_RE)
   "formas? de pago", "m[eé]todos? de pago", "c[oó]mo (puedo )?pago", "c[oó]mo pagar", "aceptan", "\\byappy\\b", "\\bach\\b", "tarjeta", "efectivo", "transferen", "cuotas?",
   // envíos / entregas / recogida
-  "env[ií]o", "env[ií]an", "entrega", "delivery", "despach", "mandan", "\\bllega", "interior", "provincia", "recoger", "recojo", "\\bretir", "sucursal", "pickup", "domicilio", "uber\\b",
+  "env[ií]o", "env[ií]an", "entrega", "delivery", "despach", "mandan", "\\bllega", "interior", "provincia", "recoger", "recojo", "\\bretir", "sucursal", "pickup", "domicilio", "encomienda", "l[oa]s? traen\\b", "uber\\b", // v101: encomienda/"lo traen" — minado real
   // devoluciones / garantía (política general)
   "devoluci", "devolver", "garant[ií]a", "\\bcambio\\b", "cambiar", "reembols",
 ].join("|"), "i");
@@ -3354,7 +3356,7 @@ Deno.serve(async (req) => {
         texto: tr?.texto ?? null, ts: new Date().toISOString(),
       });
     }
-    return Response.json({ status: "ok", function: "copilot-webhook", version: "v100-asesor-pide-envio", mode: MODE, mode_raw: MODE_RAW, model: MODEL, llm_configured: !!anthropic, wati_send_configured: !!(WATI_API_TOKEN && WATI_API_BASE), inventario_configurado: !!(SHOPIFY_ADMIN_TOKEN && SHOPIFY_ADMIN_API_BASE), resolve_configured: !!RESOLVE_SECRET, webhook_key_es_default: WEBHOOK_KEY_ES_DEFAULT, handoff_assist_min: HANDOFF_ASSIST_MIN, handoff_cold_hours: HANDOFF_COLD_HOURS, debounce_ms: DEBOUNCE_MS, sesion_gap_dias: SESION_GAP_DIAS, burbujas: BURBUJAS, burbuja_ms: BURBUJA_MS, audio_puente: AUDIO_PUENTE, sweep: SWEEP_MODE, sweep_espera_min: SWEEP_ESPERA_MIN, stt: STT_MODE, stt_raw: STT_RAW, stt_configurado: !!OPENAI_API_KEY, stt_model: STT_MODEL, busqueda_shadow: BUSQUEDA_SHADOW, busqueda_mcp: BUSQUEDA_MCP, busqueda_mcp_limit: BUSQUEDA_MCP_LIMIT, catalog_mcp_url: CATALOG_MCP_URL, ucp_profile_url: UCP_PROFILE_URL, live_targets: MODE === "live" ? (LIVE_ALL ? "all" : LIVE_ALLOWLIST.length) : 0, ts: new Date().toISOString() });
+    return Response.json({ status: "ok", function: "copilot-webhook", version: "v101-diccionario-minado", mode: MODE, mode_raw: MODE_RAW, model: MODEL, llm_configured: !!anthropic, wati_send_configured: !!(WATI_API_TOKEN && WATI_API_BASE), inventario_configurado: !!(SHOPIFY_ADMIN_TOKEN && SHOPIFY_ADMIN_API_BASE), resolve_configured: !!RESOLVE_SECRET, webhook_key_es_default: WEBHOOK_KEY_ES_DEFAULT, handoff_assist_min: HANDOFF_ASSIST_MIN, handoff_cold_hours: HANDOFF_COLD_HOURS, debounce_ms: DEBOUNCE_MS, sesion_gap_dias: SESION_GAP_DIAS, burbujas: BURBUJAS, burbuja_ms: BURBUJA_MS, audio_puente: AUDIO_PUENTE, sweep: SWEEP_MODE, sweep_espera_min: SWEEP_ESPERA_MIN, stt: STT_MODE, stt_raw: STT_RAW, stt_configurado: !!OPENAI_API_KEY, stt_model: STT_MODEL, busqueda_shadow: BUSQUEDA_SHADOW, busqueda_mcp: BUSQUEDA_MCP, busqueda_mcp_limit: BUSQUEDA_MCP_LIMIT, catalog_mcp_url: CATALOG_MCP_URL, ucp_profile_url: UCP_PROFILE_URL, live_targets: MODE === "live" ? (LIVE_ALL ? "all" : LIVE_ALLOWLIST.length) : 0, ts: new Date().toISOString() });
   }
   if (req.method !== "POST") return Response.json({ error: "method_not_allowed" }, { status: 405 });
   if (url.searchParams.get("key") !== WEBHOOK_KEY) return Response.json({ error: "forbidden" }, { status: 403 });
