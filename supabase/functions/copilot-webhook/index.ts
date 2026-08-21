@@ -756,7 +756,7 @@ CAPTURA DE DATOS DE ENTREGA (cuando el cliente quiere ENVÍO a domicilio)
 - Si el cliente comparte su ubicación por el clip, te llegará como un mensaje "[el cliente compartió su ubicación 📍]" con un link de Maps: guárdalo DE INMEDIATO con guardar_datos_envio (campo maps_url, el link tal cual) y confírmale que quedó registrada. Si en cambio envía un código Plus Code (patrón tipo "XFQM+5W" o "XFQM+5W Panamá"): guárdalo con guardar_datos_envio en el campo direccion tal cual lo escribió (el sistema lo resuelve en el mapa); si la tool responde que la zona no se pudo resolver, ahí sí pídele UNA vez la ubicación por el clip 📎 o un link de Google Maps, y si no, sigue sin insistir.
 - Cada dato que el cliente dé, guárdalo AL MOMENTO con guardar_datos_envio (puedes llamarla varias veces a medida que los da). La herramienta te dice qué falta: repregunta SOLO eso, UNA vez, sin convertirlo en formulario. Si el cliente lo ignora o cambia de tema, no insistas.
 - Si guardar_datos_envio devuelve la zona con costo, confirma el COSTO tal cual (es el mismo dato determinista de tarifa_entrega), pero NUNCA le digas al cliente el código de zona (Z1, Z2, Z4a, "Z1 Centro"…): eso es nomenclatura interna de QSP. Su ubicación nómbrala como el CLIENTE la conoce — el sector/corregimiento que la tool devuelve en zona.lugar (ej. "Betania") o su propia dirección. Ej.: "Su ubicación quedó registrada en Betania; el envío cuesta $6.00 + ITBMS". Si la zona sale del INTERIOR, aplica las reglas del interior (Servientrega: retiro o domicilio, costos de info_tienda) — no ofrezcas flota propia.
-- Al completar (dirección + referencia): MUESTRA al cliente lo que quedó guardado, tal cual y en 1-2 líneas (la dirección, la referencia y "con ubicación 📍" si compartió el pin), para que pueda corregir si algo quedó mal, y di que un asesor confirma el despacho y el pago. Tú NO despachas, NO cobras y NO prometes hora de entrega — eso lo lanza el asesor.
+- Al completar (dirección + referencia): si guardar_datos_envio devuelve el campo "confirmacion", cópialo TAL CUAL —línea por línea, sin reescribirlo, resumirlo ni cambiarle el formato— y espera la respuesta del cliente. Si responde que NO es correcta, pregúntale qué dato está mal, corrige SOLO ese con guardar_datos_envio y vuelve a mostrar el bloque actualizado; nunca adivines el dato correcto. Si no viene ese campo, muestra en 1-2 líneas lo que quedó guardado. En ambos casos: un asesor confirma el despacho y el pago. Tú NO despachas, NO cobras y NO prometes hora de entrega — eso lo lanza el asesor.
 - Esto NO cambia la regla anti-interrupción: si un humano está coordinando la entrega en ese momento, no te metas.
 
 CONCIENCIA DE PEDIDOS (estado de un pedido YA hecho)
@@ -2014,6 +2014,32 @@ async function espejarEnvioWati(waId: string, d: {
   }
 }
 
+// v92 — BLOQUE DE CONFIRMACIÓN DE DIRECCIÓN (punto 4 del pedido del negocio). Se arma en CÓDIGO, no en
+// el modelo: los datos que el cliente ve son EXACTAMENTE los que quedaron guardados y los que leerá el
+// asesor al despachar. Si el modelo lo redactara, podría suavizar o resumir justo el dato que hay que
+// verificar. Las líneas sin dato se omiten (el interior no tiene distrito/corregimiento en el diccionario).
+function bloqueConfirmacion(d: {
+  direccion: string; referencia: string; provincia: string; distrito: string; corregimiento: string;
+  tarifaUsd: number | null; conPin: boolean;
+}): string {
+  const linea = (etiqueta: string, valor: string) => (String(valor ?? "").trim() ? `${etiqueta}: ${String(valor).trim()}` : "");
+  const costo = d.tarifaUsd != null
+    ? `Costo de entrega: B/.${d.tarifaUsd.toFixed(2)} + ITBMS = B/.${(Math.round(d.tarifaUsd * 1.07 * 100) / 100).toFixed(2)}`
+    : "";
+  return [
+    "Favor confirmar la dirección de entrega:",
+    linea("Provincia", d.provincia),
+    linea("Distrito", d.distrito),
+    linea("Corregimiento", d.corregimiento),
+    linea("Dirección", d.direccion),
+    linea("Referencia", d.referencia),
+    d.conPin ? "Ubicación: 📍 recibida" : "",
+    costo,
+    "",
+    "¿La dirección es correcta? Responda *Sí* o *No*",
+  ].filter(Boolean).join("\n");
+}
+
 async function guardarDatosEnvio(waId: string, input: any): Promise<string> {
   try {
     const digitos = String(waId ?? "").replace(/\D/g, "");
@@ -2219,8 +2245,21 @@ async function guardarDatosEnvio(waId: string, input: any): Promise<string> {
         if (zonaDebil && !pinFinal) {
           return "Datos completos, pero la dirección NO se reconoció bien en el mapa de zonas: muestra al cliente lo que quedó guardado (dirección y referencia, tal cual) y pídele UNA sola vez su ubicación por el clip 📎 o un link de Google Maps para ubicarlo exacto; si no sabe cómo o no responde, sigue sin insistir (el repartidor puede llamarlo)." + avisoCosto + " Cierra diciendo que un asesor confirma el despacho y el pago.";
         }
-        return "Datos completos. Muestra al cliente lo que quedó guardado, tal cual (la dirección, la referencia y si hay ubicación 📍), para que corrija si algo quedó mal, y dile que un asesor confirma el despacho y el pago. NO pidas el pin (la dirección se reconoció) y NO prometas hora de entrega." + avisoInterno;
+        // v92 — con los datos completos y la zona resuelta, la confirmación deja de ser un resumen libre y
+        // pasa a ser el BLOQUE de `confirmacion` (armado en código): el cliente ve exactamente lo que quedó
+        // guardado —incluida la jerarquía que usará el repartidor— y puede corregirlo antes de despachar.
+        return "Datos completos. Copia el bloque del campo `confirmacion` TAL CUAL, sin reescribirlo ni resumirlo, y espera su respuesta. Si dice que SÍ: confirma en una línea que un asesor sigue con el despacho y el pago. Si dice que NO: pregúntale QUÉ dato está mal, corrige SOLO ese con guardar_datos_envio y vuelve a mostrar el bloque actualizado — nunca lo adivines. NO pidas el pin (la dirección se reconoció) y NO prometas hora de entrega. Si el cliente YA confirmó esta misma dirección antes en la conversación, no repitas el bloque: sigue adelante." + avisoInterno;
       })(),
+      // v92 — solo cuando de verdad hay algo firme que confirmar: datos completos, zona resuelta y sin
+      // discrepancia pendiente entre lo escrito y el pin (si la hay, manda la pregunta de la nota).
+      confirmacion: (completo && !zonaDebil && !discrepa)
+        ? bloqueConfirmacion({
+            direccion: dirFinal, referencia: refFinal,
+            provincia: jer.provincia, distrito: jer.distrito, corregimiento: jer.corregimiento,
+            tarifaUsd: typeof (zona as any)?.tarifa_usd === "number" ? (zona as any).tarifa_usd : null,
+            conPin: pinFinal,
+          })
+        : undefined,
     });
   } catch (e) {
     await log("error", false, { fase: "captura_envio", waId, error: String(e).slice(0, 200) });
@@ -3137,7 +3176,7 @@ Deno.serve(async (req) => {
         texto: tr?.texto ?? null, ts: new Date().toISOString(),
       });
     }
-    return Response.json({ status: "ok", function: "copilot-webhook", version: "v91-pin-descartable", mode: MODE, mode_raw: MODE_RAW, model: MODEL, llm_configured: !!anthropic, wati_send_configured: !!(WATI_API_TOKEN && WATI_API_BASE), inventario_configurado: !!(SHOPIFY_ADMIN_TOKEN && SHOPIFY_ADMIN_API_BASE), resolve_configured: !!RESOLVE_SECRET, webhook_key_es_default: WEBHOOK_KEY_ES_DEFAULT, handoff_assist_min: HANDOFF_ASSIST_MIN, handoff_cold_hours: HANDOFF_COLD_HOURS, debounce_ms: DEBOUNCE_MS, sesion_gap_dias: SESION_GAP_DIAS, burbujas: BURBUJAS, burbuja_ms: BURBUJA_MS, audio_puente: AUDIO_PUENTE, sweep: SWEEP_MODE, sweep_espera_min: SWEEP_ESPERA_MIN, stt: STT_MODE, stt_raw: STT_RAW, stt_configurado: !!OPENAI_API_KEY, stt_model: STT_MODEL, busqueda_shadow: BUSQUEDA_SHADOW, busqueda_mcp: BUSQUEDA_MCP, busqueda_mcp_limit: BUSQUEDA_MCP_LIMIT, catalog_mcp_url: CATALOG_MCP_URL, ucp_profile_url: UCP_PROFILE_URL, live_targets: MODE === "live" ? (LIVE_ALL ? "all" : LIVE_ALLOWLIST.length) : 0, ts: new Date().toISOString() });
+    return Response.json({ status: "ok", function: "copilot-webhook", version: "v92-confirmacion-estructurada", mode: MODE, mode_raw: MODE_RAW, model: MODEL, llm_configured: !!anthropic, wati_send_configured: !!(WATI_API_TOKEN && WATI_API_BASE), inventario_configurado: !!(SHOPIFY_ADMIN_TOKEN && SHOPIFY_ADMIN_API_BASE), resolve_configured: !!RESOLVE_SECRET, webhook_key_es_default: WEBHOOK_KEY_ES_DEFAULT, handoff_assist_min: HANDOFF_ASSIST_MIN, handoff_cold_hours: HANDOFF_COLD_HOURS, debounce_ms: DEBOUNCE_MS, sesion_gap_dias: SESION_GAP_DIAS, burbujas: BURBUJAS, burbuja_ms: BURBUJA_MS, audio_puente: AUDIO_PUENTE, sweep: SWEEP_MODE, sweep_espera_min: SWEEP_ESPERA_MIN, stt: STT_MODE, stt_raw: STT_RAW, stt_configurado: !!OPENAI_API_KEY, stt_model: STT_MODEL, busqueda_shadow: BUSQUEDA_SHADOW, busqueda_mcp: BUSQUEDA_MCP, busqueda_mcp_limit: BUSQUEDA_MCP_LIMIT, catalog_mcp_url: CATALOG_MCP_URL, ucp_profile_url: UCP_PROFILE_URL, live_targets: MODE === "live" ? (LIVE_ALL ? "all" : LIVE_ALLOWLIST.length) : 0, ts: new Date().toISOString() });
   }
   if (req.method !== "POST") return Response.json({ error: "method_not_allowed" }, { status: 405 });
   if (url.searchParams.get("key") !== WEBHOOK_KEY) return Response.json({ error: "forbidden" }, { status: 403 });
