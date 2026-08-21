@@ -768,6 +768,12 @@ CONCIENCIA DE PEDIDOS (estado de un pedido YA hecho)
 - Esto es SOLO para pedidos ya hechos. Para el costo de un envío usa tarifa_entrega; para pagos, facturas o coordinar una entrega, deriva a un asesor.
 - RECOMPRA ("lo mismo de la última vez", "la de siempre", "repetir mi pedido", "las que le compré el mes pasado"): el cliente casi nunca nombra el producto. Usa estado_pedido y lee 'compras_anteriores' (los productos de sus últimos pedidos). Confirma en una línea qué encontraste ("La última vez llevó: …, ¿le cotizo lo mismo?") y cotiza con buscar_producto/calcular_cotizacion a PRECIO DE HOY — NUNCA repitas totales ni precios de pedidos anteriores. Si pide "lo mismo pero sin X" o "igual pero 3 negras", aplica el cambio. Si no aparecen compras anteriores (tu vista es PARCIAL: cotizaciones manuales no figuran), pídele el modelo o la cotización anterior con naturalidad, o deriva a un asesor.
 
+ASESORÍA DE IMPRESORAS (v105 — cuando piden recomendación, no un modelo puntual)
+- Si el cliente pide que le RECOMIENDES una impresora ("¿cuál me conviene?", "para mi oficina", "algo económico en tinta", "¿láser o tinta?", "una que imprima 11x17", "para recibos/etiquetas/planos/sublimación"), usa asesorar_impresora con los criterios que él haya dado. Si aún no dio ninguno, pregunta UNA sola vez lo esencial (uso, volumen, si necesita copiar/escanear, tamaño) — cálido, sin sonar a formulario.
+- Presenta MÁXIMO 2-3 opciones, cada una con el porqué en una línea, y confirma el precio con ITBMS, stock y link de cada finalista con buscar_producto ANTES de presentarla. Los specs salen SOLO de la herramienta: si un campo viene null, NO lo rellenes de memoria — dilo con naturalidad ("ese dato se lo confirma un asesor").
+- Orienta por COSTO DE OPERACIÓN cuando aplique: tanque/tinta continua = más páginas por balboa (hogar/oficina que imprime seguido); láser mono = velocidad y texto nítido; cartuchos = equipo barato pero consumible más caro. Usa el campo 'rendimiento' y 'consumibles' de la herramienta, nunca cifras inventadas.
+- Cierra ofreciendo cotizar la elegida (y sus consumibles si el cliente pregunta el costo de operar).
+
 SOPORTE TÉCNICO Y REPARACIONES
 - QSP NO ofrece soporte técnico ni servicios de reparación. Si preguntan por reparar/arreglar un equipo, soporte técnico, o que algo "no enciende/no imprime", usa info_tienda y sugiere la empresa de la marca correspondiente que ahí figure; NUNCA inventes teléfonos ni empresas, y si no hay dato, deriva a un asesor.
 
@@ -849,6 +855,22 @@ const TOOLS: Anthropic.Tool[] = [{
   name: "estado_pedido",
   description: "Consulta el ESTADO / seguimiento del pedido del cliente que está escribiendo (por su WhatsApp, tomado del CONTEXTO — NO pidas ni pases el número). Úsala cuando el cliente pregunte por el estado, seguimiento o entrega de SU pedido/orden/compra YA hecha (\"¿dónde está mi pedido?\", \"¿ya salió mi orden?\", \"¿cuándo me llega?\", \"número de guía\"), Y TAMBIÉN cuando quiera una RECOMPRA sin nombrar el producto (\"lo mismo de la última vez\", \"la de siempre\", \"repetir mi pedido\", \"el modelo que compré el mes pasado\"): el campo 'compras_anteriores' trae los productos de sus últimos pedidos para identificarlos — luego cotízalos con buscar_producto/calcular_cotizacion a precio de HOY, NUNCA con montos viejos. Devuelve 'respuesta_sugerida' para el estado: RELÁYALA sin inventar estados, fechas ni guías. Si el estado es 'sin_pedidos'/'sin_dato'/'error', NO afirmes que el cliente no tiene pedidos (tu vista es PARCIAL): relaya la sugerencia (un asesor lo confirma). NO es para cotizar el costo de un envío (usa tarifa_entrega) ni para pagos/facturas/coordinar una entrega en curso (eso lo maneja un asesor).",
   input_schema: { type: "object", properties: {} },
+} as Anthropic.Tool, {
+  // v105 — ASESORÍA DE IMPRESORAS: lee impresoras_specs (87 modelos, specs extraídos de las fichas
+  // de la propia tienda — ver docs/impresoras-specs-revision.md). Sin precios a propósito: el
+  // invariante del proyecto es que TODO precio sale de buscar_producto.
+  name: "asesorar_impresora",
+  description: "Recomienda impresoras del catálogo según las necesidades del cliente. Llámala cuando pida una RECOMENDACIÓN o compare ('¿qué impresora me conviene?', 'para mi oficina/negocio', 'una que imprima 11x17', '¿láser o tinta?', 'para recibos POS / etiquetas / planos / sublimación'). Pasa SOLO los filtros que el cliente haya dicho (no inventes criterios). Devuelve hasta 8 candidatas con specs REALES de ficha (categoría, funciones, dúplex, ADF, Wi-Fi, tamaño máximo, velocidad, rendimiento, consumibles) — NO trae precio ni stock: para las 2-3 finalistas llama buscar_producto con el modelo y confirma precio/ITBMS/stock/link antes de presentarlas. Si el cliente no dio ningún criterio todavía, NO la llames vacía: pregunta UNA vez lo esencial (¿para qué uso? ¿cuánto imprime? ¿necesita copiar/escanear? ¿algún tamaño especial?).",
+  input_schema: { type: "object", properties: {
+    categoria: { type: "string", description: "tinta | laser | termica_pos | etiquetas | matriz | fotografica | sublimacion | plotter. 'tinta' cubre tanque continuo y cartuchos. Omite si el cliente no especificó tecnología." },
+    color: { type: "boolean", description: "true = necesita color; false = blanco y negro basta (típico láser mono de oficina)" },
+    multifuncional: { type: "boolean", description: "true si necesita copiar/escanear además de imprimir" },
+    duplex: { type: "boolean", description: "true si pidió impresión a doble cara automática" },
+    adf: { type: "boolean", description: "true si necesita alimentador automático de documentos (escanear/copiar lotes)" },
+    wifi: { type: "boolean", description: "true si necesita conexión inalámbrica" },
+    formato_grande: { type: "boolean", description: "true si necesita imprimir MÁS GRANDE que carta/legal: 11x17, A3, planos, rollos" },
+    alto_volumen: { type: "boolean", description: "true si imprime mucho a diario (oficina intensiva, miles de páginas al mes)" },
+  } },
 } as Anthropic.Tool, {
   name: "calcular_cotizacion",
   description: "Calcula el TOTAL de una compra de varias unidades y/o varios productos, con ITBMS, en código (aritmética exacta). Úsala SIEMPRE que el cliente pida 2+ unidades de un producto, o el total combinado de varios productos — NUNCA multipliques, sumes ni apliques el ITBMS de memoria (aplicar el 7% dos veces cobra de más: es un error grave). Pásale 'items', una entrada por producto con su precio_usd (el precio UNITARIO SIN ITBMS que te devolvió buscar_producto — cópialo TAL CUAL, no lo inventes ni le sumes el impuesto), la cantidad y el 'stock' tal como lo devolvió buscar_producto. Con el stock, la herramienta compara contra la cantidad pedida y, si no alcanza, arma la respuesta ABRIENDO con el aviso de inventario insuficiente — relayala completa y en ese orden. Devuelve el subtotal, el ITBMS (7% una sola vez sobre el subtotal), el total y una 'respuesta_sugerida' ya armada: relaya esos números EXACTAMENTE. Si devuelve error (falta un precio), busca el producto con buscar_producto y vuelve a llamarla con su precio_usd.",
@@ -2493,6 +2515,38 @@ async function estadoPedido(waId: string = ""): Promise<string> {
   }
 }
 
+// v105 — ASESORÍA DE IMPRESORAS. Lee impresoras_specs (solo service role; RLS activa) y devuelve
+// candidatas con specs de las FICHAS de la tienda — sin precio ni stock (eso lo confirma
+// buscar_producto, que es la única fuente de precios del bot). Filtros AND: si nada cumple todos,
+// se le dice al modelo que afloje el menos importante en vez de devolver silencio.
+async function asesorarImpresora(f: Record<string, unknown> = {}): Promise<string> {
+  try {
+    let q = sb.from("impresoras_specs").select("modelo,marca,categoria,color,funciones,duplex_auto,adf,wifi,ethernet,tamano_maximo,ppm_negro,ppm_color,rendimiento,consumibles,perfil,notas,verificado");
+    const cat = String(f?.categoria ?? "").toLowerCase().trim();
+    if (cat === "tinta") q = q.in("categoria", ["tinta_continua", "tinta_cartucho"]);
+    else if (cat) q = q.eq("categoria", cat);
+    if (typeof f?.color === "boolean") q = q.eq("color", f.color);
+    if (f?.multifuncional === true) q = q.contains("funciones", ["copiar"]);
+    if (f?.duplex === true) q = q.eq("duplex_auto", true);
+    if (f?.adf === true) q = q.eq("adf", true);
+    if (f?.wifi === true) q = q.eq("wifi", true);
+    if (f?.formato_grande === true) q = q.in("tamano_maximo", ["11x17", "13x19", '24"', '36"', '44"', "formato ancho"]);
+    if (f?.alto_volumen === true) q = q.in("perfil", ["alto_volumen", "oficina"]);
+    const { data, error } = await q.order("ppm_negro", { ascending: false, nullsFirst: false }).limit(8);
+    if (error) throw new Error(error.message);
+    if (!data?.length) {
+      return JSON.stringify({ estado: "sin_candidatas", nota: "Ningún modelo del catálogo cumple TODOS esos filtros a la vez. Vuelve a llamar quitando el filtro menos importante, o dile al cliente con calma qué combinación no manejamos y ofrece lo más cercano. NUNCA inventes un modelo." });
+    }
+    return JSON.stringify({
+      estado: "ok", candidatas: data,
+      nota: "Specs tomados de la ficha oficial de la tienda (campo por campo; null = la ficha no lo dice, NO lo inventes). SIN precio ni stock: confirma las 2-3 finalistas con buscar_producto (pasa marca y modelo) antes de presentarlas. Presenta máximo 2-3 opciones con el porqué en una línea cada una.",
+    });
+  } catch (e) {
+    await log("error", false, { fase: "asesorar_impresora", error: String(e).slice(0, 200) });
+    return JSON.stringify({ estado: "error", nota: "No se pudo consultar la guía de impresoras; usa buscar_producto con lo que el cliente pidió o deriva a un asesor." });
+  }
+}
+
 async function responderLLM(history: { role: string; content: string; model?: string | null; created_at?: string | null }[], forceTool: boolean, imagenes?: { b64: string; mediaType: string }[] | null, imagenFallo?: boolean, waId: string = "", atributos: Record<string, string> = {}, linksTracked: Record<string, string> = {}, modoAsistencia: boolean = false, sufijoExtra: string = "", modoCaptura: boolean = false, pdf?: { b64: string } | null): Promise<{ text: string | null; toolCalls: unknown[]; tokensIn: number; tokensOut: number; cacheRead: number; cacheWrite: number; agotado?: boolean }> {
   if (!anthropic) return { text: null, toolCalls: [], tokensIn: 0, tokensOut: 0, cacheRead: 0, cacheWrite: 0 };
   // La API exige que el primer mensaje sea del usuario: descarta "assistant" al inicio
@@ -2560,7 +2614,7 @@ async function responderLLM(history: { role: string; content: string; model?: st
     // v84 — la asistencia también puede GUARDAR datos de entrega y cotizar la tarifa: el bot preguntaba
     // "¿me confirma su dirección?" en handoff y no tenía la tool para guardar la respuesta (21-ago).
     // Capturar dirección/pin no es facturar: los guardarraíles de pagos siguen en el gate y el suffix.
-    : modoAsistencia ? TOOLS.filter((t) => ["buscar_producto", "info_tienda", "sucursales_interior", "estado_pedido", "calcular_cotizacion", "consultar_folleto", "guardar_datos_envio", "tarifa_entrega"].includes(t.name)) : TOOLS;
+    : modoAsistencia ? TOOLS.filter((t) => ["buscar_producto", "info_tienda", "sucursales_interior", "estado_pedido", "calcular_cotizacion", "consultar_folleto", "guardar_datos_envio", "tarifa_entrega", "asesorar_impresora"].includes(t.name)) : TOOLS; // v105: asesoría también en asistencia (preventa grounded)
   // Los mensajes de un asesor humano se marcan para que el agente sepa que los dijo una persona.
   // v32: cada mensaje ANTERIOR (no el último/actual) se prefija con [hoy/ayer/fecha] para que el bot
   // ubique el historial en el tiempo. El último (el que se responde ahora) va limpio (es "ahora", y así
@@ -2649,6 +2703,8 @@ async function responderLLM(history: { role: string; content: string; model?: st
           ? await tarifaEntrega((block.input as any).lugar ?? "")
           : block.name === "estado_pedido"
           ? await estadoPedido(waId)
+          : block.name === "asesorar_impresora"
+          ? await asesorarImpresora(block.input as any)
           : block.name === "calcular_cotizacion"
           ? calcularCotizacion((block.input as any).items)
           : block.name === "consultar_folleto"
@@ -3401,7 +3457,7 @@ Deno.serve(async (req) => {
         texto: tr?.texto ?? null, ts: new Date().toISOString(),
       });
     }
-    return Response.json({ status: "ok", function: "copilot-webhook", version: "v104-recompra", mode: MODE, mode_raw: MODE_RAW, model: MODEL, llm_configured: !!anthropic, wati_send_configured: !!(WATI_API_TOKEN && WATI_API_BASE), inventario_configurado: !!(SHOPIFY_ADMIN_TOKEN && SHOPIFY_ADMIN_API_BASE), resolve_configured: !!RESOLVE_SECRET, webhook_key_es_default: WEBHOOK_KEY_ES_DEFAULT, handoff_assist_min: HANDOFF_ASSIST_MIN, handoff_cold_hours: HANDOFF_COLD_HOURS, debounce_ms: DEBOUNCE_MS, sesion_gap_dias: SESION_GAP_DIAS, burbujas: BURBUJAS, burbuja_ms: BURBUJA_MS, audio_puente: AUDIO_PUENTE, sweep: SWEEP_MODE, sweep_espera_min: SWEEP_ESPERA_MIN, stt: STT_MODE, stt_raw: STT_RAW, stt_configurado: !!OPENAI_API_KEY, stt_model: STT_MODEL, busqueda_shadow: BUSQUEDA_SHADOW, busqueda_mcp: BUSQUEDA_MCP, busqueda_mcp_limit: BUSQUEDA_MCP_LIMIT, catalog_mcp_url: CATALOG_MCP_URL, ucp_profile_url: UCP_PROFILE_URL, live_targets: MODE === "live" ? (LIVE_ALL ? "all" : LIVE_ALLOWLIST.length) : 0, ts: new Date().toISOString() });
+    return Response.json({ status: "ok", function: "copilot-webhook", version: "v105-asesoria-impresoras", mode: MODE, mode_raw: MODE_RAW, model: MODEL, llm_configured: !!anthropic, wati_send_configured: !!(WATI_API_TOKEN && WATI_API_BASE), inventario_configurado: !!(SHOPIFY_ADMIN_TOKEN && SHOPIFY_ADMIN_API_BASE), resolve_configured: !!RESOLVE_SECRET, webhook_key_es_default: WEBHOOK_KEY_ES_DEFAULT, handoff_assist_min: HANDOFF_ASSIST_MIN, handoff_cold_hours: HANDOFF_COLD_HOURS, debounce_ms: DEBOUNCE_MS, sesion_gap_dias: SESION_GAP_DIAS, burbujas: BURBUJAS, burbuja_ms: BURBUJA_MS, audio_puente: AUDIO_PUENTE, sweep: SWEEP_MODE, sweep_espera_min: SWEEP_ESPERA_MIN, stt: STT_MODE, stt_raw: STT_RAW, stt_configurado: !!OPENAI_API_KEY, stt_model: STT_MODEL, busqueda_shadow: BUSQUEDA_SHADOW, busqueda_mcp: BUSQUEDA_MCP, busqueda_mcp_limit: BUSQUEDA_MCP_LIMIT, catalog_mcp_url: CATALOG_MCP_URL, ucp_profile_url: UCP_PROFILE_URL, live_targets: MODE === "live" ? (LIVE_ALL ? "all" : LIVE_ALLOWLIST.length) : 0, ts: new Date().toISOString() });
   }
   if (req.method !== "POST") return Response.json({ error: "method_not_allowed" }, { status: 405 });
   if (url.searchParams.get("key") !== WEBHOOK_KEY) return Response.json({ error: "forbidden" }, { status: 403 });
