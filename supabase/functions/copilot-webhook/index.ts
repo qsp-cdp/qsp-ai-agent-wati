@@ -755,6 +755,7 @@ CAPTURA DE DATOS DE ENTREGA (cuando el cliente quiere ENVÍO a domicilio)
 - PIN/UBICACIÓN (clip 📎 de WhatsApp o link de Maps) — es un REFUERZO, no lo pidas de entrada: pídelo UNA sola vez únicamente cuando guardar_datos_envio te indique que la dirección NO se reconoció o quedó incompleta. Si el cliente no responde, no sabe cómo compartirla o no quiere, sigue adelante sin insistir (el repartidor puede llamarlo al llegar).
 - Si el cliente comparte su ubicación por el clip, te llegará como un mensaje "[el cliente compartió su ubicación 📍]" con un link de Maps: guárdalo DE INMEDIATO con guardar_datos_envio (campo maps_url, el link tal cual) y confírmale que quedó registrada. Si en cambio envía un código Plus Code (patrón tipo "XFQM+5W" o "XFQM+5W Panamá"): guárdalo con guardar_datos_envio en el campo direccion tal cual lo escribió (el sistema lo resuelve en el mapa); si la tool responde que la zona no se pudo resolver, ahí sí pídele UNA vez la ubicación por el clip 📎 o un link de Google Maps, y si no, sigue sin insistir.
 - Cada dato que el cliente dé, guárdalo AL MOMENTO con guardar_datos_envio (puedes llamarla varias veces a medida que los da). La herramienta te dice qué falta: repregunta SOLO eso, UNA vez, sin convertirlo en formulario. Si el cliente lo ignora o cambia de tema, no insistas.
+- QUÉ HAY GUARDADO lo dice la herramienta, NO tu memoria del chat: usa los campos "en_libreta" y "faltan" de guardar_datos_envio. Un dato que el cliente mencionó antes puede haberse limpiado (p. ej. al corregir la dirección), así que si aparece en "faltan" NO lo tenemos: pídeselo de nuevo y jamás le digas "ya tenemos su referencia/dirección/ubicación" sin verlo en "en_libreta". Confirmarle un dato que no está guardado deja al repartidor sin él.
 - Si guardar_datos_envio devuelve la zona con costo, confirma el COSTO tal cual (es el mismo dato determinista de tarifa_entrega), pero NUNCA le digas al cliente el código de zona (Z1, Z2, Z4a, "Z1 Centro"…): eso es nomenclatura interna de QSP. Su ubicación nómbrala como el CLIENTE la conoce — el sector/corregimiento que la tool devuelve en zona.lugar (ej. "Betania") o su propia dirección. Ej.: "Su ubicación quedó registrada en Betania; el envío cuesta $6.00 + ITBMS". Si la zona sale del INTERIOR, aplica las reglas del interior (Servientrega: retiro o domicilio, costos de info_tienda) — no ofrezcas flota propia.
 - Al completar (dirección + referencia): si guardar_datos_envio devuelve el campo "confirmacion", cópialo TAL CUAL —línea por línea, sin reescribirlo, resumirlo ni cambiarle el formato— y espera la respuesta del cliente. Si responde que NO es correcta, pregúntale qué dato está mal, corrige SOLO ese con guardar_datos_envio y vuelve a mostrar el bloque actualizado; nunca adivines el dato correcto. Si no viene ese campo, muestra en 1-2 líneas lo que quedó guardado. En ambos casos: un asesor confirma el despacho y el pago. Tú NO despachas, NO cobras y NO prometes hora de entrega — eso lo lanza el asesor.
 - Esto NO cambia la regla anti-interrupción: si un humano está coordinando la entrega en ese momento, no te metas.
@@ -2234,6 +2235,16 @@ async function guardarDatosEnvio(waId: string, input: any): Promise<string> {
     await log("captura_envio", true, { waId, completo, faltan, pin: pinFinal, zona: (zona as any)?.zona ?? (zona as any)?.estado ?? null });
     return JSON.stringify({
       ok: true, guardado: Object.keys(fila).filter((k) => k !== "updated_at"), faltan,
+      // v94 — LA VERDAD DE LA LIBRETA, no lo que el modelo recuerde del chat. Caso real (prueba 21-ago):
+      // la referencia se había borrado, la tool devolvió faltan:["referencia"]… y el bot igual le dijo al
+      // cliente "ya tenemos también la referencia (frente al banco)" porque la leyó del historial. El
+      // cliente quedó creyendo que estaba registrada, la ficha del asesor sin ella y el repartidor sin el
+      // dato. `guardado` de arriba solo dice qué se escribió EN ESTA llamada; esto dice qué hay AHORA.
+      en_libreta: {
+        direccion: dirFinal || null,
+        referencia: refFinal || null,
+        ubicacion: pinFinal ? "sí" : null,
+      },
       pin_ubicacion: pinFinal ? "sí" : "no (opcional: el cliente puede compartir su ubicación por el clip de WhatsApp)",
       zona,
       nota: (() => {
@@ -2253,7 +2264,10 @@ async function guardarDatosEnvio(waId: string, input: any): Promise<string> {
         if (discrepa) {
           return `ATENCIÓN: la dirección escrita queda en ${corregTexto} pero la ubicación 📍 que compartió cae en ${corregPin}. NO elijas tú: dile en una línea que ambas quedaron registradas y PREGÚNTALE a cuál de las dos quiere que se le entregue (nómbralas por el sector, nunca por el código de zona). No confirmes el despacho hasta que lo aclare. Cuando responda: si elige la DIRECCIÓN ESCRITA, vuelve a llamar guardar_datos_envio con descartar_pin: true (el pin apunta a otro lado y el repartidor se guía por él); si elige la del 📍, pídele la dirección escrita de ESE lugar y guárdala con direccion.`;
         }
-        if (!completo) return `Falta: ${faltan.join(" y ")}. Pídelo con naturalidad (UNA sola vez).${avisoCosto}`;
+        // v94 — el estado de los datos SALE DE AQUÍ, no de la memoria del chat: el cliente pudo haber dado
+        // un dato que después se limpió (corrección de dirección) y el modelo, leyendo el historial, lo da
+        // por guardado y se lo confirma al cliente. Lo que está en `faltan` NO lo tenemos, punto.
+        if (!completo) return `Falta: ${faltan.join(" y ")}. Pídelo con naturalidad (UNA sola vez). IMPORTANTE: lo que aparece en "faltan" NO está guardado, aunque el cliente lo haya dicho antes en la conversación — NUNCA le digas que ya lo tienes ni lo des por registrado: pídeselo de nuevo (mira "en_libreta" para saber qué hay de verdad).${avisoCosto}`;
         if (zonaDebil && !pinFinal) {
           return "Datos completos, pero la dirección NO se reconoció bien en el mapa de zonas: muestra al cliente lo que quedó guardado (dirección y referencia, tal cual) y pídele UNA sola vez su ubicación por el clip 📎 o un link de Google Maps para ubicarlo exacto; si no sabe cómo o no responde, sigue sin insistir (el repartidor puede llamarlo)." + avisoCosto + " Cierra diciendo que un asesor confirma el despacho y el pago.";
         }
@@ -3188,7 +3202,7 @@ Deno.serve(async (req) => {
         texto: tr?.texto ?? null, ts: new Date().toISOString(),
       });
     }
-    return Response.json({ status: "ok", function: "copilot-webhook", version: "v93-refinar-no-es-mudarse", mode: MODE, mode_raw: MODE_RAW, model: MODEL, llm_configured: !!anthropic, wati_send_configured: !!(WATI_API_TOKEN && WATI_API_BASE), inventario_configurado: !!(SHOPIFY_ADMIN_TOKEN && SHOPIFY_ADMIN_API_BASE), resolve_configured: !!RESOLVE_SECRET, webhook_key_es_default: WEBHOOK_KEY_ES_DEFAULT, handoff_assist_min: HANDOFF_ASSIST_MIN, handoff_cold_hours: HANDOFF_COLD_HOURS, debounce_ms: DEBOUNCE_MS, sesion_gap_dias: SESION_GAP_DIAS, burbujas: BURBUJAS, burbuja_ms: BURBUJA_MS, audio_puente: AUDIO_PUENTE, sweep: SWEEP_MODE, sweep_espera_min: SWEEP_ESPERA_MIN, stt: STT_MODE, stt_raw: STT_RAW, stt_configurado: !!OPENAI_API_KEY, stt_model: STT_MODEL, busqueda_shadow: BUSQUEDA_SHADOW, busqueda_mcp: BUSQUEDA_MCP, busqueda_mcp_limit: BUSQUEDA_MCP_LIMIT, catalog_mcp_url: CATALOG_MCP_URL, ucp_profile_url: UCP_PROFILE_URL, live_targets: MODE === "live" ? (LIVE_ALL ? "all" : LIVE_ALLOWLIST.length) : 0, ts: new Date().toISOString() });
+    return Response.json({ status: "ok", function: "copilot-webhook", version: "v94-verdad-de-la-libreta", mode: MODE, mode_raw: MODE_RAW, model: MODEL, llm_configured: !!anthropic, wati_send_configured: !!(WATI_API_TOKEN && WATI_API_BASE), inventario_configurado: !!(SHOPIFY_ADMIN_TOKEN && SHOPIFY_ADMIN_API_BASE), resolve_configured: !!RESOLVE_SECRET, webhook_key_es_default: WEBHOOK_KEY_ES_DEFAULT, handoff_assist_min: HANDOFF_ASSIST_MIN, handoff_cold_hours: HANDOFF_COLD_HOURS, debounce_ms: DEBOUNCE_MS, sesion_gap_dias: SESION_GAP_DIAS, burbujas: BURBUJAS, burbuja_ms: BURBUJA_MS, audio_puente: AUDIO_PUENTE, sweep: SWEEP_MODE, sweep_espera_min: SWEEP_ESPERA_MIN, stt: STT_MODE, stt_raw: STT_RAW, stt_configurado: !!OPENAI_API_KEY, stt_model: STT_MODEL, busqueda_shadow: BUSQUEDA_SHADOW, busqueda_mcp: BUSQUEDA_MCP, busqueda_mcp_limit: BUSQUEDA_MCP_LIMIT, catalog_mcp_url: CATALOG_MCP_URL, ucp_profile_url: UCP_PROFILE_URL, live_targets: MODE === "live" ? (LIVE_ALL ? "all" : LIVE_ALLOWLIST.length) : 0, ts: new Date().toISOString() });
   }
   if (req.method !== "POST") return Response.json({ error: "method_not_allowed" }, { status: 405 });
   if (url.searchParams.get("key") !== WEBHOOK_KEY) return Response.json({ error: "forbidden" }, { status: 403 });
