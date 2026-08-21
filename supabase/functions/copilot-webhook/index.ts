@@ -753,7 +753,7 @@ LOGÍSTICA, PAGOS Y DATOS DE LA TIENDA (envíos, ubicación, horarios, métodos 
 CAPTURA DE DATOS DE ENTREGA (cuando el cliente quiere ENVÍO a domicilio)
 - Cuando el cliente decida COMPRAR y quiera ENVÍO a domicilio (o pida coordinar la entrega de una compra que está cerrando contigo), captura con naturalidad los datos de entrega: la dirección completa (corregimiento o barrio, calle, edificio o casa) y un punto de referencia.
 - PIN/UBICACIÓN (clip 📎 de WhatsApp o link de Maps) — es un REFUERZO, no lo pidas de entrada: pídelo UNA sola vez únicamente cuando guardar_datos_envio te indique que la dirección NO se reconoció o quedó incompleta. Si el cliente no responde, no sabe cómo compartirla o no quiere, sigue adelante sin insistir (el repartidor puede llamarlo al llegar).
-- Si el cliente comparte su ubicación por el clip, te llegará como un mensaje "[el cliente compartió su ubicación 📍]" con un link de Maps: guárdalo DE INMEDIATO con guardar_datos_envio (campo maps_url, el link tal cual) y confírmale que quedó registrada. Si en cambio envía un código Plus Code (patrón tipo "XFQM+5W"): ese código no lo puedes convertir en ubicación — dile con honestidad que no puedes ubicarlo con ese código y pídele UNA vez la ubicación por el clip 📎 o un link de Google Maps; si no, sigue sin insistir.
+- Si el cliente comparte su ubicación por el clip, te llegará como un mensaje "[el cliente compartió su ubicación 📍]" con un link de Maps: guárdalo DE INMEDIATO con guardar_datos_envio (campo maps_url, el link tal cual) y confírmale que quedó registrada. Si en cambio envía un código Plus Code (patrón tipo "XFQM+5W" o "XFQM+5W Panamá"): guárdalo con guardar_datos_envio en el campo direccion tal cual lo escribió (el sistema lo resuelve en el mapa); si la tool responde que la zona no se pudo resolver, ahí sí pídele UNA vez la ubicación por el clip 📎 o un link de Google Maps, y si no, sigue sin insistir.
 - Cada dato que el cliente dé, guárdalo AL MOMENTO con guardar_datos_envio (puedes llamarla varias veces a medida que los da). La herramienta te dice qué falta: repregunta SOLO eso, UNA vez, sin convertirlo en formulario. Si el cliente lo ignora o cambia de tema, no insistas.
 - Si guardar_datos_envio devuelve la zona con costo, confírmalo tal cual (es el mismo dato determinista de tarifa_entrega). Si la zona sale del INTERIOR, aplica las reglas del interior (Servientrega: retiro o domicilio, costos de info_tienda) — no ofrezcas flota propia.
 - Al completar (dirección + referencia): MUESTRA al cliente lo que quedó guardado, tal cual y en 1-2 líneas (la dirección, la referencia y "con ubicación 📍" si compartió el pin), para que pueda corregir si algo quedó mal, y di que un asesor confirma el despacho y el pago. Tú NO despachas, NO cobras y NO prometes hora de entrega — eso lo lanza el asesor.
@@ -2958,7 +2958,7 @@ Deno.serve(async (req) => {
         texto: tr?.texto ?? null, ts: new Date().toISOString(),
       });
     }
-    return Response.json({ status: "ok", function: "copilot-webhook", version: "v82-envio-resiliente", mode: MODE, mode_raw: MODE_RAW, model: MODEL, llm_configured: !!anthropic, wati_send_configured: !!(WATI_API_TOKEN && WATI_API_BASE), inventario_configurado: !!(SHOPIFY_ADMIN_TOKEN && SHOPIFY_ADMIN_API_BASE), resolve_configured: !!RESOLVE_SECRET, webhook_key_es_default: WEBHOOK_KEY_ES_DEFAULT, handoff_assist_min: HANDOFF_ASSIST_MIN, handoff_cold_hours: HANDOFF_COLD_HOURS, debounce_ms: DEBOUNCE_MS, sesion_gap_dias: SESION_GAP_DIAS, burbujas: BURBUJAS, burbuja_ms: BURBUJA_MS, audio_puente: AUDIO_PUENTE, sweep: SWEEP_MODE, sweep_espera_min: SWEEP_ESPERA_MIN, stt: STT_MODE, stt_raw: STT_RAW, stt_configurado: !!OPENAI_API_KEY, stt_model: STT_MODEL, busqueda_shadow: BUSQUEDA_SHADOW, busqueda_mcp: BUSQUEDA_MCP, busqueda_mcp_limit: BUSQUEDA_MCP_LIMIT, catalog_mcp_url: CATALOG_MCP_URL, ucp_profile_url: UCP_PROFILE_URL, live_targets: MODE === "live" ? (LIVE_ALL ? "all" : LIVE_ALLOWLIST.length) : 0, ts: new Date().toISOString() });
+    return Response.json({ status: "ok", function: "copilot-webhook", version: "v83-asistencia-continua", mode: MODE, mode_raw: MODE_RAW, model: MODEL, llm_configured: !!anthropic, wati_send_configured: !!(WATI_API_TOKEN && WATI_API_BASE), inventario_configurado: !!(SHOPIFY_ADMIN_TOKEN && SHOPIFY_ADMIN_API_BASE), resolve_configured: !!RESOLVE_SECRET, webhook_key_es_default: WEBHOOK_KEY_ES_DEFAULT, handoff_assist_min: HANDOFF_ASSIST_MIN, handoff_cold_hours: HANDOFF_COLD_HOURS, debounce_ms: DEBOUNCE_MS, sesion_gap_dias: SESION_GAP_DIAS, burbujas: BURBUJAS, burbuja_ms: BURBUJA_MS, audio_puente: AUDIO_PUENTE, sweep: SWEEP_MODE, sweep_espera_min: SWEEP_ESPERA_MIN, stt: STT_MODE, stt_raw: STT_RAW, stt_configurado: !!OPENAI_API_KEY, stt_model: STT_MODEL, busqueda_shadow: BUSQUEDA_SHADOW, busqueda_mcp: BUSQUEDA_MCP, busqueda_mcp_limit: BUSQUEDA_MCP_LIMIT, catalog_mcp_url: CATALOG_MCP_URL, ucp_profile_url: UCP_PROFILE_URL, live_targets: MODE === "live" ? (LIVE_ALL ? "all" : LIVE_ALLOWLIST.length) : 0, ts: new Date().toISOString() });
   }
   if (req.method !== "POST") return Response.json({ error: "method_not_allowed" }, { status: 405 });
   if (url.searchParams.get("key") !== WEBHOOK_KEY) return Response.json({ error: "forbidden" }, { status: 403 });
@@ -3384,10 +3384,24 @@ Deno.serve(async (req) => {
       // Anti-colisión (sigue vivo, y es por contexto): si el asesor escribe mientras el LLM piensa, la
       // asistencia se aborta antes de enviar (motivo asesor_volvio en ejecutarAsistencia).
       const tocaPagos = PAGOS_ASESOR_RE.test(rafagaHandoff);
+      // v83 — CONTINUIDAD DE ASISTENCIA (caso real 20-ago): el bot asistió y PREGUNTÓ ("¿el sector
+      // exacto?"); el cliente respondió "En Ricardo Perez" y el filtro de abajo lo calló porque una
+      // respuesta de dirección no "parece" pregunta básica ni de tool. Si el ÚLTIMO en hablar fue el
+      // BOT (asistencia/captura, no un asesor: los mensajes del asesor entran con model null) hace
+      // <30 min, la respuesta del cliente es la continuación de ESA conversación y el bot debe
+      // terminar lo que empezó. Los guardarraíles de contexto (interrumpe/HANDOFF_RE/pagos) siguen
+      // mandando: están AND-eados abajo.
+      let continuaBot = false;
+      {
+        const { data: ua } = await sb.from("messages").select("model,mode,created_at").eq("conversation_id", conv.id).eq("role", "assistant").order("created_at", { ascending: false }).limit(1);
+        const u = ua?.[0] as any;
+        continuaBot = !!u && !!u.model && u.model !== "fallback" && u.mode === "live"
+          && (Date.now() - new Date(u.created_at).getTime()) < 30 * 60000;
+      }
       const puedeAsistir = !frio
         && conv.turns_today <= MAX_TURNS_DIA && !interrumpe && !HANDOFF_RE.test(rafagaHandoff)
         && !tocaPagos
-        && (BASIC_INFO_RE.test(texto) || NEEDS_TOOL_RE.test(texto));
+        && (BASIC_INFO_RE.test(texto) || NEEDS_TOOL_RE.test(texto) || continuaBot);
 
       if (frio) {
         // COLD-RETURN: el asesor lleva >umbral sin escribir → conversación fría. El bot la retoma por
@@ -3401,7 +3415,8 @@ Deno.serve(async (req) => {
         // ASISTENCIA: tarea aparte en segundo plano. v50 — el bot hace PREVENTA grounded (precio/stock vía
         // buscar_producto, info de tienda, puntos del interior, estado de pedido), pero NO saca la
         // conversación de handoff, NO cierra/coordina la venta y NO le quita el caso al asesor.
-        correrEnSegundoPlano(ejecutarAsistencia(conv, waId, texto, contenido, userCreatedAt, ultHumano as string, minsSinHumano, t0));
+        correrEnSegundoPlano(ejecutarAsistencia(conv, waId, texto, contenido, userCreatedAt, ultHumano as string, minsSinHumano, t0, true,
+          (BASIC_INFO_RE.test(texto) || NEEDS_TOOL_RE.test(texto)) ? "reactiva" : "continuacion")); // v83: trazabilidad de por qué asistió
         return Response.json({ ok: true, asistencia: true });
       } else {
         // Asesor activo hace poco (<umbral), no es pregunta básica, o handoff sin asesor → callar (v30).
