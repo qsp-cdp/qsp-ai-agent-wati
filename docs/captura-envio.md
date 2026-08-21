@@ -1,6 +1,6 @@
-# Captura de datos de entrega con el agente AI (P3-a / P3-b, copilot v74)
+# Captura de datos de entrega con el agente AI (P3-a / P3-b / v100)
 
-Dos formas de que el bot capture la dirección, referencia y pin del cliente y los deje en la
+Tres formas de que el bot capture la dirección, referencia y pin del cliente y los deje en la
 **libreta `contacts`** — la misma que lee `wati-order`, así el asesor lanza el despacho con la
 plantilla/chatbot **"Despachar a Shipday"** sin volver a digitar nada. El bot **nunca** crea la
 orden en Shipday: el despacho siempre lo lanza el asesor.
@@ -21,6 +21,22 @@ el copiloto captura los datos de forma natural (nueva tool `guardar_datos_envio`
   los confirma tal cual; si la zona es del interior aplica las reglas de Servientrega.
 - Al completar: confirma en una línea y avisa que **un asesor confirma despacho y pago**.
 - Los links cortos de Maps (maps.app.goo.gl) se guardan crudos: `wati-order` los resuelve al despachar.
+
+## v100 — El asesor pide la dirección y el bot captura solo (sin configurar nada)
+
+El camino sin fricción, pensado porque editar atributos o lanzar flujos desde el inbox resultó
+tedioso: **el asesor no hace nada distinto**. Si en un handoff el asesor escribe algo como
+"¿me confirma su dirección de entrega?" / "¿a dónde se lo enviamos?" / "me regala un punto de
+referencia", el copiloto lo reconoce (`PIDE_ENVIO_RE`, sobre el último mensaje del equipo, <30 min)
+y trata la siguiente respuesta del cliente como la dirección — **aunque venga cruda**, sin la
+palabra "dirección" ("Calle 50, edificio Torre A, apto 3"). La guarda con `guardar_datos_envio`,
+confirma zona/costo y espeja a la ficha de WATI, igual que las otras dos vías.
+
+- Guardarraíles: NO aplica si el cliente interrumpe con reclamo/pago/queja (los AND del gate de
+  asistencia siguen mandando), y si el cliente cambió de tema el bot no fuerza la captura.
+- Trazabilidad: `asesor_pidio_envio` en jobs y origen `asesor_pidio_envio` en `asistencia_handoff`.
+- El diccionario de frases del asesor se está refinando con minería de conversaciones reales
+  (`docs/diccionario-frases.md`, en preparación).
 
 ## P3-b — Invocar al agente durante atención humana (handoff)
 
