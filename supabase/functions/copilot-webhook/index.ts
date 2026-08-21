@@ -1918,21 +1918,78 @@ function coordsDeMaps(url: string): { lat: number; lng: number } | null {
   return (isFinite(lat) && isFinite(lng) && Math.abs(lat) <= 90 && Math.abs(lng) <= 180) ? { lat, lng } : null;
 }
 
+// v89 — JERARQUÍA ADMINISTRATIVA (provincia › distrito › corregimiento) para la ficha de WATI y la
+// libreta. Las tres vías del resolvedor dan distinto: el DICCIONARIO metro ya devuelve `ubicacion`
+// completa; el PIN (polígonos) y GOOGLE solo devuelven el corregimiento; el INTERIOR solo la provincia.
+// Con el corregimiento en mano, el propio diccionario completa provincia y distrito (verificado:
+// resolver_tarifa_v2('betania') → Panamá › Panamá › Betania). Nunca inventa: lo que no resuelve, vacío.
+async function jerarquiaDeLugar(zona: any): Promise<{ provincia: string; distrito: string; corregimiento: string }> {
+  const vacio = { provincia: "", distrito: "", corregimiento: "" };
+  if (!zona || zona.estado !== "ok") return vacio;
+  const u = zona.ubicacion;
+  if (u?.corregimiento) {
+    return { provincia: String(u.provincia ?? ""), distrito: String(u.distrito ?? ""), corregimiento: String(u.corregimiento) };
+  }
+  // Interior: el diccionario no maneja distrito/corregimiento, solo la provincia (Servientrega).
+  if (String(zona.ambito) === "interior") return { ...vacio, provincia: String(zona.provincia ?? "") };
+  // Pin o Google: `lugar` trae el corregimiento (v85) → el diccionario completa el resto.
+  const correg = String(zona.lugar ?? "").trim();
+  if (!correg) return vacio;
+  try {
+    const { data } = await sb.rpc("resolver_tarifa_v2", { p_lugar: correg });
+    const uu = (data as any)?.ubicacion;
+    if (uu?.corregimiento) {
+      return { provincia: String(uu.provincia ?? ""), distrito: String(uu.distrito ?? ""), corregimiento: String(uu.corregimiento) };
+    }
+  } catch { /* la jerarquía es un extra: sin ella la captura sigue válida */ }
+  return { ...vacio, corregimiento: correg }; // al menos el corregimiento, que sí conocemos
+}
+
 // v75 — ESPEJO a los ATRIBUTOS DE CONTACTO DE WATI, para que el asesor vea los datos de entrega en la
 // ficha del contacto en el inbox (además de la libreta `contacts`, que es la que alimenta el despacho).
-// Mismo endpoint que guardarLead. best-effort: nunca rompe la captura. REQUIERE que estos atributos
-// existan en WATI → Contactos → Atributos: direccion_envio, referencia_envio, pin_envio, zona_envio.
-async function espejarEnvioWati(waId: string, d: { direccion: string; referencia: string; pinUrl: string; zonaTxt: string }): Promise<void> {
+// Mismo endpoint que guardarLead. best-effort: nunca rompe la captura.
+//
+// v89 — ESQUEMA UNIFICADO. Se descubrió (21-ago, leyendo fichas reales) que un SEGUNDO sistema escribía
+// otros atributos de envío para el mismo cliente: `maps_envio` (wati-address) y la jerarquía +
+// `envio_resumen`/`envio_estado` (wati-mirror, en lote). Resultado: la ficha mostraba DOS direcciones y
+// DOS pines distintos y el asesor no sabía cuál valía. Decisión del negocio: el copiloto ADOPTA ese
+// esquema y pasa a ser el único escritor en vivo. Formato de `envio_resumen`/`envio_estado` copiado
+// LITERALMENTE de wati-mirror (mismos separadores › — ·, mismos textos) para que las ~4,340 fichas ya
+// espejadas y las nuevas se vean idénticas.
+async function espejarEnvioWati(waId: string, d: {
+  direccion: string; referencia: string; pinUrl: string; zonaTxt: string;
+  provincia?: string; distrito?: string; corregimiento?: string; completo?: boolean;
+}): Promise<void> {
   if (!WATI_API_TOKEN || !WATI_API_BASE) return;
-  // v75.1 — SIEMPRE se escriben los 4 atributos: un campo vacío se manda como "-" para PISAR el valor
+  // v75.1 — SIEMPRE se escriben TODOS los atributos: un campo vacío se manda como "-" para PISAR el valor
   // anterior en WATI. Si se omitiera (bug original), la ficha conservaba el pin/referencia VIEJOS aunque
   // la libreta ya los hubiera limpiado tras un cambio de dirección — el asesor veía un pin obsoleto.
   const val = (s: string) => (s ? s.slice(0, 250) : "-");
+  const lleno = (s?: string) => !!String(s ?? "").trim();
+  // Formato de wati-mirror, al pie de la letra: "dirección — referencia  ·  Provincia › Distrito › Corregimiento"
+  const jerarquia = [d.provincia, d.distrito, d.corregimiento].filter(lleno).map((s) => String(s).trim()).join(" › ");
+  const cuerpo = [d.direccion, d.referencia].filter(lleno).map((s) => String(s).trim()).join(" — ");
+  const resumen = [cuerpo, jerarquia].filter(Boolean).join("  ·  ").slice(0, 250);
+  const estado = !cuerpo ? "" : (lleno(d.pinUrl)
+    ? "\u{1F4CD} Lista para despacho (con pin)"
+    : "\u{1F4DD} Sin pin — confirmar ubicacion con el cliente");
   const params: { name: string; value: string }[] = [
     { name: "direccion_envio", value: val(d.direccion) },
     { name: "referencia_envio", value: val(d.referencia) },
     { name: "pin_envio", value: val(d.pinUrl) },
+    // `maps_envio` es el nombre que usaba el sistema anterior para el MISMO pin: se escribe igual para
+    // que ninguna ficha (ni plantilla que lo lea) quede con un pin viejo contradiciendo a pin_envio.
+    { name: "maps_envio", value: val(d.pinUrl) },
     { name: "zona_envio", value: val(d.zonaTxt) },
+    { name: "provincia_envio", value: val(String(d.provincia ?? "")) },
+    { name: "distrito_envio", value: val(String(d.distrito ?? "")) },
+    { name: "corregimiento_envio", value: val(String(d.corregimiento ?? "")) },
+    { name: "envio_resumen", value: val(resumen) },
+    { name: "envio_estado", value: val(estado) },
+    // El sistema anterior los dejaba fijos en "completo" + la fecha de aquella captura: sin refrescarlos
+    // la ficha afirmaría "completo" sobre datos que ya cambiaron.
+    { name: "envio_datos", value: d.completo === undefined ? "-" : (d.completo ? "completo" : "faltan datos") },
+    { name: "envio_fecha", value: new Date().toISOString().slice(0, 10) },
   ];
   try {
     const r = await fetch(`${WATI_API_BASE}/api/v1/updateContactAttributes/${encodeURIComponent(waId)}`, {
@@ -2010,7 +2067,9 @@ async function guardarDatosEnvio(waId: string, input: any): Promise<string> {
     if (dirFinal) {
       try {
         const { data: z } = await sb.rpc("resolver_tarifa_v2", { p_lugar: dirFinal });
-        if (z) zona = { estado: (z as any).estado ?? null, ambito: (z as any).ambito ?? null, zona: (z as any).zona ?? null, tarifa_usd: (z as any).tarifa_usd ?? null, metodo: (z as any).metodo ?? null };
+        // v89 — se conservan `ubicacion` (provincia/distrito/corregimiento del diccionario, para la ficha
+        // de WATI) y `provincia` (la raíz, único dato de jerarquía que trae el interior).
+        if (z) zona = { estado: (z as any).estado ?? null, ambito: (z as any).ambito ?? null, zona: (z as any).zona ?? null, tarifa_usd: (z as any).tarifa_usd ?? null, metodo: (z as any).metodo ?? null, ubicacion: (z as any).ubicacion ?? null, provincia: (z as any).provincia ?? null };
       } catch { /* la zona es un extra: sin ella la captura sigue válida */ }
     }
     // v80/v86 — EL PIN MANDA (de verdad y PRIMERO): un pin FRESCO en ESTA llamada define la zona y el
@@ -2062,7 +2121,23 @@ async function guardarDatosEnvio(waId: string, input: any): Promise<string> {
       : (!cambioDireccion && existente?.latitude != null) ? `https://maps.google.com/?q=${existente.latitude},${existente.longitude}`
       : (!cambioDireccion && existente?.maps_url) ? String(existente.maps_url) : "";
     const zonaTxt = zona ? [(zona as any).zona ?? (zona as any).estado, (zona as any).tarifa_usd != null ? `$${(zona as any).tarifa_usd}` : null, (zona as any).lugar ?? null].filter(Boolean).join(" · ") : "";
-    await espejarEnvioWati(digitos, { direccion: dirFinal, referencia: refFinal, pinUrl, zonaTxt });
+    // v89 — JERARQUÍA a la libreta y a la ficha. Las columnas provincia/distrito/corregimiento de
+    // `contacts` existen desde el sistema anterior (pobladas en 4,340 contactos) y la captura del
+    // copiloto no las escribía: quedaban congeladas mientras la dirección cambiaba. Se escriben en un
+    // update aparte porque la jerarquía solo se conoce DESPUÉS de resolver la zona (la fila principal ya
+    // se guardó arriba). Best-effort: un fallo aquí no invalida la captura, que es lo que importa.
+    const jer = await jerarquiaDeLugar(zona);
+    if (jer.provincia || jer.distrito || jer.corregimiento) {
+      try {
+        await sb.from("contacts")
+          .update({ provincia: jer.provincia || null, distrito: jer.distrito || null, corregimiento: jer.corregimiento || null })
+          .eq("phone_digits", digits8);
+      } catch { /* la jerarquía es un extra */ }
+    }
+    await espejarEnvioWati(digitos, {
+      direccion: dirFinal, referencia: refFinal, pinUrl, zonaTxt,
+      provincia: jer.provincia, distrito: jer.distrito, corregimiento: jer.corregimiento, completo,
+    });
     // v78 — ¿el bot sigue ESPERANDO algo del cliente? (faltan datos, o pidió el pin porque la zona no
     // resolvió). Mientras espere, la ventana de captura queda ABIERTA: si un asesor entra a la
     // conversación —aunque sea por error—, la respuesta del cliente con esos datos NO se pierde; el gate
@@ -3010,7 +3085,7 @@ Deno.serve(async (req) => {
         texto: tr?.texto ?? null, ts: new Date().toISOString(),
       });
     }
-    return Response.json({ status: "ok", function: "copilot-webhook", version: "v88-fase0-tienda", mode: MODE, mode_raw: MODE_RAW, model: MODEL, llm_configured: !!anthropic, wati_send_configured: !!(WATI_API_TOKEN && WATI_API_BASE), inventario_configurado: !!(SHOPIFY_ADMIN_TOKEN && SHOPIFY_ADMIN_API_BASE), resolve_configured: !!RESOLVE_SECRET, webhook_key_es_default: WEBHOOK_KEY_ES_DEFAULT, handoff_assist_min: HANDOFF_ASSIST_MIN, handoff_cold_hours: HANDOFF_COLD_HOURS, debounce_ms: DEBOUNCE_MS, sesion_gap_dias: SESION_GAP_DIAS, burbujas: BURBUJAS, burbuja_ms: BURBUJA_MS, audio_puente: AUDIO_PUENTE, sweep: SWEEP_MODE, sweep_espera_min: SWEEP_ESPERA_MIN, stt: STT_MODE, stt_raw: STT_RAW, stt_configurado: !!OPENAI_API_KEY, stt_model: STT_MODEL, busqueda_shadow: BUSQUEDA_SHADOW, busqueda_mcp: BUSQUEDA_MCP, busqueda_mcp_limit: BUSQUEDA_MCP_LIMIT, catalog_mcp_url: CATALOG_MCP_URL, ucp_profile_url: UCP_PROFILE_URL, live_targets: MODE === "live" ? (LIVE_ALL ? "all" : LIVE_ALLOWLIST.length) : 0, ts: new Date().toISOString() });
+    return Response.json({ status: "ok", function: "copilot-webhook", version: "v89-ficha-unificada", mode: MODE, mode_raw: MODE_RAW, model: MODEL, llm_configured: !!anthropic, wati_send_configured: !!(WATI_API_TOKEN && WATI_API_BASE), inventario_configurado: !!(SHOPIFY_ADMIN_TOKEN && SHOPIFY_ADMIN_API_BASE), resolve_configured: !!RESOLVE_SECRET, webhook_key_es_default: WEBHOOK_KEY_ES_DEFAULT, handoff_assist_min: HANDOFF_ASSIST_MIN, handoff_cold_hours: HANDOFF_COLD_HOURS, debounce_ms: DEBOUNCE_MS, sesion_gap_dias: SESION_GAP_DIAS, burbujas: BURBUJAS, burbuja_ms: BURBUJA_MS, audio_puente: AUDIO_PUENTE, sweep: SWEEP_MODE, sweep_espera_min: SWEEP_ESPERA_MIN, stt: STT_MODE, stt_raw: STT_RAW, stt_configurado: !!OPENAI_API_KEY, stt_model: STT_MODEL, busqueda_shadow: BUSQUEDA_SHADOW, busqueda_mcp: BUSQUEDA_MCP, busqueda_mcp_limit: BUSQUEDA_MCP_LIMIT, catalog_mcp_url: CATALOG_MCP_URL, ucp_profile_url: UCP_PROFILE_URL, live_targets: MODE === "live" ? (LIVE_ALL ? "all" : LIVE_ALLOWLIST.length) : 0, ts: new Date().toISOString() });
   }
   if (req.method !== "POST") return Response.json({ error: "method_not_allowed" }, { status: 405 });
   if (url.searchParams.get("key") !== WEBHOOK_KEY) return Response.json({ error: "forbidden" }, { status: 403 });
@@ -3306,7 +3381,19 @@ Deno.serve(async (req) => {
             const { data: cLib } = await sb.from("contacts").select("address,referencia").eq("phone_digits", waIdP.slice(-8)).order("updated_at", { ascending: false }).limit(1);
             const lib = (cLib ?? [])[0] as any;
             const zonaTxt = zOk ? [(zp as any).zona, (zp as any).tarifa_usd != null ? `$${(zp as any).tarifa_usd}` : null, (zp as any).corregimiento ?? null].filter(Boolean).join(" · ") : "";
-            await espejarEnvioWati(waIdP, { direccion: String(lib?.address ?? ""), referencia: String(lib?.referencia ?? ""), pinUrl: `https://maps.google.com/?q=${latP},${lngP}`, zonaTxt });
+            // v89 — el pin también actualiza la jerarquía: es la vía MÁS precisa (polígono oficial), así que
+            // la ficha y la libreta deben reflejar el corregimiento donde el cliente está de verdad.
+            const jerP = zOk ? await jerarquiaDeLugar({ estado: "ok", ambito: (zp as any).ambito ?? "metro", lugar: (zp as any).corregimiento ?? null }) : { provincia: "", distrito: "", corregimiento: "" };
+            if (jerP.provincia || jerP.distrito || jerP.corregimiento) {
+              await sb.from("contacts")
+                .update({ provincia: jerP.provincia || null, distrito: jerP.distrito || null, corregimiento: jerP.corregimiento || null })
+                .eq("phone_digits", waIdP.slice(-8));
+            }
+            await espejarEnvioWati(waIdP, {
+              direccion: String(lib?.address ?? ""), referencia: String(lib?.referencia ?? ""),
+              pinUrl: `https://maps.google.com/?q=${latP},${lngP}`, zonaTxt,
+              provincia: jerP.provincia, distrito: jerP.distrito, corregimiento: jerP.corregimiento,
+            });
           } catch (e) { await log("error", false, { waId: waIdP, fase: "pin_zona_espejo", error: String(e).slice(0, 150) }); }
         })());
       }

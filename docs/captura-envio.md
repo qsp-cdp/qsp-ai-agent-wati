@@ -51,19 +51,49 @@ Crear en WATI un chatbot/flow con un solo paso **Webhook / API call**:
 - Body JSON: `{"waId": "{{contact.phone}}"}` (o la variable equivalente del número del contacto).
 - El asesor lo dispara desde el inbox igual que "Despachar a Shipday". Nada más que configurar.
 
-## Atributos de contacto en WATI (v75)
+## Atributos de contacto en WATI (v75 · esquema unificado en v89)
 
 Además de guardar en la libreta `contacts` (lo que alimenta el despacho), la captura **espeja**
 los datos a los atributos del contacto en WATI para que el asesor los vea en la ficha del inbox.
-**Requisito:** crear estos atributos en **WATI → Contactos → Atributos** (si no existen, WATI ignora
-el valor):
+Todos ya existen en la cuenta (los creó el sistema anterior); si alguno faltara, se crea en
+**WATI → Contactos → Atributos** — WATI ignora en silencio el valor de un atributo inexistente.
 
 | Atributo | Contenido |
 |---|---|
 | `direccion_envio` | dirección de entrega |
 | `referencia_envio` | punto de referencia |
 | `pin_envio` | link de Google Maps del pin (clicable) |
-| `zona_envio` | zona + costo resueltos (ej. `Z1 Centro · $6`) |
+| `maps_envio` | **el mismo pin** — nombre que usaba el sistema anterior (ver abajo) |
+| `zona_envio` | zona + costo + corregimiento (ej. `Z1 Centro · $6 · Betania`) |
+| `provincia_envio` · `distrito_envio` · `corregimiento_envio` | jerarquía administrativa |
+| `envio_resumen` | `dirección — referencia  ·  Provincia › Distrito › Corregimiento` |
+| `envio_estado` | `📍 Lista para despacho (con pin)` o `📝 Sin pin — confirmar ubicacion con el cliente` |
+| `envio_datos` | `completo` / `faltan datos` |
+| `envio_fecha` | fecha de la captura (`YYYY-MM-DD`) |
+
+Un campo sin valor se escribe como `-`, para **pisar** el dato viejo (v75.1): si se omitiera, la ficha
+conservaría el pin o la referencia del domicilio anterior.
+
+### Por qué el esquema unificado (v89)
+
+Hasta el 21-ago convivían **dos sistemas** escribiendo direcciones del mismo cliente en WATI:
+
+- el copiloto → `direccion_envio`, `referencia_envio`, `pin_envio`, `zona_envio`;
+- `wati-address` (captura del chatbot anterior) → `maps_envio`, `envio_datos`, `envio_fecha`;
+- `wati-mirror` (espejo en lote, manual) → jerarquía + `envio_resumen` + `envio_estado`.
+
+Resultado real observado en una ficha: **dos direcciones y dos pines distintos a la vez**
+(`direccion_envio` con una dirección y `envio_resumen` con otra; `pin_envio` con el pin nuevo y
+`maps_envio` con uno viejo). El asesor no tenía forma de saber cuál valía.
+
+Decisión del negocio: el copiloto **adopta el esquema completo** y queda como único escritor en vivo.
+El formato de `envio_resumen`/`envio_estado` se copió **literalmente** de `wati-mirror` (mismos
+separadores `›` `—` `·`, mismos textos) para que las ~4,340 fichas ya espejadas y las nuevas se vean
+iguales. `wati-address` queda retirada.
+
+La jerarquía sale del resolvedor, sin inventar nada: el **diccionario** ya devuelve
+provincia/distrito/corregimiento; el **pin** y **Google** devuelven el corregimiento y el diccionario
+completa el resto (`jerarquiaDeLugar`). Lo que no resuelve, queda vacío.
 
 **Corrección de dirección (v75):** si el cliente da una dirección NUEVA distinta a la registrada y no
 manda pin/referencia nuevos, el pin y la referencia viejos se **limpian** — Shipday geocodifica la
