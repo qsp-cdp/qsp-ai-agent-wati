@@ -774,6 +774,12 @@ IMÁGENES (el cliente envía una foto o captura)
 - Si te llega una imagen, OBSÉRVALA y actúa según lo que muestre:
   - PRODUCTO (captura de nuestro ecommerce o de Instagram, foto de un toner, tinta, impresora o su caja): identifica la MARCA y el MODELO visibles y úsalos para llamar buscar_producto. NUNCA des un precio "leído" de la imagen ni inventes el modelo — el precio y la disponibilidad SIEMPRE salen de buscar_producto. Si no logras leer el modelo con claridad, descríbelo en una línea y pide que confirme el modelo, o deriva a un asesor.
   - COMPROBANTE DE PAGO, transferencia, factura, RUC/cédula o cualquier dato fiscal: NO lo proceses ni repitas datos; di en UNA línea que un asesor lo revisa (anti-interrupción).
+
+DOCUMENTOS PDF (el cliente adjunta una factura, cotización o lista)
+- Puedes LEER el PDF que el cliente adjunte. El caso típico es "cotízame lo mismo" con una factura de otro proveedor o una cotización vieja: extrae CADA línea (producto, modelo, cantidad) y busca CADA UNA con buscar_producto; cotiza con calcular_cotizacion usando NUESTROS precios y el stock de hoy.
+- NUNCA uses los precios del documento: son de otro proveedor o de otra fecha. Tampoco des por vendido un producto que no esté en nuestro catálogo — si no aparece, dilo y ofrécele que un asesor confirme si podemos conseguirlo.
+- Si un modelo del documento no se lee con claridad o no calza con ningún resultado, PREGUNTA por ese antes de cotizarlo (misma regla que los códigos dudosos de una nota de voz): un modelo mal identificado manda el cartucho equivocado.
+- Si el PDF es un COMPROBANTE DE PAGO o trae datos fiscales (RUC, cédula, razón social), aplica la anti-interrupción: no lo proceses, una línea diciendo que un asesor lo revisa.
   - Si no entiendes la imagen o no es de la tienda: discúlpate breve y deriva a un asesor.
 
 AUDIOS / NOTAS DE VOZ
@@ -2422,7 +2428,7 @@ async function estadoPedido(waId: string = ""): Promise<string> {
   }
 }
 
-async function responderLLM(history: { role: string; content: string; model?: string | null; created_at?: string | null }[], forceTool: boolean, imagenes?: { b64: string; mediaType: string }[] | null, imagenFallo?: boolean, waId: string = "", atributos: Record<string, string> = {}, linksTracked: Record<string, string> = {}, modoAsistencia: boolean = false, sufijoExtra: string = "", modoCaptura: boolean = false): Promise<{ text: string | null; toolCalls: unknown[]; tokensIn: number; tokensOut: number; cacheRead: number; cacheWrite: number; agotado?: boolean }> {
+async function responderLLM(history: { role: string; content: string; model?: string | null; created_at?: string | null }[], forceTool: boolean, imagenes?: { b64: string; mediaType: string }[] | null, imagenFallo?: boolean, waId: string = "", atributos: Record<string, string> = {}, linksTracked: Record<string, string> = {}, modoAsistencia: boolean = false, sufijoExtra: string = "", modoCaptura: boolean = false, pdf?: { b64: string } | null): Promise<{ text: string | null; toolCalls: unknown[]; tokensIn: number; tokensOut: number; cacheRead: number; cacheWrite: number; agotado?: boolean }> {
   if (!anthropic) return { text: null, toolCalls: [], tokensIn: 0, tokensOut: 0, cacheRead: 0, cacheWrite: 0 };
   // La API exige que el primer mensaje sea del usuario: descarta "assistant" al inicio
   // (puede pasar si un asesor escribió primero).
@@ -2508,6 +2514,19 @@ async function responderLLM(history: { role: string; content: string; model?: st
   // v19 (visión) + v49 (ráfaga): adjunta las imágenes del cliente al ÚLTIMO mensaje de usuario. Con el
   // debounce, ese mensaje puede ser texto ("¿estas no hay?") y las fotos venir de mensajes anteriores de
   // la misma ráfaga — se adjuntan TODAS (máx 3) en orden cronológico, antes del texto.
+  // v98 — el PDF se adjunta al último mensaje del cliente, igual que la visión. La instrucción va aquí y
+  // no solo en el prompt porque es donde el modelo tiene el documento delante: el precio del PDF es de
+  // OTRO proveedor o de otra fecha y usarlo sería cotizar fuera de catálogo.
+  if (pdf && messages.length) {
+    const last = messages[messages.length - 1];
+    if (last.role === "user" && typeof last.content === "string") {
+      const cap = (last.content && last.content !== "[documento]" && last.content !== "(vacío)") ? last.content : "";
+      last.content = [
+        { type: "document", source: { type: "base64", media_type: "application/pdf", data: pdf.b64 } },
+        { type: "text", text: (cap ? cap + "\n\n" : "") + "[El cliente adjuntó este PDF.] Si es una factura, cotización o lista de productos y pide algo como \"cotízame lo mismo\": extrae CADA línea (producto, modelo y cantidad) y busca CADA UNA con buscar_producto para cotizar con NUESTRO precio y stock de hoy. NUNCA uses los precios del documento (son de otro proveedor o de otra fecha) ni des por vendido un producto que no aparezca en nuestro catálogo. Si un modelo no lo puedes leer con claridad o no calza con ningún resultado, dilo y pregúntalo — no lo adivines." },
+      ] as any;
+    }
+  }
   if (((imagenes && imagenes.length) || imagenFallo) && messages.length) {
     const last = messages[messages.length - 1];
     if (last.role === "user" && typeof last.content === "string") {
@@ -2892,6 +2911,39 @@ async function transcribirAudio(dataUrl: string): Promise<{ texto: string; ms: n
   }
 }
 
+// v98 — PDF DEL CLIENTE (facturas, cotizaciones de otro proveedor, listas de compra). Hasta ahora un
+// documento caía en el filtro de no-texto y el bot NUNCA lo veía: contestaba a ciegas al "cotízame lo
+// mismo" que venía adjunto. Claude lee PDF de forma nativa, así que solo faltaba traerlo.
+// Mismos guardrails que la visión: allowlist de host (el WATI_API_TOKEN viaja como Bearer aquí) y tope
+// de tamaño. 4.5MB es el mismo techo que consultar_folleto — una factura de tienda pesa mucho menos.
+async function descargarPdfWati(dataUrl: string): Promise<{ b64: string } | null> {
+  if (!dataUrl || !/^https?:\/\//i.test(dataUrl)) return null;
+  try {
+    const host = new URL(dataUrl).hostname.toLowerCase();
+    if (!(host === "wati.io" || host.endsWith(".wati.io"))) {
+      await log("media_host_rechazado", false, { host: host.slice(0, 80), uso: "pdf" });
+      return null;
+    }
+  } catch { return null; }
+  try {
+    const headers: Record<string, string> = WATI_API_TOKEN ? { Authorization: `Bearer ${WATI_API_TOKEN}` } : {};
+    const r = await fetch(dataUrl, { headers, signal: AbortSignal.timeout(20000) });
+    if (!r.ok) { await log("pdf_no_descargado", false, { motivo: `http_${r.status}` }); return null; }
+    const buf = new Uint8Array(await r.arrayBuffer());
+    if (!buf.byteLength || buf.byteLength > 4_500_000) {
+      await log("pdf_no_descargado", false, { motivo: buf.byteLength ? `grande_${buf.byteLength}` : "vacio" });
+      return null;
+    }
+    // Firma real, no la extensión: un .pdf que no empieza con %PDF- rompería la llamada al modelo.
+    if (!(buf[0] === 0x25 && buf[1] === 0x50 && buf[2] === 0x44 && buf[3] === 0x46)) {
+      await log("pdf_no_descargado", false, { motivo: "no_es_pdf" });
+      return null;
+    }
+    let bin = ""; for (let i = 0; i < buf.length; i++) bin += String.fromCharCode(buf[i]);
+    return { b64: btoa(bin) };
+  } catch (e) { await log("pdf_no_descargado", false, { motivo: String(e).slice(0, 100) }); return null; }
+}
+
 async function descargarMediaWati(dataUrl: string): Promise<{ b64: string; mediaType: string } | null> {
   if (!dataUrl || !/^https?:\/\//i.test(dataUrl)) return null;
   // v65 — ALLOWLIST de host: el WATI_API_TOKEN viaja como Bearer en esta descarga; sin este chequeo, una URL
@@ -3274,7 +3326,7 @@ Deno.serve(async (req) => {
         texto: tr?.texto ?? null, ts: new Date().toISOString(),
       });
     }
-    return Response.json({ status: "ok", function: "copilot-webhook", version: "v97-stock-bajo-honesto", mode: MODE, mode_raw: MODE_RAW, model: MODEL, llm_configured: !!anthropic, wati_send_configured: !!(WATI_API_TOKEN && WATI_API_BASE), inventario_configurado: !!(SHOPIFY_ADMIN_TOKEN && SHOPIFY_ADMIN_API_BASE), resolve_configured: !!RESOLVE_SECRET, webhook_key_es_default: WEBHOOK_KEY_ES_DEFAULT, handoff_assist_min: HANDOFF_ASSIST_MIN, handoff_cold_hours: HANDOFF_COLD_HOURS, debounce_ms: DEBOUNCE_MS, sesion_gap_dias: SESION_GAP_DIAS, burbujas: BURBUJAS, burbuja_ms: BURBUJA_MS, audio_puente: AUDIO_PUENTE, sweep: SWEEP_MODE, sweep_espera_min: SWEEP_ESPERA_MIN, stt: STT_MODE, stt_raw: STT_RAW, stt_configurado: !!OPENAI_API_KEY, stt_model: STT_MODEL, busqueda_shadow: BUSQUEDA_SHADOW, busqueda_mcp: BUSQUEDA_MCP, busqueda_mcp_limit: BUSQUEDA_MCP_LIMIT, catalog_mcp_url: CATALOG_MCP_URL, ucp_profile_url: UCP_PROFILE_URL, live_targets: MODE === "live" ? (LIVE_ALL ? "all" : LIVE_ALLOWLIST.length) : 0, ts: new Date().toISOString() });
+    return Response.json({ status: "ok", function: "copilot-webhook", version: "v98-lee-pdf", mode: MODE, mode_raw: MODE_RAW, model: MODEL, llm_configured: !!anthropic, wati_send_configured: !!(WATI_API_TOKEN && WATI_API_BASE), inventario_configurado: !!(SHOPIFY_ADMIN_TOKEN && SHOPIFY_ADMIN_API_BASE), resolve_configured: !!RESOLVE_SECRET, webhook_key_es_default: WEBHOOK_KEY_ES_DEFAULT, handoff_assist_min: HANDOFF_ASSIST_MIN, handoff_cold_hours: HANDOFF_COLD_HOURS, debounce_ms: DEBOUNCE_MS, sesion_gap_dias: SESION_GAP_DIAS, burbujas: BURBUJAS, burbuja_ms: BURBUJA_MS, audio_puente: AUDIO_PUENTE, sweep: SWEEP_MODE, sweep_espera_min: SWEEP_ESPERA_MIN, stt: STT_MODE, stt_raw: STT_RAW, stt_configurado: !!OPENAI_API_KEY, stt_model: STT_MODEL, busqueda_shadow: BUSQUEDA_SHADOW, busqueda_mcp: BUSQUEDA_MCP, busqueda_mcp_limit: BUSQUEDA_MCP_LIMIT, catalog_mcp_url: CATALOG_MCP_URL, ucp_profile_url: UCP_PROFILE_URL, live_targets: MODE === "live" ? (LIVE_ALL ? "all" : LIVE_ALLOWLIST.length) : 0, ts: new Date().toISOString() });
   }
   if (req.method !== "POST") return Response.json({ error: "method_not_allowed" }, { status: 405 });
   if (url.searchParams.get("key") !== WEBHOOK_KEY) return Response.json({ error: "forbidden" }, { status: 403 });
@@ -3599,8 +3651,21 @@ Deno.serve(async (req) => {
   // v19: una imagen de un CLIENTE (owner=false) SÍ se procesa (visión). El resto de mensajes
   // no-texto (documentos, o imágenes del propio negocio) se registran y se saltan.
   const esImagenCliente = tipo === "image" && !esDelNegocio && !!waId;
+  // v98 — un PDF del CLIENTE también se procesa (facturas/cotizaciones: "cotízame lo mismo"). Solo PDF:
+  // los demás documentos (Word, Excel, imágenes del negocio) siguen cayendo al skip de siempre. El tipo
+  // se toma del mimeType o de la extensión del nombre, porque WATI no siempre manda el mimeType.
+  // El shape REAL (2,751 documentos en job_log) NO trae mimeType ni filename: el único indicio del tipo
+  // está en la URL de `data`, que WATI arma como
+  //   https://live-mt-server.wati.io/<n>/api/file/showFile?fileName=data/documents/<uuid>.pdf
+  // Se aceptan igual mimeType/filename por si WATI los agrega. Segunda red: descargarPdfWati verifica la
+  // firma %PDF- del archivo, así que un no-PDF colado por la extensión tampoco llega al modelo.
+  const urlDoc = String(p?.data ?? "");
+  const mimeDoc = String(p?.mimeType ?? p?.mime_type ?? "").toLowerCase();
+  const nombreDoc = String(p?.filename ?? p?.fileName ?? "").toLowerCase();
+  const esPdfCliente = tipo === "document" && !esDelNegocio && !!waId
+    && (/\.pdf($|\?|&)/i.test(urlDoc) || mimeDoc.includes("pdf") || nombreDoc.endsWith(".pdf"));
 
-  if (!esImagenCliente && (!waId || !texto || tipo !== "text")) {
+  if (!esImagenCliente && !esPdfCliente && (!waId || !texto || tipo !== "text")) {
     // v45: el volcado COMPLETO del payload (diagnóstico v18.1) ya cumplió su propósito (descubrir el
     // shape de media de WATI) y metía texto libre/PII del cliente en job_log. Ahora solo campos de
     // diagnóstico: las llaves del payload (para detectar shapes nuevos) + tipo/URL del media.
@@ -3626,13 +3691,16 @@ Deno.serve(async (req) => {
     // Para una imagen el caption va en `texto`; si no hay caption, se guarda un marcador.
     // v68.1: `let` porque una nota de voz se inserta como "[audio]" y la tarea de fondo la reescribe con
     // la transcripción (el ticket de promesa y el motivo deben ver lo que el cliente dijo, no el marcador).
-    let contenido = esImagenCliente ? (texto || "[imagen]") : texto;
+    let contenido = esImagenCliente ? (texto || "[imagen]") : esPdfCliente ? (texto || "[documento PDF]") : texto;
+    // v98 — la URL del PDF viaja hasta la fase async (mismo patrón que audioUrlPendiente): la descarga
+    // y la llamada al modelo ocurren DESPUÉS de responderle 200 a WATI, para no arriesgar su timeout.
+    const pdfUrlPendiente = esPdfCliente ? String(p.data ?? "") : "";
     // v49: se guarda la URL del media — antes solo quedaba "[imagen]" y una foto que llegaba ANTES del
     // último mensaje de la ráfaga era imposible de recuperar (el ganador no podía verla). Requiere la
     // migración 20260708150000_messages_media_url (aplicarla ANTES de desplegar v49).
     // v68: una nota de voz transcrita conserva la URL del audio ORIGINAL (el asesor puede escucharlo si la
     // transcripción quedó dudosa, y sirve para auditar la calidad del STT contra lo que dijo el cliente).
-    const ins = await sb.from("messages").insert({ conversation_id: conv.id, role: "user", content: contenido.slice(0, 4000), mode: MODE, wati_message_id: watiMsgId, media_url: (esImagenCliente || esAudioTranscrito) ? (String(p.data ?? "").slice(0, 500) || null) : null }).select("id,created_at");
+    const ins = await sb.from("messages").insert({ conversation_id: conv.id, role: "user", content: contenido.slice(0, 4000), mode: MODE, wati_message_id: watiMsgId, media_url: (esImagenCliente || esAudioTranscrito || esPdfCliente) ? (String(p.data ?? "").slice(0, 500) || null) : null }).select("id,created_at");
     if (ins.error) {
       if (ins.error.code === "23505") return Response.json({ ok: true, skipped: "duplicado" });
       throw new Error(`insert user msg: ${ins.error.message}`);
@@ -3886,7 +3954,16 @@ Deno.serve(async (req) => {
         if (urlsRafaga.length && !imagenes.length) await log("imagen_no_descargada", false, { waId, urls_en_rafaga: urlsRafaga.length });
         const atributosWati = extraerCustomParams(p); // v25: datos que ya tenemos (best-effort, del payload)
         const linksTracked: Record<string, string> = {}; // v29 — handle → URL con tracking (lo llena buscar_producto)
-        const r = await responderLLM(history as any, imagenes.length ? false : NEEDS_TOOL_RE.test(texto), imagenes, urlsRafaga.length > 0 && imagenes.length === 0, waId, atributosWati, linksTracked);
+        // v98 — el PDF se baja AQUÍ, en segundo plano: WATI ya recibió su 200 y solo se paga la descarga
+        // del documento que de verdad se va a responder. Si falla, el turno sigue: el modelo recibe una
+        // nota para pedirlo de nuevo con honestidad en vez de contestar a ciegas sobre un adjunto que no vio.
+        const pdfAdjunto = pdfUrlPendiente ? await descargarPdfWati(pdfUrlPendiente) : null;
+        if (pdfUrlPendiente) await log("pdf_cliente", !!pdfAdjunto, { waId, descargado: !!pdfAdjunto });
+        if (pdfUrlPendiente && !pdfAdjunto && history.length) {
+          const ult = history[history.length - 1] as any;
+          if (ult?.role === "user") ult.content = String(ult.content ?? "") + " [Nota interna: el cliente adjuntó un PDF que no se pudo abrir. Dile con honestidad que no pudiste leer el archivo y pídele que te escriba los productos y cantidades, o deriva a un asesor. NO adivines el contenido.]";
+        }
+        const r = await responderLLM(history as any, (imagenes.length || pdfAdjunto) ? false : NEEDS_TOOL_RE.test(texto), imagenes, urlsRafaga.length > 0 && imagenes.length === 0, waId, atributosWati, linksTracked, false, "", false, pdfAdjunto);
         let salida = r.text ? reaplicarTracking(limpiarWhatsApp(r.text), linksTracked) : null; // v16 formato + v29 tracking
         // v44 (guard anti-fuga de tool-call): si el modelo escribió la llamada como TEXTO (visto en Sonnet 5)
         // en vez de invocarla nativa, NO mandamos ese XML; va la respuesta de respaldo (consciente del
