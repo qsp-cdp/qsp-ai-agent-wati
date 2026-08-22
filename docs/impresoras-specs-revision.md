@@ -40,10 +40,36 @@ Las tres fichas fueron corregidas en Shopify y la tabla se re-sincronizó desde 
 > **Lección para futuras cargas:** al leer una ficha, comprobar que los dos ppm sean del MISMO
 > estándar. Epson publica borrador e ISO en el mismo párrafo y es fácil cruzarlos.
 
+## Segunda fuente encontrada: los metacampos estructurados de Shopify (22-ago-2026)
+
+Los productos de impresora traen metacampos de la **taxonomía estándar de Shopify**, ya poblados:
+
+| Metacampo | Contenido | Alimenta |
+|---|---|---|
+| `shopify.printer-copier-specialized-features` | ADF, Impresión dúplex, Impresión sin bordes, Almacenamiento de papel, Soporte de impresión móvil | `adf`, `duplex_auto` |
+| `shopify.compatible-paper-size` | Carta, Legal, A4, 11x17, 13x19, 4x6… | `tamano_maximo` |
+| `shopify.connection-type` | USB, Ethernet, Wi-Fi | `wifi`, `ethernet` |
+| `shopify.printer-functions` | Impresión, Copiar, Escaneo, Fax, Multifuncional | `funciones` |
+| `shopify.print-technology` | Láser, Inyección de tinta | `categoria` |
+
+Son datos ya estructurados — no hay que interpretar prosa. **Pero están incompletos**, y de ahí sale
+la regla con la que se cargan: *solo se escribe el TRUE cuando el metacampo lo afirma; la ausencia
+NO se toma como "no tiene"*. Caso comprobado: la HP LaserJet Pro MFP 3103fdw sí tiene ADF y su
+metacampo solo lista "Almacenamiento de papel". Deducir el `false` desde el silencio haría que
+`asesorar_impresora` descartara modelos válidos. Mismo principio que la regla del barrio ambiguo.
+
+Al cruzarlos con la tabla **no apareció ni una contradicción** con lo extraído de las fichas — buena
+señal sobre la carga original. Rellenaron 5 `adf` y 2 `duplex_auto`.
+
 ## Campos que más merecen ojo humano
 
-- `duplex_auto` y `adf` en **NULL**: la ficha no lo decía. Son los dos datos que más pesan al
-  recomendar para oficina — completarlos vale oro.
+Estado al 22-ago-2026 (de 87 filas): `adf` 2 nulos · `duplex_auto` 38 · `consumibles` 56 vacíos ·
+`rendimiento` 50 nulos.
+
+- `duplex_auto` en **NULL** (38): ni la ficha ni el metacampo lo dicen. Es el dato que más pesa al
+  recomendar para oficina. Está en los PDF de ficha técnica (ver abajo) y muchas veces en el sufijo
+  del modelo (`dw`/`dn`/`fdw` suelen implicar dúplex), pero eso último es deducción, no dato.
+- `consumibles` (56) y `rendimiento` (50): permiten cotizar "la impresora + sus tintas" de una.
 - `consumibles`: solo se llenó cuando la ficha nombraba el cartucho/botella (23 de 87). Completarlo
   permite al bot cotizar "la impresora + sus tintas" de una.
 - `perfil` (hogar / hogar_oficina / oficina / alto_volumen / portatil / punto_de_venta /
@@ -57,3 +83,35 @@ Las tres fichas fueron corregidas en Shopify y la tabla se re-sincronizó desde 
 - **Producto retirado** → borrar la fila (o dejarla: si Shopify ya no lo tiene, `buscar_producto` no
   lo encontrará y el bot no lo ofrecerá — pero mejor limpiar).
 - La migración con el seed completo está en `supabase/migrations/20260821230000_impresoras_specs.sql`.
+
+## Tercera fuente: los PDF de ficha técnica en Archivos de Shopify (pendiente)
+
+La tienda guarda ~90 PDF de fichas técnicas oficiales del fabricante en **Contenido → Archivos**
+(no en metacampos del producto: se revisaron los metacampos de varios modelos y ninguno referencia
+un PDF; tampoco existe una definición de metacampo de tipo archivo para productos).
+
+Muchos son de modelos ya descontinuados (2020-2022), pero hay coincidencias con el catálogo actual:
+`ECOTANK_L3250`, `ECOTANK_L1210`, `ECOTANK_L4260`, `ECOTANK_L8180`, `L14150`, `WF-C5710`,
+`Folleto-EcoTank-L5590-v2`, `HP_SMART_TANK_750`, `MULTIFUNCIONAL-HP-SMART-TANK-580`, `G7010`,
+`GX7010`, `MAXIFY-GX4010`, `G3160`, `G4110`, `PIXMA-G3170_Brochure`, `HP_9020`,
+`HP_OFFICEJET_PRO_7740`, `LEXMARK_MX331ADN`, `LEXMARK_MX622ADHE`, `CANON_MF644CDW`,
+`Canon_imageCLASS_MF455dw_Brochure_ES`, `CL_MFC-L6900DW`, `PE_MFC-T4500DW`, `Brother_MFCT920DW`,
+`Ficha-tecnica-Epson-SureColor-F170`, `Brother_QL-800-Ficha`, `imagePROGRAF-TC-20_Brochure`…
+
+Son la fuente natural para los 38 `duplex_auto`, los 56 `consumibles` y los 50 `rendimiento` que
+faltan — es el dato oficial del fabricante, no prosa de tienda.
+
+**Bloqueo actual:** la política de red del entorno remoto rechaza `cdn.shopify.com`
+(el proxy responde 403 al CONNECT), así que los PDF no se pueden descargar desde la sesión.
+Dos caminos:
+
+1. **Permitir `cdn.shopify.com`** en la política de red del entorno (claude.ai/code → entorno).
+   Es el camino corto: se descargan, se leen y se cargan los campos.
+2. **Una Edge Function en Supabase** que baje el PDF y extraiga el texto. Supabase no está detrás de
+   ese proxy — es el mismo truco con el que se trajeron las agencias de Servientrega. Cuesta más
+   (hay que meter un extractor de PDF en Deno) pero queda como herramienta reutilizable.
+
+Un aviso que dejó la revisión: el metacampo `schemaapp.schema` de la L5590 contiene una tabla de
+especificaciones que **no es de ese modelo** (dice ISO 10/5 y borrador 33/15, que son los números de
+la L3210/L3250) mientras el párrafo de arriba, en el mismo campo, dice ISO 15/8. Ese metacampo lo
+llena una app de SEO y arrastra copy-paste viejo: **no usarlo como fuente de specs**.
