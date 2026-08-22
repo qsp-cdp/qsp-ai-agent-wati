@@ -69,20 +69,11 @@ Estado al 22-ago-2026 (de 87 filas): `adf` 2 nulos · `duplex_auto` 38 · `consu
 - `duplex_auto` en **NULL** (38): ni la ficha ni el metacampo lo dicen. Es el dato que más pesa al
   recomendar para oficina. Está en los PDF de ficha técnica (ver abajo) y muchas veces en el sufijo
   del modelo (`dw`/`dn`/`fdw` suelen implicar dúplex), pero eso último es deducción, no dato.
-- `consumibles` (56) y `rendimiento` (50): permiten cotizar "la impresora + sus tintas" de una.
-- `consumibles`: solo se llenó cuando la ficha nombraba el cartucho/botella (23 de 87). Completarlo
-  permite al bot cotizar "la impresora + sus tintas" de una.
+- `consumibles` (56 vacíos) y `rendimiento` (50): solo se llenaron cuando la ficha nombraba el
+  cartucho/botella. Completarlos permite al bot cotizar "la impresora + sus tintas" de una.
 - `perfil` (hogar / hogar_oficina / oficina / alto_volumen / portatil / punto_de_venta /
   especializada / formato_ancho): es juicio mío a partir de la ficha — ajústalo a como ustedes
   venden cada equipo.
-
-## Mantenimiento
-
-- **Producto nuevo en Shopify** → agregar su fila aquí (INSERT con el `handle` del producto). El bot
-  no recomienda lo que no está en la tabla.
-- **Producto retirado** → borrar la fila (o dejarla: si Shopify ya no lo tiene, `buscar_producto` no
-  lo encontrará y el bot no lo ofrecerá — pero mejor limpiar).
-- La migración con el seed completo está en `supabase/migrations/20260821230000_impresoras_specs.sql`.
 
 ## Tercera fuente: los PDF de ficha técnica en Archivos de Shopify (pendiente)
 
@@ -115,3 +106,11 @@ Un aviso que dejó la revisión: el metacampo `schemaapp.schema` de la L5590 con
 especificaciones que **no es de ese modelo** (dice ISO 10/5 y borrador 33/15, que son los números de
 la L3210/L3250) mientras el párrafo de arriba, en el mismo campo, dice ISO 15/8. Ese metacampo lo
 llena una app de SEO y arrastra copy-paste viejo: **no usarlo como fuente de specs**.
+
+## Mantenimiento
+
+- **Producto nuevo en Shopify** → agregar su fila aquí (INSERT con el `handle` del producto). El bot
+  no recomienda lo que no está en la tabla.
+- **Producto retirado** → borrar la fila (o dejarla: si Shopify ya no lo tiene, `buscar_producto` no
+  lo encontrará y el bot no lo ofrecerá — pero mejor limpiar).
+- La migración con el seed completo está en `supabase/migrations/20260821230000_impresoras_specs.sql`.
