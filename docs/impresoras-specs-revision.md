@@ -75,7 +75,7 @@ Estado al 22-ago-2026 (de 87 filas): `adf` 2 nulos · `duplex_auto` 38 · `consu
   especializada / formato_ancho): es juicio mío a partir de la ficha — ajústalo a como ustedes
   venden cada equipo.
 
-## Tercera fuente: los PDF de ficha técnica en Archivos de Shopify (pendiente)
+## Tercera fuente: los PDF de ficha técnica en Archivos de Shopify — ✅ RESUELTA
 
 La tienda guarda ~90 PDF de fichas técnicas oficiales del fabricante en **Contenido → Archivos**
 (no en metacampos del producto: se revisaron los metacampos de varios modelos y ninguno referencia
@@ -89,18 +89,14 @@ Muchos son de modelos ya descontinuados (2020-2022), pero hay coincidencias con 
 `Canon_imageCLASS_MF455dw_Brochure_ES`, `CL_MFC-L6900DW`, `PE_MFC-T4500DW`, `Brother_MFCT920DW`,
 `Ficha-tecnica-Epson-SureColor-F170`, `Brother_QL-800-Ficha`, `imagePROGRAF-TC-20_Brochure`…
 
-Son la fuente natural para los 38 `duplex_auto`, los 56 `consumibles` y los 50 `rendimiento` que
-faltan — es el dato oficial del fabricante, no prosa de tienda.
+Son la fuente natural para los `duplex_auto`, `consumibles` y `rendimiento` que faltan — es el dato
+oficial del fabricante, no prosa de tienda.
 
-**Bloqueo actual:** la política de red del entorno remoto rechaza `cdn.shopify.com`
-(el proxy responde 403 al CONNECT), así que los PDF no se pueden descargar desde la sesión.
-Dos caminos:
-
-1. **Permitir `cdn.shopify.com`** en la política de red del entorno (claude.ai/code → entorno).
-   Es el camino corto: se descargan, se leen y se cargan los campos.
-2. **Una Edge Function en Supabase** que baje el PDF y extraiga el texto. Supabase no está detrás de
-   ese proxy — es el mismo truco con el que se trajeron las agencias de Servientrega. Cuesta más
-   (hay que meter un extractor de PDF en Deno) pero queda como herramienta reutilizable.
+**Cómo se leen.** La política de red del entorno remoto rechaza `cdn.shopify.com` (el proxy responde
+403 al CONNECT), así que no se pueden descargar desde la sesión. Se resolvió con la Edge Function
+`ficha-pdf`: Supabase no está detrás de ese proxy — el mismo camino con el que se trajeron las
+agencias de Servientrega — y ahí sí hay código para manejar el binario y extraer el texto. Ver la
+sección de carga oficial más abajo para el método completo.
 
 Un aviso que dejó la revisión: el metacampo `schemaapp.schema` de la L5590 contiene una tabla de
 especificaciones que **no es de ese modelo** (dice ISO 10/5 y borrador 33/15, que son los números de
