@@ -64,6 +64,18 @@ Shipday escribe hacia Supabase SOLO desde este webhook. No hay tercer camino.
 | **La libreta se tocó hace menos de 10 min** | **NO pisa**, solo audita: ese cambio puede ser más nuevo que el de Shipday y los eventos llegan fuera de orden |
 | El evento no trae dirección | no toca nada (nunca degrada) |
 | Dirección nueva sin coordenadas | limpia el pin viejo: apuntaba al domicilio anterior |
+| Dirección nueva CON pin | resuelve corregimiento y zona contra los polígonos (`zona_por_coordenadas`) |
+| Dirección nueva sin pin, o el pin no resuelve | limpia provincia/distrito/corregimiento: describían el domicilio anterior |
+
+**La jerarquía sigue la misma regla que el pin.** Provincia › distrito › corregimiento describen la
+dirección VIEJA, y de ahí sale la tarifa que se le cotiza al cliente: dejarlos puestos hace que la ficha
+afirme un corregimiento que ya no aplica. Con pin se resuelven contra los polígonos oficiales; sin pin se
+ponen en nulo — "no sé" es cierto, el dato viejo sería una mentira. La siguiente captura los vuelve a llenar.
+
+**El espejo a WATI escribe TODOS los campos que la corrección toca**, y los vacíos van como `-` para pisar
+el valor anterior (lección v75.1 del copiloto): `direccion_envio`, `pin_envio`, `maps_envio`, `zona_envio`,
+`provincia_envio`, `distrito_envio`, `corregimiento_envio`, `envio_resumen`, `envio_estado`, `envio_fecha`.
+Omitir un campo dejaba el pin y el corregimiento viejos junto a la dirección nueva.
 
 La ventana de 10 minutos es deliberadamente conservadora: perder una corrección es recuperable (llega
 en el siguiente evento), pisar la dirección buena del cliente no lo es.
@@ -80,4 +92,33 @@ from direcciones_hist order by created_at desc limit 20;
 **Límite conocido:** si el asesor edita la dirección y la orden ya no emite más eventos, el cambio no
 viaja. El evento de entrega (`ORDER_COMPLETED`) cubre la mayoría de los casos.
 
-**Trazabilidad en job_log:** `direccion_shipday_sincronizada` (ok) · `direccion_shipday_no_aplicada`.
+**Trazabilidad en job_log:** `direccion_shipday_sincronizada` (ok) · `direccion_shipday_no_aplicada` ·
+`espejo_wati_direccion` (resultado del espejo a la ficha) · `auditoria_direccion_fallo`.
+
+---
+
+## Prueba en vivo con una orden creada A MANO en Shipday (22-ago-2026, pedido 12)
+
+Primera vez que se ejerce el camino "el asesor crea la tarea directo en Shipday" — hasta ese día los 11
+pedidos que Shipday nos había mandado existían TAMBIÉN como pedido de Shopify, o sea que todos habían
+nacido de nuestro propio flujo.
+
+**Funcionó de punta a punta:** el evento entró, `pedidos` recibió la fila (`pedido_ref` 12, estado
+`en_camino`), la libreta se actualizó con la dirección y el pin de Shipday, y `job_log` registró
+`direccion_shipday_sincronizada ok=true`.
+
+**Dos fallos que solo se ven con la prueba real:**
+
+1. **`direcciones_hist` seguía en cero** pese al `ok=true`. Causa: `service_role` no tenía INSERT sobre
+   la tabla (la misma trampa de permisos de `impresoras_specs`/`servientrega_agencias`: en este proyecto
+   una tabla creada por migración solo hereda TRUNCATE/REFERENCES/TRIGGER). El POST rebotaba con 401
+   dentro de un `catch {}` mudo. Arreglado con la migración `20260822150000_direcciones_hist_grants`
+   (INSERT + USAGE sobre la secuencia, que es SERIAL) y el fallo ya deja rastro en `job_log`.
+2. **El espejo a WATI no dejaba rastro alguno** — iba en otro `catch` mudo, así que un espejo fallido era
+   indistinguible de uno exitoso. Y `updateWatiAttributes` solo miraba el status HTTP, cuando WATI
+   responde 200 con `{"result":false}` si el contacto no existe o el atributo no está creado en su panel
+   (lección v86 del copiloto). Ambos arreglados.
+
+**Hueco que sigue abierto:** si el teléfono de la orden no está en `contacts`, la sincronización se sale
+sin hacer nada — ni libreta ni WATI. Es el caso probable de una tarea creada a mano para un cliente que
+nunca escribió por WhatsApp.

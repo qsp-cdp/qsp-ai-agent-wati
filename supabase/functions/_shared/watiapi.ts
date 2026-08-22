@@ -40,7 +40,12 @@ export async function updateWatiAttributes(waId: string, attrs: Record<string, s
     body: JSON.stringify({ customParams }),
     signal: AbortSignal.timeout(10000),
   });
-  if (!res.ok) throw new Error(`WATI respondió ${res.status}: ${await res.text()}`);
+  const cuerpo = (await res.text().catch(() => '')).slice(0, 200);
+  if (!res.ok) throw new Error(`WATI respondió ${res.status}: ${cuerpo}`);
+  // Lección v86 del copiloto: WATI contesta 200 con {"result":false,...} cuando el contacto no existe o
+  // el atributo no está creado en su panel. Mirar solo el status daba "ok" con la ficha sin cambiar
+  // (caso real 21-ago: dos espejos "200 ok" y ni un campo movido). El cuerpo manda.
+  if (/"result"\s*:\s*false/i.test(cuerpo)) throw new Error(`WATI 200 pero result:false — ${cuerpo}`);
   return { ok: true, campos: customParams.map((p) => p.name) };
 }
 

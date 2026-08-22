@@ -23,9 +23,13 @@ import { updateWatiAttributes } from '../_shared/watiapi.ts';
 // misma dirección no toca nada.
 const normDir = (s: unknown) => String(s ?? '').toLowerCase().replace(/\s+/g, ' ').trim();
 
+// La auditoría nunca debe ROMPER el webhook, pero tampoco debe fallar EN SILENCIO: durante semanas el
+// POST rebotó con 401 (faltaba el grant de INSERT a service_role) dentro de un `catch {}` mudo y la
+// tabla quedó en cero sin que nada lo dijera — se descubrió a mano el 22-ago. Ahora el fallo se traga
+// igual, pero deja rastro en job_log.
 async function auditarDireccion(fila: Record<string, unknown>): Promise<void> {
   try {
-    await fetch(`${Deno.env.get('SUPABASE_URL')}/rest/v1/direcciones_hist`, {
+    const res = await fetch(`${Deno.env.get('SUPABASE_URL')}/rest/v1/direcciones_hist`, {
       method: 'POST',
       headers: {
         apikey: Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? '',
@@ -35,7 +39,37 @@ async function auditarDireccion(fila: Record<string, unknown>): Promise<void> {
       },
       body: JSON.stringify(fila),
     });
-  } catch { /* la auditoría nunca debe romper el webhook */ }
+    if (!res.ok) {
+      const cuerpo = (await res.text().catch(() => '')).slice(0, 200);
+      await logJob('shipday-status', 'auditoria_direccion_fallo', false, { status: res.status, cuerpo });
+    }
+  } catch (err) {
+    await logJob('shipday-status', 'auditoria_direccion_fallo', false, { error: String(err).slice(0, 200) });
+  }
+}
+
+// Corregimiento y zona oficiales a partir del pin, contra nuestros polígonos (la misma RPC que usa el
+// copiloto). Best-effort: si no resuelve, devuelve null y el llamador trata la ubicación como desconocida.
+async function ubicacionPorPin(lat: number, lng: number): Promise<{ corregimiento: string; zona: string } | null> {
+  try {
+    const res = await fetch(`${Deno.env.get('SUPABASE_URL')}/rest/v1/rpc/zona_por_coordenadas`, {
+      method: 'POST',
+      headers: {
+        apikey: Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? '',
+        Authorization: `Bearer ${Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? ''}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ p_lat: lat, p_lng: lng }),
+      signal: AbortSignal.timeout(5000),
+    });
+    if (!res.ok) return null;
+    const z = await res.json();
+    if (z?.estado !== 'ok') return null;
+    const corregimiento = String(z.corregimiento ?? '').trim();
+    return corregimiento ? { corregimiento, zona: String(z.zona ?? '').trim() } : null;
+  } catch {
+    return null;
+  }
 }
 
 async function sincronizarDireccionDesdeShipday(payload: any, waId: string, pedidoRef: string): Promise<void> {
@@ -78,6 +112,24 @@ async function sincronizarDireccionDesdeShipday(payload: any, waId: string, pedi
     // Dirección nueva sin pin: el viejo apunta al domicilio anterior (misma lección que la captura).
     patch.latitude = null; patch.longitude = null; patch.maps_url = null;
   }
+
+  // La jerarquía guardada (provincia › distrito › corregimiento) describe la dirección ANTERIOR. Misma
+  // lección que el pin: dejarla puesta hace que la ficha AFIRME un corregimiento que ya no aplica, y de
+  // ahí sale la tarifa que se le cotiza al cliente. Con pin la resolvemos contra los polígonos
+  // oficiales; sin pin se limpia — un nulo dice "no sé", que es cierto, y el dato viejo diría una
+  // mentira. La siguiente captura del copiloto la vuelve a llenar.
+  // `provincia`/`distrito`/`corregimiento` no están declarados en la interfaz Contact pero PostgREST sí
+  // los devuelve (findContactByPhone trae la fila completa); el cast lo deja explícito.
+  const jer = c as unknown as { provincia?: string | null; distrito?: string | null; corregimiento?: string | null };
+  const corregAnt = String(jer.corregimiento ?? '').trim();
+  const ubic = hayPin ? await ubicacionPorPin(lat, lng) : null;
+  const corregNuevo = ubic?.corregimiento ?? null;
+  const mismaJerarquia = !!corregNuevo && corregNuevo.toLowerCase() === corregAnt.toLowerCase();
+  if (!mismaJerarquia) {
+    patch.corregimiento = corregNuevo;
+    patch.provincia = null;
+    patch.distrito = null;
+  }
   const res = await fetch(`${Deno.env.get('SUPABASE_URL')}/rest/v1/contacts?phone_digits=eq.${lastDigits(waId)}`, {
     method: 'PATCH',
     headers: {
@@ -94,16 +146,45 @@ async function sincronizarDireccionDesdeShipday(payload: any, waId: string, pedi
 
   // Espejo a la ficha del asesor. best-effort: si WATI falla, la libreta —que es la fuente de verdad
   // y la que alimenta el despacho— ya quedó corregida.
+  //
+  // Se escriben TODOS los campos que la corrección toca, y los vacíos van como "-" para PISAR el valor
+  // anterior (lección v75.1 del copiloto: omitir un campo deja el pin y el corregimiento VIEJOS en la
+  // ficha junto a la dirección nueva — el asesor ve dos ubicaciones y no sabe cuál vale). Y el
+  // resultado se registra: antes iba en un `catch` mudo, así que un espejo fallido era indistinguible
+  // de uno exitoso.
   if (ok) {
+    const pinUrl = hayPin ? `https://maps.google.com/?q=${lat},${lng}` : '';
+    const prov = mismaJerarquia ? String(jer.provincia ?? '').trim() : '';
+    const dist = mismaJerarquia ? String(jer.distrito ?? '').trim() : '';
+    const correg = mismaJerarquia ? corregAnt : (corregNuevo ?? '');
+    // La zona (y con ella la tarifa) sale del corregimiento: si la dirección se mudó, la zona vieja de
+    // la ficha ya no describe a dónde va el pedido. Sin pin no hay cómo resolverla → "-" en vez de una
+    // zona que cotizaría mal.
+    const zonaTxt = ubic?.zona ?? '';
+    const val = (s: string) => (s ? s.slice(0, 250) : '-');
+    // Formato idéntico al del copiloto y wati-mirror: "dirección — referencia · Provincia › Distrito › Corregimiento".
+    const referencia = String(c.referencia ?? '').trim();
+    const jerarquia = [prov, dist, correg].filter(Boolean).join(' › ');
+    const cuerpo = [dirShipday, referencia].filter(Boolean).join(' — ');
+    const resumen = [cuerpo, jerarquia].filter(Boolean).join('  ·  ');
     try {
-      await updateWatiAttributes(waId, {
-        direccion_envio: dirShipday.slice(0, 250),
-        ...(hayPin
-          ? { pin_envio: `https://maps.google.com/?q=${lat},${lng}`, maps_envio: `https://maps.google.com/?q=${lat},${lng}` }
-          : {}),
+      const r = await updateWatiAttributes(waId, {
+        direccion_envio: val(dirShipday),
+        pin_envio: val(pinUrl),
+        maps_envio: val(pinUrl),
+        zona_envio: val(zonaTxt),
+        provincia_envio: val(prov),
+        distrito_envio: val(dist),
+        corregimiento_envio: val(correg),
+        envio_resumen: val(resumen),
         envio_estado: '✏️ Dirección corregida en Shipday',
+        envio_fecha: new Date().toISOString().slice(0, 10),
       });
-    } catch { /* best-effort */ }
+      const campos = (r as { campos?: string[] }).campos?.length ?? 0;
+      await logJob('shipday-status', 'espejo_wati_direccion', true, { waId, pedidoRef, campos });
+    } catch (err) {
+      await logJob('shipday-status', 'espejo_wati_direccion', false, { waId, pedidoRef, error: String(err).slice(0, 200) });
+    }
   }
 }
 
