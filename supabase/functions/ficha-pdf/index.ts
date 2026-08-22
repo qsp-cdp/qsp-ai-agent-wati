@@ -19,12 +19,15 @@ const KEY = 'fichapdf-3n7q2x8m';
 
 // Solo fabricantes y el CDN de la propia tienda. Sin esto, cualquiera con la llave podría usar la
 // función como proxy hacia adentro de la red (SSRF); el allowlist la deja siendo lo que dice ser.
+// Incluye los dominios POR PAÍS de Latinoamérica a propósito: los fabricantes no publican la ficha en
+// español desde el .com global, y el chequeo es por sufijo — 'canon.com' NO cubre a 'canon.com.mx'.
 const DOMINIOS_PERMITIDOS = [
   'cdn.shopify.com',
   'epson.com', 'latin.epson.com', 'mediaserver.goepson.com', 'files.support.epson.com',
-  'hp.com', 'h20195.www2.hp.com', 'ssl.www8.hp.com',
-  'canon.com', 'downloads.canon.com', 'cla.canon.com', 'canonlatinamerica.com',
-  'brother.com', 'download.brother.com',
+  'epson.com.mx', 'epson.com.co', 'epson.com.pe', 'epson.com.ar', 'epson.com.pa', 'epson.com.cl',
+  'hp.com', 'h20195.www2.hp.com', 'ssl.www8.hp.com', 'hp.com.mx',
+  'canon.com', 'downloads.canon.com', 'cla.canon.com', 'canonlatinamerica.com', 'canon.com.mx',
+  'brother.com', 'download.brother.com', 'brother.com.mx', 'brother.com.pa',
   'lexmark.com',
 ];
 
