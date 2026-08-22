@@ -39,7 +39,12 @@ const json = (body: unknown, status = 200) =>
 const RE_ACCESORIO =
   /^(bandeja|pedestal|bater[ií]a|soporte|alimentador|kit|cable|tapa|rodillo|fusor|correa|caja de mantenimiento|cartucho de mantenimiento|tambor|colector|conjunto|interfaz|unidad de imagen|revelador)\b/i;
 
-interface ProductoShopify { handle: string; title: string; productType: string }
+interface ProductoShopify {
+  handle: string;
+  title: string;
+  productType: string;
+  mpn?: { value: string } | null;
+}
 
 async function impresorasDeLaTienda(): Promise<ProductoShopify[]> {
   const out: ProductoShopify[] = [];
@@ -49,7 +54,7 @@ async function impresorasDeLaTienda(): Promise<ProductoShopify[]> {
   for (let pagina = 0; pagina < 5; pagina++) {
     const query = `query($after:String){
       products(first:250, after:$after, query:"status:active AND (product_type:Impresora* OR product_type:Plotter*)"){
-        edges{ node{ handle title productType } }
+        edges{ node{ handle title productType mpn: metafield(namespace:"mm-google-shopping", key:"mpn"){ value } } }
         pageInfo{ hasNextPage endCursor }
       }
     }`;
@@ -172,6 +177,25 @@ Deno.serve(async (req) => {
     }
   }
 
+  // NÚMERO DE PARTE (MPN) — la llave con la que indexa CUALQUIER catálogo sindicado (1WorldSync,
+  // Icecat, Syndigo) y también Google Shopping. Un MPN repetido en dos productos distintos hace que el
+  // feed le entregue a uno el contenido del otro: specs, fotos y todo. Caso encontrado el 22-ago: la
+  // HP Smart Tank 530 y la 580 comparten `4SB24A#AKY`, y el número de parte real de la 580 es 1F3Y2A
+  // (aparece en el nombre de su propia ficha técnica). Sin esto sano, sindicar contenido empeora el
+  // catálogo en vez de arreglarlo.
+  const porMpn = new Map<string, string[]>();
+  for (const p of tienda) {
+    const mpn = String(p.mpn?.value ?? '').trim().toUpperCase();
+    if (!mpn) continue;
+    porMpn.set(mpn, [...(porMpn.get(mpn) ?? []), p.handle]);
+  }
+  const mpn_duplicado = [...porMpn.entries()]
+    .filter(([, handles]) => handles.length > 1)
+    .map(([mpn, handles]) => ({ mpn, handles }));
+  const sin_mpn = tienda
+    .filter((p) => !RE_ACCESORIO.test(p.title) && !String(p.mpn?.value ?? '').trim())
+    .map((p) => p.handle);
+
   const sin_fuente = tabla.filter((f) => !f.fuente_url).map((f) => f.modelo);
 
   const limite = new Date();
@@ -184,6 +208,8 @@ Deno.serve(async (req) => {
     nuevos: nuevos.length,
     retirados: retirados.length,
     titulo_vs_ficha: titulo_vs_ficha.length,
+    mpn_duplicado: mpn_duplicado.length,
+    sin_mpn: sin_mpn.length,
     sin_fuente: sin_fuente.length,
     fuente_vieja: fuente_vieja.length,
     mal_clasificados: mal_clasificados.length,
@@ -192,7 +218,8 @@ Deno.serve(async (req) => {
   };
   // "Limpio" mira solo lo que rompe al bot. Un consumible mal tipado en Shopify o una fila sin fuente
   // son deuda a ordenar, no una alarma que valga la pena disparar cada semana.
-  const limpio = nuevos.length === 0 && retirados.length === 0 && titulo_vs_ficha.length === 0;
+  const limpio = nuevos.length === 0 && retirados.length === 0 && titulo_vs_ficha.length === 0 &&
+    mpn_duplicado.length === 0;
   await logJob('specs-centinela', 'revision', limpio, resumen);
 
   return json({
@@ -200,6 +227,6 @@ Deno.serve(async (req) => {
     version: VERSION,
     resumen,
     // Las listas van completas: el valor de esto es poder actuar sin tener que ir a buscar el detalle.
-    detalle: { nuevos, retirados, titulo_vs_ficha, mal_clasificados, sin_fuente, fuente_vieja },
+    detalle: { nuevos, retirados, titulo_vs_ficha, mpn_duplicado, sin_mpn, mal_clasificados, sin_fuente, fuente_vieja },
   });
 });
