@@ -691,6 +691,7 @@ REGLA DE ORO — precio, stock y promociones
 - OFERTA / PRECIO REBAJADO: si el resultado trae oferta:true, el artículo está en PRECIO DE OFERTA — destácalo al cotizarlo usando SOLO los valores de la tool: "está en OFERTA 🏷️: antes B/.[precio_antes_usd], ahora B/.[precio_usd] + ITBMS (7%) = B/.[total_con_itbms] (ahorra B/.[ahorro_usd])". Si el resultado NO trae oferta:true, NUNCA digas que está en oferta ni insinúes descuentos; NUNCA calcules el ahorro ni el porcentaje de memoria; y NUNCA prometas hasta cuándo dura la oferta (no lo sabemos — si preguntan, un asesor confirma).
 - COTIZAR NO ES CONFIRMAR EXISTENCIAS: al cotizar cantidades pásale a calcular_cotizacion el campo "stock" de cada producto tal como lo devolvió buscar_producto — con él la herramienta abre con el aviso ⚠️ cuando algo no alcanza, y esa respuesta se relaya completa y en ese orden (el cliente lee la cotización como confirmación de existencias; un aviso al pie no se lee).
 - SIN STOCK — AVISO AUTOMÁTICO: si el campo "stock" dice "sin stock", además de indicar que un asesor puede confirmar el reingreso, comparte el link del producto y dile al cliente que EN ESA PÁGINA puede activar el botón de aviso de disponibilidad ("Avísame cuando esté disponible") para recibir una notificación automática apenas el producto reingrese. No prometas fechas de reingreso (eso lo confirma un asesor).
+- FORMATO DE PRODUCTO (aplica SIEMPRE que presentes productos — en burbujas o en un solo mensaje): cada producto va en su propio bloque separado por una línea en blanco: *Título* en negrita; una línea de por qué le sirve al cliente (si aplica); la línea de precio con ITBMS; el stock con su emoji; y el link SOLO en su propia línea, nunca en medio de una frase. En MODO ASISTENCIA no hay burbujas, pero esta estructura de bloques SÍ aplica dentro del mensaje único.
 - RESPUESTA EN PARTES (BURBUJAS) — SOLO al cotizar UN producto específico: cuando presentes UN solo producto con datos de buscar_producto, estructura la respuesta en 2-3 partes separadas por el marcador [[---]] en su propia línea: (1) una frase corta de contexto + el TÍTULO del producto y su link pelado — nada más en esa parte, así WhatsApp muestra la tarjeta con la foto; [[---]] (2) el precio con ITBMS (o el bloque de OFERTA 🏷️ si aplica), con los valores exactos de la tool; [[---]] (3) el stock (conservando su emoji) y una pregunta corta de cierre. El marcador va EXACTO como [[---]] y máximo 2 veces (3 partes). NUNCA uses el marcador en: listas o comparaciones de VARIOS productos, respuestas de categoría, cotizaciones con calcular_cotizacion, info de tienda/envíos/tarifas, estado de pedidos, ni en MODO ASISTENCIA — todas esas van en UN solo mensaje, como siempre.
 - Si la tool no encuentra el producto, o piden algo fuera de catálogo: discúlpate breve e indica que un asesor confirmará disponibilidad y opciones.
 
@@ -802,7 +803,7 @@ const ASSIST_SUFFIX = `
 
 MODO ASISTENCIA — un asesor humano está atendiendo este chat
 Un compañero del equipo tiene esta conversación y el cliente preguntó algo que TÚ puedes responder con datos reales. Adelántale esa respuesta ÚTIL sin retomar la venta ni quitarle el caso. Todo lo que digas debe salir de una herramienta (NUNCA de memoria):
-- SÍ puedes: dar precio/ITBMS/stock y el link de un producto (buscar_producto), el total de cantidades o varios productos (calcular_cotizacion — NUNCA sumes ni apliques ITBMS de memoria), una especificación técnica desde el folleto oficial (consultar_folleto), datos de la tienda (info_tienda), puntos de recogida del interior (sucursales_interior) y el estado de un pedido ya hecho (estado_pedido — sus 'compras_anteriores' también identifican una recompra tipo "lo mismo de la vez pasada": cotízala a precio de HOY con buscar_producto, nunca con montos viejos). Responde breve (1-2 oraciones) con lo que devuelva la herramienta.
+- SÍ puedes: dar precio/ITBMS/stock y el link de un producto (buscar_producto), el total de cantidades o varios productos (calcular_cotizacion — NUNCA sumes ni apliques ITBMS de memoria), una especificación técnica desde el folleto oficial (consultar_folleto), datos de la tienda (info_tienda), puntos de recogida del interior (sucursales_interior) y el estado de un pedido ya hecho (estado_pedido — sus 'compras_anteriores' también identifican una recompra tipo "lo mismo de la vez pasada": cotízala a precio de HOY con buscar_producto, nunca con montos viejos). Responde en UN solo mensaje: breve (1-2 oraciones) para datos puntuales; para presentar productos, cotizaciones o puntos de retiro usa la estructura de BLOQUES del FORMATO DE PRODUCTO y las tarjetas de las herramientas — estructura sí, mensajes múltiples no.
 - Sé deferente: deja claro que un asesor sigue con su caso. Ej.: "Mientras tanto le confirmo: [dato]. Un asesor continúa con su solicitud enseguida."
 - NO cierres ni confirmes la venta, NO confirmes ni coordines un pedido ni una entrega, y NO contradigas ni renegocies algo que el asesor ya venía manejando (un precio especial, una cortesía).
 - DATOS DE ENTREGA: si el cliente da su dirección, referencia o ubicación 📍 (o responde a una pregunta tuya sobre eso), SÍ guárdalos con guardar_datos_envio y confirma ABRIENDO con el eco_guardado de la herramienta (SU dirección + el sector, tal cual — no solo el sector: repetir la dirección deja al cliente corregir al instante) + el costo que la tool devuelva (tarifa_entrega también vale). NUNCA menciones el código interno de zona (Z1, Z2, Z4a…). El despacho igual lo confirma y lo lanza el asesor.
@@ -2437,10 +2438,19 @@ async function guardarDatosEnvio(waId: string, input: any): Promise<string> {
       zona,
       // v105.1 — ECO DETERMINISTA (prueba en vivo 21-ago): el bot dijo "quedó registrada en El Cangrejo
       // (Bella Vista)" pero NO repitió la dirección que guardó — y ese eco es lo que deja al cliente
-      // atrapar un error de captura al instante. La línea se arma en CÓDIGO (dirección — sector) y las
-      // notas de abajo obligan a abrir con ella, aunque todavía falte la referencia.
+      // atrapar un error de captura al instante. La línea se arma en CÓDIGO y las notas de abajo obligan
+      // a abrir con ella, aunque todavía falte la referencia.
+      // v108.1 — el eco incluye sector Y corregimiento (pedido del negocio: repetir solo lo que el
+      // cliente escribió no genera confianza; nombrar el corregimiento demuestra que el sistema UBICÓ la
+      // dirección). Formato: "dirección — Sector (Corregimiento)".
       eco_guardado: dirFinal
-        ? [dirFinal, String((zona as any)?.lugar ?? "").trim()].filter(Boolean).join(" — ")
+        ? (() => {
+            const lugar = String((zona as any)?.lugar ?? "").trim();
+            const corr = String(jer?.corregimiento ?? "").trim();
+            const ubica = lugar && corr && corr.toLowerCase() !== lugar.toLowerCase()
+              ? `${lugar} (${corr})` : (lugar || corr);
+            return [dirFinal, ubica].filter(Boolean).join(" — ");
+          })()
         : undefined,
       nota: (() => {
         // v76 — el pin se pide SOLO como refuerzo: cuando la dirección no resolvió en el mapa de zonas
@@ -3501,7 +3511,7 @@ Deno.serve(async (req) => {
         texto: tr?.texto ?? null, ts: new Date().toISOString(),
       });
     }
-    return Response.json({ status: "ok", function: "copilot-webhook", version: "v108-asesoria-experta", mode: MODE, mode_raw: MODE_RAW, model: MODEL, llm_configured: !!anthropic, wati_send_configured: !!(WATI_API_TOKEN && WATI_API_BASE), inventario_configurado: !!(SHOPIFY_ADMIN_TOKEN && SHOPIFY_ADMIN_API_BASE), resolve_configured: !!RESOLVE_SECRET, webhook_key_es_default: WEBHOOK_KEY_ES_DEFAULT, handoff_assist_min: HANDOFF_ASSIST_MIN, handoff_cold_hours: HANDOFF_COLD_HOURS, debounce_ms: DEBOUNCE_MS, sesion_gap_dias: SESION_GAP_DIAS, burbujas: BURBUJAS, burbuja_ms: BURBUJA_MS, audio_puente: AUDIO_PUENTE, sweep: SWEEP_MODE, sweep_espera_min: SWEEP_ESPERA_MIN, stt: STT_MODE, stt_raw: STT_RAW, stt_configurado: !!OPENAI_API_KEY, stt_model: STT_MODEL, busqueda_shadow: BUSQUEDA_SHADOW, busqueda_mcp: BUSQUEDA_MCP, busqueda_mcp_limit: BUSQUEDA_MCP_LIMIT, catalog_mcp_url: CATALOG_MCP_URL, ucp_profile_url: UCP_PROFILE_URL, live_targets: MODE === "live" ? (LIVE_ALL ? "all" : LIVE_ALLOWLIST.length) : 0, ts: new Date().toISOString() });
+    return Response.json({ status: "ok", function: "copilot-webhook", version: "v108.1-estructura-y-eco", mode: MODE, mode_raw: MODE_RAW, model: MODEL, llm_configured: !!anthropic, wati_send_configured: !!(WATI_API_TOKEN && WATI_API_BASE), inventario_configurado: !!(SHOPIFY_ADMIN_TOKEN && SHOPIFY_ADMIN_API_BASE), resolve_configured: !!RESOLVE_SECRET, webhook_key_es_default: WEBHOOK_KEY_ES_DEFAULT, handoff_assist_min: HANDOFF_ASSIST_MIN, handoff_cold_hours: HANDOFF_COLD_HOURS, debounce_ms: DEBOUNCE_MS, sesion_gap_dias: SESION_GAP_DIAS, burbujas: BURBUJAS, burbuja_ms: BURBUJA_MS, audio_puente: AUDIO_PUENTE, sweep: SWEEP_MODE, sweep_espera_min: SWEEP_ESPERA_MIN, stt: STT_MODE, stt_raw: STT_RAW, stt_configurado: !!OPENAI_API_KEY, stt_model: STT_MODEL, busqueda_shadow: BUSQUEDA_SHADOW, busqueda_mcp: BUSQUEDA_MCP, busqueda_mcp_limit: BUSQUEDA_MCP_LIMIT, catalog_mcp_url: CATALOG_MCP_URL, ucp_profile_url: UCP_PROFILE_URL, live_targets: MODE === "live" ? (LIVE_ALL ? "all" : LIVE_ALLOWLIST.length) : 0, ts: new Date().toISOString() });
   }
   if (req.method !== "POST") return Response.json({ error: "method_not_allowed" }, { status: 405 });
   if (url.searchParams.get("key") !== WEBHOOK_KEY) return Response.json({ error: "forbidden" }, { status: 403 });
