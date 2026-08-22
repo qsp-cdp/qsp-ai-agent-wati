@@ -64,13 +64,20 @@ Shipday escribe hacia Supabase SOLO desde este webhook. No hay tercer camino.
 | **La libreta se tocó hace menos de 10 min** | **NO pisa**, solo audita: ese cambio puede ser más nuevo que el de Shipday y los eventos llegan fuera de orden |
 | El evento no trae dirección | no toca nada (nunca degrada) |
 | Dirección nueva sin coordenadas | limpia el pin viejo: apuntaba al domicilio anterior |
-| Dirección nueva CON pin | resuelve corregimiento y zona contra los polígonos (`zona_por_coordenadas`) |
+| Dirección nueva CON pin | recalcula provincia, distrito, corregimiento y zona contra los polígonos (`ubicacion_por_coordenadas`) |
 | Dirección nueva sin pin, o el pin no resuelve | limpia provincia/distrito/corregimiento: describían el domicilio anterior |
 
 **La jerarquía sigue la misma regla que el pin.** Provincia › distrito › corregimiento describen la
 dirección VIEJA, y de ahí sale la tarifa que se le cotiza al cliente: dejarlos puestos hace que la ficha
 afirme un corregimiento que ya no aplica. Con pin se resuelven contra los polígonos oficiales; sin pin se
 ponen en nulo — "no sé" es cierto, el dato viejo sería una mentira. La siguiente captura los vuelve a llenar.
+
+**Por qué una RPC nueva y no `zona_por_coordenadas`:** esa devuelve zona, tarifa y corregimiento, pero no
+provincia ni distrito (los lee de columnas denormalizadas de `limites_admin` que solo están llenas en 35
+de 635 filas). `ubicacion_por_coordenadas` la envuelve y añade los dos niveles sacándolos de los polígonos
+(nivel 1 = provincia, 2 = distrito). Cuidado al leerla: un pin del **interior** devuelve `estado:sin_match`
+—allá no hay zona de reparto propia, va por Servientrega— pero su jerarquía SÍ viene resuelta. Descartarla
+por el `estado` borraría la geografía de todo el interior; solo la ZONA depende de ese campo.
 
 **El espejo a WATI escribe TODOS los campos que la corrección toca**, y los vacíos van como `-` para pisar
 el valor anterior (lección v75.1 del copiloto): `direccion_envio`, `pin_envio`, `maps_envio`, `zona_envio`,
@@ -122,3 +129,21 @@ nacido de nuestro propio flujo.
 **Hueco que sigue abierto:** si el teléfono de la orden no está en `contacts`, la sincronización se sale
 sin hacer nada — ni libreta ni WATI. Es el caso probable de una tarea creada a mano para un cliente que
 nunca escribió por WhatsApp.
+
+### Lo que la ficha de WATI mostró tras esa prueba (y por qué)
+
+La prueba corrió a las 14:39 UTC y el arreglo se desplegó a las 14:50 — o sea que la ficha quedó
+retratando el comportamiento VIEJO, que solo escribía cuatro campos. Así se veía:
+
+| Atributo | Quedó | Debía quedar |
+|---|---|---|
+| `direccion_envio` | La Gloria, Betania, Bethania ✅ | — |
+| `maps_envio` | pin nuevo ✅ | — |
+| `envio_resumen` | Romeral, Chanis… › Parque Lefevre ❌ | la dirección nueva › Betania |
+| `corregimiento_envio` | Parque Lefevre ❌ | Betania |
+| `zona_envio` | Z1 Centro · $6 · Parque Lefevre ❌ | Z1 Centro · $6 · Betania |
+| `pin_envio` | vacío ❌ | el pin nuevo |
+
+Todos esos campos entran ahora en el espejo. `pin_envio` es el único raro: el código viejo lo mandaba con
+el MISMO valor que `maps_envio` y solo llegó uno — a vigilar en la próxima prueba, porque si vuelve a
+pasar el problema está del lado de WATI (atributo mal declarado en su panel), no del nuestro.

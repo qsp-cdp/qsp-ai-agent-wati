@@ -48,11 +48,18 @@ async function auditarDireccion(fila: Record<string, unknown>): Promise<void> {
   }
 }
 
-// Corregimiento y zona oficiales a partir del pin, contra nuestros polígonos (la misma RPC que usa el
-// copiloto). Best-effort: si no resuelve, devuelve null y el llamador trata la ubicación como desconocida.
-async function ubicacionPorPin(lat: number, lng: number): Promise<{ corregimiento: string; zona: string } | null> {
+// Dónde queda el pin: jerarquía administrativa (de los polígonos oficiales) + zona comercial.
+// Best-effort: si no resuelve, devuelve null y el llamador trata la ubicación como desconocida.
+//
+// OJO con `estado`: un pin del interior devuelve `sin_match` porque allá no hay zona de reparto propia
+// (va por Servientrega), pero su provincia/distrito/corregimiento SÍ están resueltos. Descartar la
+// jerarquía por un `estado != ok` borraría geografía buena de todo el interior del país. Solo la ZONA
+// depende de ese estado.
+interface UbicacionPin { provincia: string; distrito: string; corregimiento: string; zonaTxt: string }
+
+async function ubicacionPorPin(lat: number, lng: number): Promise<UbicacionPin | null> {
   try {
-    const res = await fetch(`${Deno.env.get('SUPABASE_URL')}/rest/v1/rpc/zona_por_coordenadas`, {
+    const res = await fetch(`${Deno.env.get('SUPABASE_URL')}/rest/v1/rpc/ubicacion_por_coordenadas`, {
       method: 'POST',
       headers: {
         apikey: Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? '',
@@ -64,9 +71,18 @@ async function ubicacionPorPin(lat: number, lng: number): Promise<{ corregimient
     });
     if (!res.ok) return null;
     const z = await res.json();
-    if (z?.estado !== 'ok') return null;
-    const corregimiento = String(z.corregimiento ?? '').trim();
-    return corregimiento ? { corregimiento, zona: String(z.zona ?? '').trim() } : null;
+    const corregimiento = String(z?.corregimiento ?? '').trim();
+    if (!corregimiento) return null;
+    // Formato de `zona_envio` copiado del copiloto: "Z1 Centro · $6 · Betania".
+    const zonaTxt = z?.estado === 'ok'
+      ? [z.zona, z.tarifa_usd != null ? `$${z.tarifa_usd}` : null, corregimiento].filter(Boolean).join(' · ')
+      : '';
+    return {
+      provincia: String(z?.provincia ?? '').trim(),
+      distrito: String(z?.distrito ?? '').trim(),
+      corregimiento,
+      zonaTxt,
+    };
   } catch {
     return null;
   }
@@ -113,23 +129,15 @@ async function sincronizarDireccionDesdeShipday(payload: any, waId: string, pedi
     patch.latitude = null; patch.longitude = null; patch.maps_url = null;
   }
 
-  // La jerarquía guardada (provincia › distrito › corregimiento) describe la dirección ANTERIOR. Misma
-  // lección que el pin: dejarla puesta hace que la ficha AFIRME un corregimiento que ya no aplica, y de
-  // ahí sale la tarifa que se le cotiza al cliente. Con pin la resolvemos contra los polígonos
+  // La jerarquía guardada (provincia › distrito › corregimiento) describe la dirección ANTERIOR, y de
+  // ahí sale la tarifa que se le cotiza al cliente. Misma lección que el pin: dejarla puesta hace que la
+  // ficha AFIRME un corregimiento que ya no aplica. Con pin se recalcula entera contra los polígonos
   // oficiales; sin pin se limpia — un nulo dice "no sé", que es cierto, y el dato viejo diría una
   // mentira. La siguiente captura del copiloto la vuelve a llenar.
-  // `provincia`/`distrito`/`corregimiento` no están declarados en la interfaz Contact pero PostgREST sí
-  // los devuelve (findContactByPhone trae la fila completa); el cast lo deja explícito.
-  const jer = c as unknown as { provincia?: string | null; distrito?: string | null; corregimiento?: string | null };
-  const corregAnt = String(jer.corregimiento ?? '').trim();
   const ubic = hayPin ? await ubicacionPorPin(lat, lng) : null;
-  const corregNuevo = ubic?.corregimiento ?? null;
-  const mismaJerarquia = !!corregNuevo && corregNuevo.toLowerCase() === corregAnt.toLowerCase();
-  if (!mismaJerarquia) {
-    patch.corregimiento = corregNuevo;
-    patch.provincia = null;
-    patch.distrito = null;
-  }
+  patch.provincia = ubic?.provincia || null;
+  patch.distrito = ubic?.distrito || null;
+  patch.corregimiento = ubic?.corregimiento || null;
   const res = await fetch(`${Deno.env.get('SUPABASE_URL')}/rest/v1/contacts?phone_digits=eq.${lastDigits(waId)}`, {
     method: 'PATCH',
     headers: {
@@ -154,13 +162,13 @@ async function sincronizarDireccionDesdeShipday(payload: any, waId: string, pedi
   // de uno exitoso.
   if (ok) {
     const pinUrl = hayPin ? `https://maps.google.com/?q=${lat},${lng}` : '';
-    const prov = mismaJerarquia ? String(jer.provincia ?? '').trim() : '';
-    const dist = mismaJerarquia ? String(jer.distrito ?? '').trim() : '';
-    const correg = mismaJerarquia ? corregAnt : (corregNuevo ?? '');
+    const prov = ubic?.provincia ?? '';
+    const dist = ubic?.distrito ?? '';
+    const correg = ubic?.corregimiento ?? '';
     // La zona (y con ella la tarifa) sale del corregimiento: si la dirección se mudó, la zona vieja de
     // la ficha ya no describe a dónde va el pedido. Sin pin no hay cómo resolverla → "-" en vez de una
     // zona que cotizaría mal.
-    const zonaTxt = ubic?.zona ?? '';
+    const zonaTxt = ubic?.zonaTxt ?? '';
     const val = (s: string) => (s ? s.slice(0, 250) : '-');
     // Formato idéntico al del copiloto y wati-mirror: "dirección — referencia · Provincia › Distrito › Corregimiento".
     const referencia = String(c.referencia ?? '').trim();
@@ -177,7 +185,11 @@ async function sincronizarDireccionDesdeShipday(payload: any, waId: string, pedi
         distrito_envio: val(dist),
         corregimiento_envio: val(correg),
         envio_resumen: val(resumen),
-        envio_estado: '✏️ Dirección corregida en Shipday',
+        // Sin pin el asesor tiene que saberlo ANTES de despachar: la dirección nueva es solo texto y
+        // el pin viejo (el del domicilio anterior) acaba de borrarse a propósito.
+        envio_estado: hayPin
+          ? '✏️ Dirección corregida en Shipday'
+          : '✏️ Dirección corregida en Shipday — 📝 sin pin, confirmar ubicación',
         envio_fecha: new Date().toISOString().slice(0, 10),
       });
       const campos = (r as { campos?: string[] }).campos?.length ?? 0;
