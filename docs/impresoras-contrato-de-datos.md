@@ -90,3 +90,50 @@ from job_log
 where function_name = 'specs-centinela'
 order by created_at desc limit 5;
 ```
+
+## Contenido sindicado: sirve, pero primero hay que sanear el número de parte
+
+**Ya tienen sindicación instalada.** Es 1WorldSync: la clave `05405c2a` y la zona `hp-auto-pp` están
+embebidas en varios metacampos (`sindicado.custom.contenido_sindicado`, `informacion_extra.custom.codigo.html`,
+`descripcion.custom.html`, `Descripcion.custom.descripcion`) de productos Epson, Canon y Lexmark.
+
+Tres cosas que hay que saber antes de apoyarse en ella:
+
+**1. Es un widget, no un feed.** El script `h1ws.js` arma `ws.cs.1worldsync.com/script/<zona>?mf=…&pn=…`
+y **inyecta HTML en el navegador del cliente**. No hay tabla de specs legible desde el servidor: llamar
+al endpoint desde fuera del navegador devuelve 400. Para nuestro uso —cargar campos estructurados— hace
+falta la **API de datos**, no el widget. Como ya son clientes de 1WorldSync, pedir acceso al feed puede
+ser cuestión de un correo. Alternativa con catálogo abierto: **Icecat**.
+
+**2. La zona configurada es `hp-auto-pp`** — la de HP — y se la están pasando también a productos Epson
+(`mf: 'Epson'`) y Canon. Vale confirmar con el proveedor si esos productos están mostrando algo, porque
+puede haber sindicación pagada que no se ve.
+
+**3. Aunque llegue el feed, el contrato de datos sigue haciendo falta.** El contenido sindicado es
+material de marketing autorizado por el fabricante: excelente para descripciones, fotos y bullets, pero
+sus specs vienen como "velocidad de impresión: hasta 33 ppm", sin decir si es ISO o borrador. Resuelve
+el problema de TENER contenido, no el de la unidad.
+
+### El bloqueante real: 20 MPN duplicados
+
+Todo catálogo sindicado (1WorldSync, Icecat, Syndigo) y también Google Shopping indexan por **número de
+parte**. Un MPN repetido hace que el feed le entregue a un producto el contenido de otro: specs, fotos y
+todo. La primera corrida del centinela encontró **20 duplicados**, varios abarcando de 3 a 7 productos:
+
+| MPN | Se repite en | Comentario |
+|---|---|---|
+| `MFCL3710CW` | 7 productos | Canon imageRunner, Brother MFC-T4500DW, Canon imageCLASS X MF1538C… |
+| `C11CK24301` | 4 Epson WorkForce | WF-C5810, C5890, C5891, M5899 |
+| `5HB06A#B1K` | 1 HP + 3 Canon | un número de parte de HP DesignJet en plotters Canon |
+| `4SB24A#AKY` | Smart Tank 530, 580, 583 | el de la 580 debería ser `1F3Y2A` (está en el nombre de su ficha) |
+| `C11CJ80201` | Epson F170 y **Brother SP-1** | el MISMO copy-paste que le puso a la SP-1 la descripción de la F170 |
+| `CZ993A#AKY` | HP OfficeJet 200 y **Canon** PIXMA TR160 | cruzado entre marcas |
+
+El patrón es claro: al duplicar un producto en Shopify para crear otro, el número de parte viaja con la
+copia y nadie lo cambia. Es la misma raíz que las descripciones equivocadas — y explica por qué la
+SP-1 tenía la ficha de la F170: comparten el MPN hasta hoy.
+
+**Conclusión: con esto sin arreglar, sindicar contenido empeora el catálogo en vez de arreglarlo.**
+Saneado el MPN, la sindicación pasa a ser la mejor opción de largo plazo. El centinela ya vigila
+`mpn_duplicado` y `sin_mpn` (18 impresoras sin número de parte), y un duplicado cuenta como "no limpio"
+igual que una contradicción de specs.
