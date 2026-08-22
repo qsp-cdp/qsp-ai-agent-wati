@@ -18,13 +18,27 @@ conviene que un humano que conozca los equipos les dé una pasada.
 directamente en la celda y marca `verificado` ✔ en las filas que ya repasaste. No hay apuro: el bot
 ya funciona con las filas sin verificar (presenta los specs "según ficha").
 
-## Errores de la TIENDA encontrados durante la extracción (corregir en Shopify)
+## Errores de la TIENDA encontrados durante la extracción — ✅ RESUELTOS (22-ago-2026)
 
-1. **Brother SP-1 (sublimación)**: su ficha tiene pegada la descripción de la **Epson SureColor
-   F170** — un copy-paste. La fila quedó casi vacía a propósito.
-2. **Epson LQ-590II (matriz)**: la ficha está vacía (solo el título). Sin datos que extraer.
-3. **Epson EcoTank L5590**: el título dice **15 ppm color** y el cuerpo dice **20 ppm** — la fila
-   quedó con 15 (el título) y la nota del conflicto. Confirmar cuál es y unificar la ficha.
+Las tres fichas fueron corregidas en Shopify y la tabla se re-sincronizó desde ellas
+(migración `20260822170000_impresoras_specs_tres_fichas_corregidas`).
+
+1. **Brother SP-1 (sublimación)** — tenía pegada la descripción de la Epson SureColor F170.
+   Ya es la real: Artspira, cartuchos CMYK de 47 ml, prensa de calor aparte. *Sigue sin dato el
+   `tamano_maximo`: la ficha nueva no menciona el tamaño de papel, y se prefiere el nulo a deducirlo.*
+2. **Epson LQ-590II (matriz)** — la ficha estaba vacía. Ya trae 24 agujas, 584 cps a 12 cpi,
+   formularios de hasta 7 partes, USB + paralelo. Sin ppm a propósito: una matricial se mide en
+   caracteres por segundo, igual que el resto de su categoría aquí.
+3. **Epson EcoTank L5590** — el error era **peor que el conflicto 15/20** que se había anotado.
+   La fila decía `33 ppm negro / 15 ppm color`, y eso no es un par: **33 es la velocidad en borrador
+   y 15 es la velocidad ISO en NEGRO metida en la columna de color**. Las demás EcoTank de la tabla
+   están todas en ISO (L3250 10/5, L4360 15/8, L6370 18/9), así que la L5590 se comparaba con sus
+   hermanas usando otra vara — y como `asesorar_impresora` ordena por `ppm_negro`, el bot la habría
+   presentado como **más del doble de rápida de lo que es**. Corregida a su ISO real, 15/8; la
+   velocidad de borrador (33/20, la que anuncia el título) quedó en las notas.
+
+> **Lección para futuras cargas:** al leer una ficha, comprobar que los dos ppm sean del MISMO
+> estándar. Epson publica borrador e ISO en el mismo párrafo y es fácil cruzarlos.
 
 ## Campos que más merecen ojo humano
 
