@@ -114,3 +114,55 @@ llena una app de SEO y arrastra copy-paste viejo: **no usarlo como fuente de spe
 - **Producto retirado** → borrar la fila (o dejarla: si Shopify ya no lo tiene, `buscar_producto` no
   lo encontrará y el bot no lo ofrecerá — pero mejor limpiar).
 - La migración con el seed completo está en `supabase/migrations/20260821230000_impresoras_specs.sql`.
+
+## Carga desde la ficha oficial del fabricante (22-ago-2026, en curso)
+
+Decisión de Isaac: **los metacampos de Shopify son la fuente de verdad**, y los datos se buscan en los
+sitios oficiales de Latinoamérica. Orden de trabajo: los modelos que más preguntan los clientes reales,
+medido sobre las conversaciones de WhatsApp (`messages`), no por catálogo.
+
+**Cómo se consigue el dato.** Ni la ficha de la tienda ni los metacampos ni el HTML de la página oficial
+traen la tabla de especificaciones — Epson y compañía la cargan por JS (comprobado bajando la página con
+pg_net: 200 y 290 KB, y el panel "Especificaciones" solo con "qué hay en la caja"). El dato duro vive en
+el **PDF de la ficha técnica**. Como el PDF es binario y pg_net devuelve texto, lo baja la Edge Function
+`ficha-pdf`, que le extrae el texto y lo deja en `fichas_pdf`.
+
+Dos orígenes de PDF, en este orden:
+1. **Los que la tienda ya hospeda** en Contenido → Archivos (~90).
+2. **El sitio del fabricante**. Canon Latinoamérica publica los folletos en español con sección para
+   Panamá y una ruta predecible:
+   `https://www.cla.canon.com/es_PA/app/pdf/brochures/G-Series_Inkjet_Printers/PIXMA-<MODELO>_Brochure.pdf`
+   (funcionó tal cual para la G4170; la ruta de la serie TS no es la misma y devuelve 500).
+
+**Unidades — la trampa que explica casi todos los errores.** Epson y HP publican "ISO ppm", Canon publica
+"ESAT ipm", y los tres salen de **ISO/IEC 24734**: son comparables entre sí, así que el orden por
+`ppm_negro` de `asesorar_impresora` significa algo. Lo que NUNCA se mezcla es la velocidad de **borrador**
+con la **ISO** — de ahí salieron la L5590 y las dos Canon.
+
+### Errores encontrados contra la fuente oficial
+
+| Modelo | Decía la tabla | Dice el fabricante |
+|---|---|---|
+| Epson EcoTank L5590 | ISO 33/15 · carta | **ISO 15/8** · borrador 30/20 (el título dice 33) · **legal** |
+| Canon MAXIFY GX4010 | 30/18 ppm | **ESAT 18,0/13,0 ipm** (~67% más lenta de lo que decía) |
+| Canon PIXMA G3170 | 8.8/5 ppm | **ESAT 11,0/6,0 ipm** |
+| Canon PIXMA G4170 | 8.8/5 ppm | **ESAT 11,0/6,0 ipm** |
+| HP Laser 137fnw | dúplex sin dato · carta | **dúplex MANUAL** · ADF 40 hojas · **legal** |
+| HP Smart Tank 750 | carta | **legal** (HP lista Oficio en las capacidades de entrada) |
+| Epson EcoTank L14150 | ADF genérico | **ADF de 35 hojas**, dúplex automático |
+| Epson SureColor F170 | conectividad en nulo | **USB + Ethernet + inalámbrica** |
+
+Confirmados sin cambios (la carga original estaba bien): L3250, HP Smart Tank 530, HP Smart Tank 580,
+L4360.
+
+### Estado
+
+12 de 87 filas ya tienen `fuente_url` verificable · consumibles vacíos 50 (eran 56) · dúplex sin dato 37.
+
+### Pendiente
+
+- Modelos preguntados que aún no tienen ficha localizada: Canon TS3610 (la ruta de la serie TS en
+  cla.canon.com da 500), HP OfficeJet Pro 9730 y 9130, Epson L1250, L8050, WF-C5891, Canon imageCLASS
+  X MF1538C, HP DesignJet T250.
+- **Escribir los metacampos de Shopify por API** con lo verificado, que es donde se acordó que viva el
+  dato bueno, y dejar a `impresoras_specs` sincronizándose desde ahí.
