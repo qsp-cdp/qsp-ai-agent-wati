@@ -28,11 +28,16 @@ const SHOPIFY_BASE = (Deno.env.get('SHOPIFY_ADMIN_API_BASE') ?? '').trim().repla
 const json = (body: unknown, status = 200) =>
   new Response(JSON.stringify(body, null, 2), { status, headers: { 'Content-Type': 'application/json' } });
 
-// El tipo de producto de una impresora en esta tienda empieza por "Impresora"/"Plotter", pero los
-// ACCESORIOS comparten el tipo (bandejas, pedestales, baterías, alimentadores sueltos). Se filtran por
-// el título: es preferible dejar pasar un accesorio a la lista de "nuevos" —donde un humano lo
-// descarta de un vistazo— que esconder una impresora de verdad.
-const RE_ACCESORIO = /^(bandeja|pedestal|bater[ií]a|soporte|alimentador|kit|cable|tapa|rodillo|fusor|correa)\b/i;
+// El tipo de producto de una impresora en esta tienda empieza por "Impresora"/"Plotter", pero hay
+// CONSUMIBLES Y ACCESORIOS con ese mismo tipo: la primera corrida encontró 24 (cajas de mantenimiento
+// Epson, cartuchos de mantenimiento Canon, tambores Brother, colectores de tinta, bandejas, interfaces
+// de red). No es un problema del centinela sino de la clasificación en Shopify, y también afecta a los
+// filtros de la tienda.
+//
+// No se DESCARTAN: se separan en su propia lista. Ocultarlos volvería a la costumbre de que los datos
+// raros desaparezcan sin que nadie los vea — que es de donde venimos.
+const RE_ACCESORIO =
+  /^(bandeja|pedestal|bater[ií]a|soporte|alimentador|kit|cable|tapa|rodillo|fusor|correa|caja de mantenimiento|cartucho de mantenimiento|tambor|colector|conjunto|interfaz|unidad de imagen|revelador)\b/i;
 
 interface ProductoShopify { handle: string; title: string; productType: string }
 
@@ -132,8 +137,14 @@ Deno.serve(async (req) => {
   const porHandle = new Map(tabla.filter((f) => f.handle).map((f) => [f.handle as string, f]));
   const handlesTienda = new Set(tienda.map((p) => p.handle));
 
-  const nuevos = tienda
-    .filter((p) => !RE_ACCESORIO.test(p.title) && !porHandle.has(p.handle))
+  const faltantes = tienda.filter((p) => !porHandle.has(p.handle));
+  const nuevos = faltantes
+    .filter((p) => !RE_ACCESORIO.test(p.title))
+    .map((p) => ({ handle: p.handle, titulo: p.title.slice(0, 120), tipo: p.productType }));
+  // Consumibles y accesorios que en Shopify están tipados como impresora. No son trabajo para la tabla
+  // del bot, pero sí para el catálogo: con ese tipo se cuelan en los filtros de la tienda.
+  const mal_clasificados = faltantes
+    .filter((p) => RE_ACCESORIO.test(p.title))
     .map((p) => ({ handle: p.handle, titulo: p.title.slice(0, 120), tipo: p.productType }));
 
   const retirados = tabla
@@ -175,9 +186,12 @@ Deno.serve(async (req) => {
     titulo_vs_ficha: titulo_vs_ficha.length,
     sin_fuente: sin_fuente.length,
     fuente_vieja: fuente_vieja.length,
+    mal_clasificados: mal_clasificados.length,
     impresoras_en_tienda: tienda.length,
     filas_en_tabla: tabla.length,
   };
+  // "Limpio" mira solo lo que rompe al bot. Un consumible mal tipado en Shopify o una fila sin fuente
+  // son deuda a ordenar, no una alarma que valga la pena disparar cada semana.
   const limpio = nuevos.length === 0 && retirados.length === 0 && titulo_vs_ficha.length === 0;
   await logJob('specs-centinela', 'revision', limpio, resumen);
 
@@ -186,6 +200,6 @@ Deno.serve(async (req) => {
     version: VERSION,
     resumen,
     // Las listas van completas: el valor de esto es poder actuar sin tener que ir a buscar el detalle.
-    detalle: { nuevos, retirados, titulo_vs_ficha, sin_fuente, fuente_vieja },
+    detalle: { nuevos, retirados, titulo_vs_ficha, mal_clasificados, sin_fuente, fuente_vieja },
   });
 });
