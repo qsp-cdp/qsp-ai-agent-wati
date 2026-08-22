@@ -1979,10 +1979,21 @@ async function sucursalesInterior(lugar: string = ""): Promise<string> {
     const etiqueta = (t: string) => t === "sucursal"
       ? "Sucursal de Servientrega (Centro de Soluciones — punto propio)"
       : "Agente Verde de Servientrega (comercio aliado autorizado: ahí LLEGA el pedido y el cliente lo retira)";
+    // v107.1 — TARJETA armada en CÓDIGO (feedback de la prueba en vivo: el modelo apelmazaba los datos
+    // en un párrafo y soltaba la sigla "CDS"). El título convierte el prefijo CDS/AV en su nombre para
+    // el cliente, y el bloque queda listo para copiar: una línea por dato, legible en WhatsApp.
+    const titulo = (s: any) => {
+      const sinPrefijo = String(s.nombre).replace(/^(CDS|AV)\s+/i, "").trim();
+      return s.tipo === "sucursal" ? `Sucursal de Servientrega – ${sinPrefijo}` : `Agente Verde – ${sinPrefijo}`;
+    };
+    const tarjeta = (s: any) => [
+      `📍 *${titulo(s)}*`,
+      s.direccion ? `${s.direccion}` : null,
+      [s.telefono ? `📞 ${s.telefono}` : "📞 por confirmar con un asesor", s.horario ? `🕐 ${s.horario}` : null].filter(Boolean).join(" · "),
+      s.maps_url ? `🗺️ ${s.maps_url}` : null,
+    ].filter(Boolean).join("\n");
     const compacto = (s: any) => ({
-      nombre: s.nombre, tipo: etiqueta(s.tipo), provincia: s.provincia,
-      direccion: s.direccion ?? undefined, telefono: s.telefono ?? "por confirmar con un asesor",
-      horario: s.horario ?? "por confirmar con un asesor", mapa: s.maps_url ?? undefined,
+      tarjeta: tarjeta(s), tipo: etiqueta(s.tipo), provincia: s.provincia,
     });
     const provs = () => [...new Set(data.map((s: any) => String(s.provincia)))].map((p) => `${p} (${data.filter((s: any) => s.provincia === p).length})`);
     if (!q) return JSON.stringify({ resultado: "pide la provincia o ciudad del cliente para dar el punto exacto", provincias_con_puntos: provs(), listado_completo: SUCURSALES_URL });
@@ -1995,7 +2006,7 @@ async function sucursalesInterior(lugar: string = ""): Promise<string> {
     }
     return JSON.stringify({
       puntos: hits.slice(0, 6).map(compacto), total_coincidencias: hits.length, listado_completo: SUCURSALES_URL,
-      nota: "Nombra el punto por su NOMBRE y di QUÉ es con el campo tipo (una Sucursal de Servientrega, o un Agente Verde: un comercio aliado donde llega su pedido y lo retira con su cédula) — así el cliente reconoce el punto de su sector. Da la dirección y el teléfono tal cual, y comparte el link del campo mapa si viene. No olvides ofrecer TAMBIÉN la entrega puerta a puerta con su costo (tarifa_interior/plazo_interior de info_tienda).",
+      nota: "Copia el campo `tarjeta` de cada punto TAL CUAL (líneas y emojis incluidos) — no lo re-redactes en un párrafo. Estructura sugerida: frase corta de apertura + *1. Retiro en un punto Servientrega* con su costo + la(s) tarjeta(s) (máximo 2, las más cercanas al cliente) + *2. Entrega puerta a puerta* con su costo + pregunta de cierre. Si un punto es Agente Verde, explica en una línea qué es (comercio aliado donde llega su pedido y lo retira con cédula). Los costos de ambas vías salen de info_tienda (tarifa_interior/plazo_interior).",
     });
   } catch (e) {
     await log("error", false, { fase: "sucursales_interior", error: String(e).slice(0, 150) });
@@ -3486,7 +3497,7 @@ Deno.serve(async (req) => {
         texto: tr?.texto ?? null, ts: new Date().toISOString(),
       });
     }
-    return Response.json({ status: "ok", function: "copilot-webhook", version: "v107-prompt-f1", mode: MODE, mode_raw: MODE_RAW, model: MODEL, llm_configured: !!anthropic, wati_send_configured: !!(WATI_API_TOKEN && WATI_API_BASE), inventario_configurado: !!(SHOPIFY_ADMIN_TOKEN && SHOPIFY_ADMIN_API_BASE), resolve_configured: !!RESOLVE_SECRET, webhook_key_es_default: WEBHOOK_KEY_ES_DEFAULT, handoff_assist_min: HANDOFF_ASSIST_MIN, handoff_cold_hours: HANDOFF_COLD_HOURS, debounce_ms: DEBOUNCE_MS, sesion_gap_dias: SESION_GAP_DIAS, burbujas: BURBUJAS, burbuja_ms: BURBUJA_MS, audio_puente: AUDIO_PUENTE, sweep: SWEEP_MODE, sweep_espera_min: SWEEP_ESPERA_MIN, stt: STT_MODE, stt_raw: STT_RAW, stt_configurado: !!OPENAI_API_KEY, stt_model: STT_MODEL, busqueda_shadow: BUSQUEDA_SHADOW, busqueda_mcp: BUSQUEDA_MCP, busqueda_mcp_limit: BUSQUEDA_MCP_LIMIT, catalog_mcp_url: CATALOG_MCP_URL, ucp_profile_url: UCP_PROFILE_URL, live_targets: MODE === "live" ? (LIVE_ALL ? "all" : LIVE_ALLOWLIST.length) : 0, ts: new Date().toISOString() });
+    return Response.json({ status: "ok", function: "copilot-webhook", version: "v107.1-tarjeta-agencias", mode: MODE, mode_raw: MODE_RAW, model: MODEL, llm_configured: !!anthropic, wati_send_configured: !!(WATI_API_TOKEN && WATI_API_BASE), inventario_configurado: !!(SHOPIFY_ADMIN_TOKEN && SHOPIFY_ADMIN_API_BASE), resolve_configured: !!RESOLVE_SECRET, webhook_key_es_default: WEBHOOK_KEY_ES_DEFAULT, handoff_assist_min: HANDOFF_ASSIST_MIN, handoff_cold_hours: HANDOFF_COLD_HOURS, debounce_ms: DEBOUNCE_MS, sesion_gap_dias: SESION_GAP_DIAS, burbujas: BURBUJAS, burbuja_ms: BURBUJA_MS, audio_puente: AUDIO_PUENTE, sweep: SWEEP_MODE, sweep_espera_min: SWEEP_ESPERA_MIN, stt: STT_MODE, stt_raw: STT_RAW, stt_configurado: !!OPENAI_API_KEY, stt_model: STT_MODEL, busqueda_shadow: BUSQUEDA_SHADOW, busqueda_mcp: BUSQUEDA_MCP, busqueda_mcp_limit: BUSQUEDA_MCP_LIMIT, catalog_mcp_url: CATALOG_MCP_URL, ucp_profile_url: UCP_PROFILE_URL, live_targets: MODE === "live" ? (LIVE_ALL ? "all" : LIVE_ALLOWLIST.length) : 0, ts: new Date().toISOString() });
   }
   if (req.method !== "POST") return Response.json({ error: "method_not_allowed" }, { status: 405 });
   if (url.searchParams.get("key") !== WEBHOOK_KEY) return Response.json({ error: "forbidden" }, { status: 403 });
