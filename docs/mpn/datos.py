@@ -47,9 +47,9 @@ GRUPOS = [
  ]),
  ("C11CK24301", [
    ("Epson WorkForce Pro WF-C5810", "impresora-epson-workforce-pro-wf-c5810", "C11CK24301", "probable dueno"),
-   ("Epson WorkForce Pro WF-C5890", "impresora-epson-workforce-pro-wf-c5890", "", "PENDIENTE"),
-   ("Epson WorkForce Pro WF-C5891", "impresora-epson-workforce-pro-wf-c5891-multifuncional-a-color", "", "PENDIENTE"),
-   ("Epson WorkForce Pro WF-M5899", "impresora-epson-workforce-pro-wf-m5899-multifuncional-monocromatica-25-ppm-negro", "", "PENDIENTE"),
+   ("Epson WorkForce Pro WF-C5890", "impresora-epson-workforce-pro-wf-c5890", "C11CK23301", "pagina oficial Epson (el SKU va en la URL: /p/C11CK23301)"),
+   ("Epson WorkForce Pro WF-C5891", "impresora-epson-workforce-pro-wf-c5891-multifuncional-a-color", "C11CK27301", "pagina oficial Epson (/p/C11CK27301)"),
+   ("Epson WorkForce Pro WF-M5899", "impresora-epson-workforce-pro-wf-m5899-multifuncional-monocromatica-25-ppm-negro", "C11CK76301", "pagina oficial Epson (/p/C11CK76301)"),
  ]),
  ("C12C934461", [
    ("Caja de mantenimiento Epson C9344", "caja-de-mantenimiento-epson-c9344-c12934461", "C12C934461", "probable dueno"),
@@ -77,8 +77,8 @@ GRUPOS = [
    ("Canon MAXIFY GX7110", "impresora-canon-maxify-gx7110-impresion-profesional-inalambrica-conectividad-canon-print-app-alta-velocidad-2-7-lcd-tactil-45-ppm-negro-25-ppm-color", "", "PENDIENTE (4471C004AA es de la GX7010, otro modelo)"),
  ]),
  ("7KW55A#BGJ", [
-   ("HP Color LaserJet Enterprise 5700dn", "hp-color-laserjet-enterprise-5700dn-imprime-escanea-y-copia-con-calidad-laser-en-color", "", "PENDIENTE"),
-   ("HP Color LaserJet Pro 3303fdw", "hp-color-laserjet-pro-3303fdw-imprime-escanea-y-copia-con-calidad-laser-en-color", "", "PENDIENTE"),
+   ("HP Color LaserJet Enterprise 5700dn", "hp-color-laserjet-enterprise-5700dn-imprime-escanea-y-copia-con-calidad-laser-en-color", "6QN28A", "hp.com: el numero va en el titulo, la URL y el nombre de su hoja de especificaciones"),
+   ("HP Color LaserJet Pro 3303fdw", "hp-color-laserjet-pro-3303fdw-imprime-escanea-y-copia-con-calidad-laser-en-color", "499M8A", "tienda oficial HP Argentina (el numero va en la URL del producto)"),
    ("HP Color LaserJet Enterprise Flow 6800zf", "hp-color-laserjet-enterprise-flow-6800zf", "", "PENDIENTE"),
  ]),
  ("MFCL3710CW", [
@@ -111,8 +111,8 @@ OTROS = [
   "29S0150 es de la MX331adn. PENDIENTE de buscar el de la MX522adhe."),
  ("HP OfficeJet Pro 9730", "impresora-hp-officejet-pro-9730-ideal-para-formatos-grandes-11-x-17-incluye-dos-bandejas", "G5J38A#AKY", "",
   "G5J38A es de la OfficeJet Pro 7740, a la que reemplaza. PENDIENTE."),
- ("HP OfficeJet Pro 9130", "impresora-hp-officejet-pro-9130-multifuncional-profesionalismo-y-eficiencia-accesos-directos-y-conexiones-seguras", "1MR69C#AKY", "",
-  "1MR69C es de la OfficeJet Pro 9020. PENDIENTE."),
+ ("HP OfficeJet Pro 9130", "impresora-hp-officejet-pro-9130-multifuncional-profesionalismo-y-eficiencia-accesos-directos-y-conexiones-seguras", "1MR69C#AKY", "C2WM3B (confirmar)",
+  "1MR69C es de la OfficeJet Pro 9020. El C2WM3B sale de hp.com pero no lo vi en una URL: confirmar antes de aplicar."),
  ("HP DeskJet Ink Advantage 2875", "impresora-hp-deskjet-ink-advantage-2875-588s4a", "7FR21A", "588S4A",
   "El titulo y el handle dicen 588S4A. El 7FR21A es de la 2775."),
  ("HP DeskJet Ink Advantage 2975", "impresora-hp-deskjet-ink-advantage-2975-aj4y5a", "7FR21A", "AJ4Y5A",

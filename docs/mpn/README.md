@@ -47,6 +47,17 @@ Cada propuesta lleva su origen. Por orden de confianza:
 4. **Patrón de la marca** — Brother usa el código de modelo sin guiones (`DCPT730DW`). Marcado como
    "confirmar" porque es inferencia, no dato.
 
+**Atajo por marca**, que es lo que hace rápido el trabajo:
+
+- **Epson** — el SKU va en la URL de su página oficial: `…/Impresora-WorkForce-Pro-WF-C5891/p/C11CK27301`.
+  Basta con buscar el modelo y leer la URL.
+- **Canon** — el folleto trae la tabla "NÚMERO DE MODELO / DESCRIPCIÓN / NÚMERO DE ÍTEM". Si el PDF ya
+  está en `fichas_pdf`, sale con SQL sin descargar nada.
+- **HP** — el número va en el título de la página, en la URL de la tienda y en el nombre del PDF de
+  especificaciones (`6QN28A.pdf`).
+- **Brother** — el MPN es el modelo sin guiones, pero conviene confirmarlo: en esta tienda la QL-800
+  está guardada con guion, así que la convención no es uniforme.
+
 ## Resueltos con evidencia dura
 
 | Producto | Tenía | Es | Fuente |
@@ -62,6 +73,11 @@ Cada propuesta lleva su origen. Por orden de confianza:
 | HP LaserJet M111w | 7ZU85A#BGJ (de la M578dn) | **7MD68A** | título y handle |
 | HP DeskJet 2875 / 2975 | 7FR21A (de la 2775) | **588S4A** / **AJ4Y5A** | título y handle |
 | Canon TC-20 / TM-340 / TM-340 MFP | 5HB06A#B1K (HP) | **5815C002** / **6248C002** / **6248C023AA** | título |
+| Epson WF-C5890 | C11CK24301 (de la C5810) | **C11CK23301** | página oficial Epson |
+| Epson WF-C5891 | C11CK24301 (de la C5810) | **C11CK27301** | página oficial Epson |
+| Epson WF-M5899 | C11CK24301 (de la C5810) | **C11CK76301** | página oficial Epson |
+| HP Color LaserJet Ent. 5700dn | 7KW55A#BGJ | **6QN28A** | hp.com |
+| HP Color LaserJet Pro 3303fdw | 7KW55A#BGJ | **499M8A** | tienda oficial HP |
 
 ## Al terminar
 
