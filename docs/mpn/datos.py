@@ -69,8 +69,8 @@ GRUPOS = [
  ]),
  ("C31CH51001", [
    ("Epson TM-T20III termica USB/Red", "impresora-termica-epson-tm-t20iii-usb-red", "C31CH51001", "probable dueno"),
-   ("Epson TM-T88VII termica", "impresora-termica-epson-tm-t88vii", "", "PENDIENTE"),
-   ("Epson TM-m30III termica", "impresora-termica-epson-tm-m30iii", "", "PENDIENTE"),
+   ("Epson TM-T88VII termica", "impresora-termica-epson-tm-t88vii", "C31CJ57052 (confirmar variante)", "Epson Mexico. OJO: las POS tienen un SKU por interfaz y color; confirmar cual se vende"),
+   ("Epson TM-m30III termica", "impresora-termica-epson-tm-m30iii", "C31CK50012 (confirmar variante)", "pagina oficial Epson (/p/C31CK50012). La version -H es C31CK51012: confirmar cual se vende"),
  ]),
  ("4471C004AA", [
    ("Canon MAXIFY GX4010", "impresora-canon-maxify-gx4010-calidad-profesional-para-tu-oficina", "5779C004AA", "folleto oficial Canon: 'MAXIFY GX4010 ** Impresora Multifuncional Inalambrica MegaTank ... 5779C004AA'"),
@@ -105,10 +105,10 @@ GRUPOS = [
 OTROS = [
  ("HP LaserJet M111w", "impresora-hp-laserjet-m11w-7md68a", "7ZU85A#BGJ", "7MD68A",
   "El titulo y el handle dicen 7MD68A. El 7ZU85A es de la Color LaserJet Enterprise M578dn."),
- ("Lexmark CX522ade", "lexmark-multifuncional-cx522ade-color", "29S0150", "",
-  "29S0150 es de la MX331adn. PENDIENTE de buscar el de la CX522ade."),
- ("Lexmark MX522adhe", "lexmark-multifuncional-b-n-mx522adhe-1100", "29S0150", "",
-  "29S0150 es de la MX331adn. PENDIENTE de buscar el de la MX522adhe."),
+ ("Lexmark CX522ade", "lexmark-multifuncional-cx522ade-color", "29S0150", "42C7360",
+  "Lista de precios oficial de Lexmark: '42C7360 Lexmark CX522ade'. El 29S0150 es de la MX331adn."),
+ ("Lexmark MX522adhe", "lexmark-multifuncional-b-n-mx522adhe-1100", "29S0150", "36S0840",
+  "Lista de precios oficial de Lexmark: '36S0840 Lexmark MX522adhe'. El 29S0150 es de la MX331adn."),
  ("HP OfficeJet Pro 9730", "impresora-hp-officejet-pro-9730-ideal-para-formatos-grandes-11-x-17-incluye-dos-bandejas", "G5J38A#AKY", "",
   "G5J38A es de la OfficeJet Pro 7740, a la que reemplaza. PENDIENTE."),
  ("HP OfficeJet Pro 9130", "impresora-hp-officejet-pro-9130-multifuncional-profesionalismo-y-eficiencia-accesos-directos-y-conexiones-seguras", "1MR69C#AKY", "C2WM3B (confirmar)",

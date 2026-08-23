@@ -57,6 +57,14 @@ Cada propuesta lleva su origen. Por orden de confianza:
   especificaciones (`6QN28A.pdf`).
 - **Brother** — el MPN es el modelo sin guiones, pero conviene confirmarlo: en esta tienda la QL-800
   está guardada con guion, así que la convención no es uniforme.
+- **Lexmark** — no lo publica en la ficha del producto, pero su **lista de precios oficial** sí, con el
+  formato `<número de parte> Lexmark <modelo> <precios>`. Se procesa con `ficha-pdf` como cualquier otro
+  PDF y salen todos los modelos de una: así se resolvieron la CX522ade (`42C7360`) y la MX522adhe
+  (`36S0840`). *Cuidado con la fecha de la lista: la de 2019 no tiene los modelos nuevos.*
+
+**Punto de venta (POS): confirmar la variante.** Las térmicas Epson tienen un SKU distinto por interfaz
+y color (la TM-m30III es `C31CK50012` y la -H es `C31CK51012`). Ahí no basta con el modelo: hay que
+saber cuál se vende.
 
 ## Resueltos con evidencia dura
 
