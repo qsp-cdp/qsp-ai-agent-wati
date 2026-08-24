@@ -14,11 +14,14 @@
 //                        decía 33 ppm cuando Epson dice 30 (borrador) y 15 (ISO).
 //   4. sin_fuente      — filas sin `fuente_url`: el dato existe pero nadie puede auditarlo
 //   5. fuente_vieja    — fichas leídas hace más de 18 meses (los fabricantes las actualizan)
+//   6. mpn_vs_sku      — el metacampo `mpn` no coincide con el SKU de la variante. El SKU es el
+//                        número que el equipo mantiene de verdad; el `mpn` es una copia que se
+//                        desincroniza sola. Ver el comentario largo junto al cálculo.
 //
 // No corrige nada por su cuenta: reporta. Corregir specs sin leer la fuente es como llegamos aquí.
 import { logJob } from '../_shared/db.ts';
 
-const VERSION = 'v1-specs-centinela';
+const VERSION = 'v2-specs-centinela-mpn-vs-sku';
 const KEY = 'centinela-8k4p1n6r';
 const MESES_PARA_REVISAR_FUENTE = 18;
 
@@ -44,6 +47,7 @@ interface ProductoShopify {
   title: string;
   productType: string;
   mpn?: { value: string } | null;
+  variants?: { nodes: { sku: string | null }[] };
 }
 
 async function impresorasDeLaTienda(): Promise<ProductoShopify[]> {
@@ -54,7 +58,7 @@ async function impresorasDeLaTienda(): Promise<ProductoShopify[]> {
   for (let pagina = 0; pagina < 5; pagina++) {
     const query = `query($after:String){
       products(first:250, after:$after, query:"status:active AND (product_type:Impresora* OR product_type:Plotter*)"){
-        edges{ node{ handle title productType mpn: metafield(namespace:"mm-google-shopping", key:"mpn"){ value } } }
+        edges{ node{ handle title productType variants(first:1){ nodes{ sku } } mpn: metafield(namespace:"mm-google-shopping", key:"mpn"){ value } } }
         pageInfo{ hasNextPage endCursor }
       }
     }`;
@@ -196,6 +200,29 @@ Deno.serve(async (req) => {
     .filter((p) => !RE_ACCESORIO.test(p.title) && !String(p.mpn?.value ?? '').trim())
     .map((p) => p.handle);
 
+  // EL MPN DEBE SER EL SKU, y esta es la comprobación que más trabajo ahorra de todo el centinela.
+  //
+  // El 24-ago-2026 aprendimos que el campo SKU ya tenía el número de parte correcto en casi todo el
+  // catálogo, mientras el metacampo `mpn` —una copia que nadie mantenía— arrastraba números viejos,
+  // vacíos y repetidos. Se pasaron horas buscando en folletos de fabricante números que estaban a un
+  // campo de distancia: la OfficeJet Pro 9130 y la imageRUNNER 1643i son los dos ejemplos caros.
+  //
+  // El SKU es el que el equipo mantiene de verdad, porque con él compran, venden y van a parear el
+  // inventario contra Sage 50. Así que el MPN se deriva de él, y aquí solo se vigila que no se
+  // separen otra vez. Es una regla que una máquina puede revisar sola, a diferencia de "¿este número
+  // es el que publica el fabricante?", que necesita leer una ficha.
+  //
+  // Se comparan en crudo, sin normalizar mayúsculas ni sufijos: si el SKU dice `6QN36A#BGJ`, el MPN
+  // dice `6QN36A#BGJ`. Normalizar aquí sería volver a tener dos versiones del mismo número, que es
+  // exactamente el problema del que venimos.
+  const mpn_vs_sku = tienda
+    .map((p) => ({
+      handle: p.handle,
+      sku: String(p.variants?.nodes?.[0]?.sku ?? '').trim(),
+      mpn: String(p.mpn?.value ?? '').trim(),
+    }))
+    .filter((r) => r.sku && r.mpn !== r.sku);
+
   const sin_fuente = tabla.filter((f) => !f.fuente_url).map((f) => f.modelo);
 
   const limite = new Date();
@@ -210,6 +237,7 @@ Deno.serve(async (req) => {
     titulo_vs_ficha: titulo_vs_ficha.length,
     mpn_duplicado: mpn_duplicado.length,
     sin_mpn: sin_mpn.length,
+    mpn_vs_sku: mpn_vs_sku.length,
     sin_fuente: sin_fuente.length,
     fuente_vieja: fuente_vieja.length,
     mal_clasificados: mal_clasificados.length,
@@ -219,7 +247,7 @@ Deno.serve(async (req) => {
   // "Limpio" mira solo lo que rompe al bot. Un consumible mal tipado en Shopify o una fila sin fuente
   // son deuda a ordenar, no una alarma que valga la pena disparar cada semana.
   const limpio = nuevos.length === 0 && retirados.length === 0 && titulo_vs_ficha.length === 0 &&
-    mpn_duplicado.length === 0;
+    mpn_duplicado.length === 0 && mpn_vs_sku.length === 0;
   await logJob('specs-centinela', 'revision', limpio, resumen);
 
   return json({
@@ -227,6 +255,6 @@ Deno.serve(async (req) => {
     version: VERSION,
     resumen,
     // Las listas van completas: el valor de esto es poder actuar sin tener que ir a buscar el detalle.
-    detalle: { nuevos, retirados, titulo_vs_ficha, mpn_duplicado, sin_mpn, mal_clasificados, sin_fuente, fuente_vieja },
+    detalle: { nuevos, retirados, titulo_vs_ficha, mpn_duplicado, mpn_vs_sku, sin_mpn, mal_clasificados, sin_fuente, fuente_vieja },
   });
 });
