@@ -1,6 +1,19 @@
+# REGISTRO HISTORICO — leer el README de este directorio antes de usar nada de aqui.
+#
+# Este archivo documenta como se rastreo el numero de parte de cada impresora en folletos de
+# fabricante, producto por producto, entre el 22 y el 24-ago-2026. El 24-ago se descubrio que el
+# campo SKU de Shopify ya tenia el numero correcto en casi todo el catalogo, y la regla paso a ser
+# MPN = SKU. Varias propuestas de aqui quedaron superadas por el SKU (la TR160 dice 7069C002 abajo
+# y 7069C002AA en el SKU; el MC-G01 volvio a ser "MC-G01").
+#
+# NO SE COPIA DE AQUI para corregir un MPN hoy: se mira el SKU. Lo que sigue sirviendo es la
+# columna de origen, que documenta DONDE publica su numero cada fabricante — util cuando entra un
+# equipo nuevo que todavia no tiene SKU asignado.
+#
 # Grupos de MPN duplicados detectados por specs-centinela el 22-ago-2026 (solo productos ACTIVOS).
 # columnas: (mpn_actual, titulo, handle, mpn_propuesto, origen_de_la_propuesta)
-# origen: "titulo" | "ficha oficial" | "patron Brother" | "probable dueno" | "PENDIENTE"
+# origen: siempre la frase de la fuente que AFIRMA el numero, no una deduccion. "probable dueno"
+# significa que ese producto ya tiene el numero correcto y no se toca.
 GRUPOS = [
  ("CZ993A#AKY", [
    ("HP OfficeJet 200 portatil", "hp-officejet-200-mobile-impresora-de-inyeccion-portatil", "CZ993A#AKY", "probable dueno"),
@@ -13,8 +26,8 @@ GRUPOS = [
  ]),
  ("QL-800", [
    ("Brother QL-800 etiquetas", "impresora-de-etiquetas-brother-ql-800-imprime-negro-y-rojo-brother", "QL-800", "probable dueno"),
-   ("Brother QL-820NWB etiquetas", "impresora-de-etiquetas-brother-ql-820-nwb", "QL820NWB", "patron Brother (confirmar)"),
-   ("Brother QL-810W etiquetas", "impresora-de-etiquetas-brother-ql-810w-imprime-negro-y-rojo", "QL810W", "patron Brother (confirmar)"),
+   ("Brother QL-820NWB etiquetas", "impresora-de-etiquetas-brother-ql-820-nwb", "QL820NWB", "Sitio oficial Brother: usa el modelo sin guiones como codigo de producto (/products/hll2460dw, /product-support/HLL2460DW, /products/mfcl3720cdw, /products/ql820nwb)"),
+   ("Brother QL-810W etiquetas", "impresora-de-etiquetas-brother-ql-810w-imprime-negro-y-rojo", "QL810W", "Sitio oficial Brother: usa el modelo sin guiones como codigo de producto (/products/hll2460dw, /product-support/HLL2460DW, /products/mfcl3720cdw, /products/ql820nwb)"),
  ]),
  ("5HB06A#B1K", [
    ("HP DesignJet T250 24\"", "ploter-hp-designjet-t250-24-pulgadas-5hb06a-b1k-hp-5hb06a-b1k", "5HB06A#B1K", "probable dueno"),
@@ -52,8 +65,8 @@ GRUPOS = [
    ("Epson WorkForce Pro WF-M5899", "impresora-epson-workforce-pro-wf-m5899-multifuncional-monocromatica-25-ppm-negro", "C11CK76301", "pagina oficial Epson (/p/C11CK76301)"),
  ]),
  ("C12C934461", [
-   ("Caja de mantenimiento Epson C9344", "caja-de-mantenimiento-epson-c9344-c12934461", "C12C934461", "probable dueno"),
-   ("Caja de mantenimiento Epson C9344 (para L5590)", "caja-de-mantenimiento-epson-c9344-c12934461-para-epson-l5590", "", "PRODUCTO REPETIDO: es la misma caja C9344 listada dos veces. Fusionar o eliminar una."),
+   ("Caja de mantenimiento Epson C9382 (PX4MB10)", "caja-de-mantenimiento-epson-c9344-c12934461", "C12C938211", "YA NO es el mismo producto: el equipo lo renombro a C9382, pero se habia quedado con el numero de la C9344. Epson publica el SKU en la URL: /p/C12C938211 (el handle sigue diciendo c9344, es cosmetico)"),
+   ("Caja de mantenimiento Epson C9344", "caja-de-mantenimiento-epson-c9344-c12934461-para-epson-l5590", "C12C934461", "probable dueno"),
  ]),
  ("T04D100", [
    ("Caja de mantenimiento Epson T04D1", "caja-de-mantenimiento-epson-t04d1-t04d100-ecotank-l4150-l4160-l4260-l6270", "T04D100", "probable dueno"),
@@ -82,12 +95,12 @@ GRUPOS = [
    ("HP Color LaserJet Enterprise Flow 6800zf", "hp-color-laserjet-enterprise-flow-6800zf", "6QN36A", "Ficha oficial HP: 'Model HP Color LaserJet Enterprise Flow MFP 6800zf Printer  Product number 6QN36A'"),
  ]),
  ("MFCL3710CW", [
-   ("Canon imageRUNNER 1643i", "impresora-laser-multifuncional-canon-imagerunner-1643i-vidrio-del-escaner-tamano-legal", "3630C006AA", "Folleto de Canon (hospedado por distribuidor): 1643i = Codigo Mercury 3630C006AA; el 1643iF es 3630C005AA. CONFIRMAR cual se vende (con o sin fax)"),
-   ("Brother MFC-T4500DW", "impresora-laser-multifuncional-brother-mfc-t4500dw-e", "MFCT4500DW", "patron Brother (confirmar)"),
-   ("Brother MFC-L5705DW", "impresora-laser-multifuncional-brother-mfc-l5705dw-escaner-legal-velocidad-52-ppm-conectividad-inalambrica-pantalla-tactil-4-85-duplex-copia", "MFCL5705DW", "patron Brother (confirmar)"),
-   ("Brother MFC-L3720CDW", "impresora-laser-multifuncional-monocromatica-brother-mfc-l3720cdw-impresion-duplex-escaneo-y-copia-y-conexion-inalambrica-a-red-copia", "MFCL3720CDW", "patron Brother (confirmar)"),
-   ("Brother HL-L2460DW", "impresora-laser-multifuncional-monocromatica-brother-hl-l2460dw-impresion-duplex-escaneo-y-copia-y-conexion-inalambrica-a-red-copia", "HLL2460DW", "patron Brother (confirmar)"),
-   ("Canon imageCLASS X MF1538C", "impresora-laser-a-color-multifuncional-canon-imageclass-x-mf1538c-copia-escaneo-y-fax-impresion-duplex-y-movil", "", "PENDIENTE"),
+   ("Canon imageRUNNER 1643i", "impresora-laser-multifuncional-canon-imagerunner-1643i-vidrio-del-escaner-tamano-legal", "3630C006AA", "Folleto de Canon (hospedado por distribuidor): 1643i = Codigo Mercury 3630C006AA; el 1643iF es 3630C005AA. CONFIRMAR cual se vende (con o sin fax). NOTA 24-ago: el SKU de la tienda dice 5160C004AA — ese folleto no era de este equipo"),
+   ("Brother MFC-T4500DW", "impresora-laser-multifuncional-brother-mfc-t4500dw-e", "MFCT4500DW", "Sitio oficial Brother: usa el modelo sin guiones como codigo de producto (/products/hll2460dw, /product-support/HLL2460DW, /products/mfcl3720cdw, /products/ql820nwb)"),
+   ("Brother MFC-L5705DW", "impresora-laser-multifuncional-brother-mfc-l5705dw-escaner-legal-velocidad-52-ppm-conectividad-inalambrica-pantalla-tactil-4-85-duplex-copia", "MFCL5705DW", "Sitio oficial Brother: usa el modelo sin guiones como codigo de producto (/products/hll2460dw, /product-support/HLL2460DW, /products/mfcl3720cdw, /products/ql820nwb)"),
+   ("Brother MFC-L3720CDW", "impresora-laser-multifuncional-monocromatica-brother-mfc-l3720cdw-impresion-duplex-escaneo-y-copia-y-conexion-inalambrica-a-red-copia", "MFCL3720CDW", "Sitio oficial Brother: usa el modelo sin guiones como codigo de producto (/products/hll2460dw, /product-support/HLL2460DW, /products/mfcl3720cdw, /products/ql820nwb)"),
+   ("Brother HL-L2460DW", "impresora-laser-multifuncional-monocromatica-brother-hl-l2460dw-impresion-duplex-escaneo-y-copia-y-conexion-inalambrica-a-red-copia", "HLL2460DW", "Sitio oficial Brother: usa el modelo sin guiones como codigo de producto (/products/hll2460dw, /product-support/HLL2460DW, /products/mfcl3720cdw, /products/ql820nwb)"),
+   ("Canon imageCLASS X MF1538C", "impresora-laser-a-color-multifuncional-canon-imageclass-x-mf1538c-copia-escaneo-y-fax-impresion-duplex-y-movil", "4930C001AB", "Lo aporto el equipo de QSP (Isaac). El folleto de Canon que tenemos no trae el numero de item"),
    ("Canon imageCLASS MF289dw", "impresora-laser-monocromatica-multifuncional-canon-imageclass-mf289dw-copia-escaneo-y-fax-impresion-duplex-y-movil-35-ppm", "6354C005AA", "Folleto oficial Canon: 'Modelo imageCLASS MF289dw. Codigo mercury 6354C005AA'. Los otros dos numeros del folleto son toners"),
  ]),
  ("C11CJ80201", [
@@ -95,9 +108,9 @@ GRUPOS = [
    ("Brother SP-1 sublimacion", "impresora-de-sublimacion-brother-sp-1", "SP1", "Pagina oficial Brother: brother-usa.com/p/sublimation-printers/SP1"),
  ]),
  ("DCPT720DW", [
-   ("Brother DCP-T730DW", "impresora-multifuncional-brother-dcp-t730dw-color-dcpt-730dw-tinta-continua-conectividad-inalambrica-impresion-duplex-27-ppm-negro-23-ppm-color", "DCPT730DW", "patron Brother (confirmar)"),
-   ("Brother DCP-T530DW", "impresora-multifuncional-brother-dcp-t530dw-color-dcpt-530dw-tinta-continua-conectividad-inalambrica-impresion-duplex-27-ppm-negro-11-ppm-color", "DCPT530DW", "patron Brother (confirmar)"),
-   ("Brother DCP-T230", "impresora-multifuncional-brother-dcp-t230-color-dcpt-230-tinta-continua-conectividad-usb-27-ppm-negro-11-ppm-color", "DCPT230", "patron Brother (confirmar)"),
+   ("Brother DCP-T730DW", "impresora-multifuncional-brother-dcp-t730dw-color-dcpt-730dw-tinta-continua-conectividad-inalambrica-impresion-duplex-27-ppm-negro-23-ppm-color", "DCPT730DW", "Sitio oficial Brother: usa el modelo sin guiones como codigo de producto (/products/hll2460dw, /product-support/HLL2460DW, /products/mfcl3720cdw, /products/ql820nwb)"),
+   ("Brother DCP-T530DW", "impresora-multifuncional-brother-dcp-t530dw-color-dcpt-530dw-tinta-continua-conectividad-inalambrica-impresion-duplex-27-ppm-negro-11-ppm-color", "DCPT530DW", "Sitio oficial Brother: usa el modelo sin guiones como codigo de producto (/products/hll2460dw, /product-support/HLL2460DW, /products/mfcl3720cdw, /products/ql820nwb)"),
+   ("Brother DCP-T230", "impresora-multifuncional-brother-dcp-t230-color-dcpt-230-tinta-continua-conectividad-usb-27-ppm-negro-11-ppm-color", "DCPT230", "Sitio oficial Brother: usa el modelo sin guiones como codigo de producto (/products/hll2460dw, /product-support/HLL2460DW, /products/mfcl3720cdw, /products/ql820nwb)"),
  ]),
 ]
 
@@ -112,13 +125,13 @@ OTROS = [
  ("HP OfficeJet Pro 9730", "impresora-hp-officejet-pro-9730-ideal-para-formatos-grandes-11-x-17-incluye-dos-bandejas", "G5J38A#AKY", "537P5C",
   "Ficha oficial HP: 'Contenido de la caja 537P5C Impresora Todo-en-Uno HP OfficeJet Pro 9730'. El G5J38A es de la OfficeJet Pro 7740, a la que reemplaza."),
  ("HP OfficeJet Pro 9130", "impresora-hp-officejet-pro-9130-multifuncional-profesionalismo-y-eficiencia-accesos-directos-y-conexiones-seguras", "1MR69C#AKY", "C2WM3B (confirmar)",
-  "1MR69C es de la OfficeJet Pro 9020. El C2WM3B sale de hp.com pero no lo vi en una URL: confirmar antes de aplicar."),
+  "1MR69C es de la OfficeJet Pro 9020. El C2WM3B sale de hp.com pero no lo vi en una URL: confirmar antes de aplicar. NOTA 24-ago: el SKU de la tienda dice 404K5C#AKY, y ese es el que se aplico."),
  ("HP DeskJet Ink Advantage 2875", "impresora-hp-deskjet-ink-advantage-2875-588s4a", "7FR21A", "588S4A",
   "El titulo y el handle dicen 588S4A. El 7FR21A es de la 2775."),
  ("HP DeskJet Ink Advantage 2975", "impresora-hp-deskjet-ink-advantage-2975-aj4y5a", "7FR21A", "AJ4Y5A",
   "El titulo y el handle dicen AJ4Y5A. El 7FR21A es de la 2775."),
- ("Canon TS3610", "impresora-canon-ts3610-diseno-compacto", "22226C004AA", "",
-  "22226C004AA es de la TS3110, a la que reemplaza. PENDIENTE."),
+ ("Canon TS3610", "impresora-canon-ts3610-diseno-compacto", "22226C004AA", "6670C004AA",
+  "Lo aporto el equipo de QSP (Isaac). El 22226C004AA es de la TS3110, a la que reemplaza."),
  ("Canon Pixma G3170", "impresora-canon-pixma-g3170-color-tinta-continua-wifi-multifuncional-botellas-de-tinta-de-alto-rendimiento-pantalla-lcd-3-4-cm", "4468C004AA", "5805C004AA",
   "Folleto oficial Canon: 'PIXMA G3170 BK * Impresora Inalambrica Multifuncional MegaTank 5805C004AA'. El 4468C004AA es de la G3160."),
  ("Canon Pixma G4170", "impresora-canon-pixma-g4170-escaner-automatico-wi-fi", "(vacio)", "5807C004AA",
@@ -126,5 +139,50 @@ OTROS = [
  ("Epson EcoTank L4360", "impresora-epson-ecotank-l4360-impresion-a-doble-cara-multifuncional-compacta-y-eficiente-10-5-ppm-negro-5-ppm-color", "C11CJ63301", "C11CL41301",
   "C11CJ63301 es de la L4260. El de la L4360 sale de su pagina oficial de Epson."),
  ("Impresoras sin numero de parte", "(18 productos)", "", "",
-  "18 impresoras activas no tienen MPN. Sin ese campo no las indexa ni la sindicacion ni Google Shopping."),
+  "18 impresoras activas no tienen MPN. Sin ese campo no las indexa ni la sindicacion ni Google Shopping. RESUELTO el 24-ago: todas tenian SKU, y el MPN se sincronizo desde ahi."),
 ]
+
+# Escritos en Shopify por API el 24-ago-2026 (metacampo mm-google-shopping/mpn). La hoja los marca
+# como hechos para que el equipo solo mire lo que falta. Se listan por handle porque el titulo cambia.
+APLICADOS = {
+ "canon-pixma-tr160-impresora-portatil", "impresora-hp-smart-tank-580",
+ "impresora-hp-smart-tank-583-wifi", "impresora-de-etiquetas-brother-ql-820-nwb",
+ "impresora-de-etiquetas-brother-ql-810w", "plotter-canon-imageprograf-tc-20",
+ "plotter-canon-imageprograf-tm-340-tm340", "plotter-canon-imageprograf-tm-340-mfp",
+ "epson-c13t671600-caja-de-mantenimiento", "cartucho-de-mantenimiento-canon-mc-g01",
+ "canon-mc-32-cartucho-de-mantenimiento", "canon-mc-31-cartucho-de-mantenimiento",
+ "cartucho-de-mantenimiento-canon-mc-g04", "cartucho-de-mantenimiento-canon-mc-g03",
+ "cartucho-de-mantenimiento-canon-mc-10", "impresora-hp-laserjet-pro-m501dn",
+ "epson-t671400-caja-de-mantenimiento", "impresora-epson-workforce-pro-wf-c5890",
+ "impresora-epson-workforce-pro-wf-c5891", "impresora-epson-workforce-pro-wf-m5899",
+ "caja-de-mantenimiento-epson-t699700", "impresora-fotografica-inalambrica-ecotank-l8050",
+ "plotter-hp-designjet-t850", "plotter-hp-desingjet-t1700dr",
+ "impresora-canon-maxify-gx4010", "impresora-canon-maxify-gx7110",
+ "hp-color-laserjet-enterprise-5700dn", "hp-color-laserjet-pro-3303fdw",
+ "hp-color-laserjet-enterprise-flow-6800zf", "impresora-laser-multifuncional-brother-mfc-t4500dw",
+ "impresora-laser-multifuncional-brother-mfc-l5705dw",
+ "impresora-laser-multifuncional-monocromatica-brother-mfc-l3720cdw",
+ "impresora-laser-multifuncional-monocromatica-brother-hl-l2460dw",
+ "impresora-laser-monocromatica-multifuncional-canon-imageclass-mf289dw",
+ "impresora-de-sublimacion-brother-sp-1", "impresora-multifuncional-brother-dcp-t730dw",
+ "impresora-multifuncional-brother-dcp-t530dw", "impresora-multifuncional-brother-dcp-t230",
+ "impresora-hp-laserjet-m11w", "lexmark-multifuncional-cx522ade",
+ "lexmark-multifuncional-b-n-mx522adhe", "impresora-hp-officejet-pro-9730",
+ "impresora-hp-deskjet-ink-advantage-2875", "impresora-hp-deskjet-ink-advantage-2975",
+ "impresora-canon-pixma-g3170", "impresora-canon-pixma-g4170",
+ "impresora-epson-ecotank-l4360",
+ # segunda tanda, 24-ago: numeros que aporto el equipo + la caja C9382
+ "impresora-laser-a-color-multifuncional-canon-imageclass-x-mf1538c",
+ "impresora-canon-ts3610-diseno-compacto",
+ "caja-de-mantenimiento-epson-c9344-c12934461",
+ # tercera tanda, 24-ago: sincronizacion MPN = SKU sobre las 125 impresoras activas.
+ # Desde aqui la lista deja de ser util como registro fila por fila: el MPN de TODA impresora
+ # activa se derivo del SKU, y el centinela vigila `mpn_vs_sku` cada lunes.
+ "impresora-termica-epson-tm-t88vii", "impresora-termica-epson-tm-m30iii",
+ "impresora-termica-epson-tm-t20iii-usb-red",
+ "impresora-laser-multifuncional-canon-imagerunner-1643i",
+ "impresora-hp-officejet-pro-9130", "epson-t3170-caja-de-mantenimiento",
+}
+
+def ya_aplicado(handle: str) -> bool:
+    return any(handle.startswith(h) for h in APLICADOS)
