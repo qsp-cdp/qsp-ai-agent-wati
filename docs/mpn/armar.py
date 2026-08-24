@@ -1,7 +1,7 @@
 from openpyxl import Workbook
 from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
 from openpyxl.utils import get_column_letter
-from datos import GRUPOS, OTROS
+from datos import GRUPOS, OTROS, ya_aplicado
 
 AZUL   = "1F3864"; GRIS = "F2F2F2"; AMBAR = "FFF2CC"; VERDE = "E2EFDA"; ROJO = "FCE4EC"
 F = "Arial"
@@ -33,13 +33,14 @@ for mpn, productos in GRUPOS:
         ws.cell(row=fila, column=3, value=mpn)
         ws.cell(row=fila, column=4, value=propuesto if not dueno else "— (dejar como esta)")
         ws.cell(row=fila, column=5, value="Es el dueno legitimo de este numero" if dueno else origen)
-        ws.cell(row=fila, column=6, value="")
+        hecho = (not dueno) and propuesto and ya_aplicado(handle)
+        ws.cell(row=fila, column=6, value="Aplicado 24-ago" if hecho else "")
         for col in range(1, 8):
             c = ws.cell(row=fila, column=col)
             c.font = Font(name=F, size=10, bold=(col == 1))
             c.alignment = Alignment(vertical="top", wrap_text=(col in (2, 5, 7)))
             c.border = Border(bottom=Side(style="thin", color="D9D9D9"))
-            if dueno:
+            if dueno or hecho:
                 c.fill = PatternFill("solid", fgColor=VERDE)
             elif propuesto:
                 c.fill = PatternFill("solid", fgColor=AMBAR)
@@ -57,13 +58,14 @@ for i, (titulo, handle, actual, propuesto, porque) in enumerate(OTROS, start=2):
     ws2.cell(row=i, column=2, value=actual)
     ws2.cell(row=i, column=3, value=propuesto)
     ws2.cell(row=i, column=4, value=porque)
-    ws2.cell(row=i, column=5, value="")
+    hecho2 = bool(propuesto) and ya_aplicado(handle)
+    ws2.cell(row=i, column=5, value="Aplicado 24-ago" if hecho2 else "")
     for col in range(1, 6):
         c = ws2.cell(row=i, column=col)
         c.font = Font(name=F, size=10)
         c.alignment = Alignment(vertical="top", wrap_text=(col in (1, 4)))
         c.border = Border(bottom=Side(style="thin", color="D9D9D9"))
-        c.fill = PatternFill("solid", fgColor=AMBAR if propuesto else ROJO)
+        c.fill = PatternFill("solid", fgColor=VERDE if hecho2 else (AMBAR if propuesto else ROJO))
 
 # --- Hoja 3: como usar --------------------------------------------------------
 ws3 = wb.create_sheet("Como usar", 0)
@@ -73,15 +75,16 @@ ws3.column_dimensions["B"].width = 108
 # Los conteos se calculan, no se escriben a mano: la hoja no puede decir una cifra
 # distinta a la que tienen las filas de al lado.
 filas = [(p, o) for _, ps in GRUPOS for _, _, p, o in ps] + [(p, q) for _, _, _, p, q in OTROS]
+n_hecho = sum(1 for _, ps in GRUPOS for _, h, p, o in ps if p and o != "probable dueno" and ya_aplicado(h)) \
+        + sum(1 for _, h, _, p, _ in OTROS if p and ya_aplicado(h))
 n_verde = sum(1 for p, o in filas if o == "probable dueno")
 n_rojo  = sum(1 for p, o in filas if not p)
 n_ambar = len(filas) - n_verde - n_rojo
-n_conf  = sum(1 for p, o in filas if p and "CONFIRMAR" in (o or ""))
 
 texto = [
  ("Numeros de parte (MPN) duplicados en Shopify", "titulo"),
  (f"Detectado por specs-centinela el 22-ago-2026, sobre productos ACTIVOS. {len(GRUPOS)} grupos. "
-  f"Estado: {n_ambar} con propuesta ({n_conf} de ellas por confirmar), {n_verde} correctos, {n_rojo} sin resolver.", "sub"),
+  f"YA APLICADOS POR API el 24-ago: {n_hecho}. Quedan {n_ambar - n_hecho} por revisar y {n_rojo} sin resolver.", "sub"),
  ("", ""),
  ("Por que importa", "h"),
  ("El MPN es la llave con la que indexan Google Shopping y cualquier catalogo de contenido sindicado", "p"),
@@ -94,7 +97,8 @@ texto = [
  ("MPN hasta hoy, y por eso la SP-1 tenia pegada la ficha de la F170.", "p"),
  ("", ""),
  ("Como leer la hoja", "h"),
- ("VERDE  = es el dueno legitimo del numero. No se toca.", "verde"),
+ ("VERDE  = ya esta bien: o era el dueno legitimo del numero, o la correccion YA SE APLICO por API", "verde"),
+ ("         el 24-ago (lo dice la columna Corregido). En ambos casos no hay nada que hacer.", "verde"),
  ("AMBAR  = hay propuesta de correccion, con su origen en la columna de al lado. Verificar y aplicar.", "ambar"),
  ("ROJO   = falta buscar el numero correcto en el fabricante.", "rojo"),
  ("", ""),
@@ -107,14 +111,17 @@ texto = [
  ("", ""),
  ("Donde se corrige", "h"),
  ("Shopify admin -> el producto -> Metacampos -> mm-google-shopping / mpn", "p"),
- ("Marcar la columna 'Corregido' con una X a medida que se avanza.", "p"),
+ ("Las filas que faltan se van marcando en la columna 'Corregido'; las que ya dicen 'Aplicado 24-ago'", "p"),
+ ("se escribieron por API y no hay que tocarlas.", "p"),
  ("", ""),
  ("Ejemplo de fila ya resuelta", "h"),
  ("HP Smart Tank 580 | actual 4SB24A#AKY | correcto 1F3Y2A | origen: el nombre del PDF oficial de HP", "p"),
  ("que la propia tienda hospeda (MULTIFUNCIONAL-HP-SMART-TANK-580-WIRELESS-1F3Y2A.pdf)", "p"),
  ("", ""),
- ("Al terminar", "h"),
- ("Correr specs-centinela otra vez: mpn_duplicado debe quedar en 0. Corre solo los lunes 8:00 a.m.", "p"),
+ ("Estado al 24-ago-2026", "h"),
+ ("Se corrio specs-centinela despues de aplicar: mpn_duplicado bajo de 20 grupos a 3, y los 3 que", "p"),
+ ("quedan son exactamente los que se dejaron fuera a proposito (los AMBAR/ROJO de esta hoja).", "p"),
+ ("El centinela vuelve a correr solo los lunes 8:00 a.m. hora Panama.", "p"),
 ]
 for i, (t, tipo) in enumerate(texto, start=2):
     c = ws3.cell(row=i, column=2, value=t)
