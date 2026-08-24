@@ -51,6 +51,39 @@ export function shouldDispatchShopifyOrder(
   return methods.some((m) => terms.some((t) => m.includes(t)));
 }
 
+// LOS DOS CAMPOS DE SHIPDAY HACEN COSAS DISTINTAS, y hasta ahora los tratábamos como uno solo:
+//
+//   · `customerAddress`      → lo geocodifica Google. Sirve para poner el PIN en el mapa.
+//   · `deliveryInstruction`  → lo lee el repartidor cuando YA llegó. Sirve para encontrar la PUERTA.
+//
+// Meter el piso, la oficina o "al lado de la lavandería" en el campo que se geocodifica no ayuda a
+// nadie: Google no ubica un apartamento, y cada palabra de más aleja el pin del edificio correcto.
+// El detalle de unidad va a las instrucciones, que es donde el repartidor lo va a leer.
+//
+// Se COPIA, no se quita del texto de la dirección: en Panamá "calle 15, casa 123" sí es parte de lo
+// que Google usa para ubicar, y recortarlo automáticamente sería adivinar. Un detalle repetido es
+// ruido inofensivo; un pin mal puesto manda a alguien a la puerta equivocada.
+const RE_UNIDAD =
+  /(?:\S{1,10}\s+)?\b(?:apto|apartamento|apt|ofic|oficina|piso|nivel|casa|local|torre|of)\b\.?(?:\s*(?:#|n[º°o]\.?)?\s*[\wáéíóúñ.-]{1,12})?/gi;
+
+export function detallesDeUnidad(...textos: (string | undefined | null)[]): string {
+  const vistos = new Set<string>();
+  const out: string[] = [];
+  for (const t of textos) {
+    const s = String(t ?? '').trim();
+    if (!s) continue;
+    for (const bruto of s.match(RE_UNIDAD) ?? []) {
+      const limpio = bruto.replace(/\s+/g, ' ').replace(/^[,;.\s]+|[,;.\s]+$/g, '').trim();
+      if (limpio.length < 3) continue;
+      const clave = limpio.toLowerCase();
+      if (vistos.has(clave)) continue;
+      vistos.add(clave);
+      out.push(limpio);
+    }
+  }
+  return out.join(' · ');
+}
+
 export function shopifyOrderToShipday(shopifyOrder: any, pickup: Pickup = defaultPickup()) {
   const shipping = shopifyOrder.shipping_address || shopifyOrder.billing_address || {};
   const customer = shopifyOrder.customer || {};
@@ -58,9 +91,17 @@ export function shopifyOrderToShipday(shopifyOrder: any, pickup: Pickup = defaul
     shipping.name ||
     [customer.first_name, customer.last_name].filter(Boolean).join(' ') ||
     'Cliente';
-  const addressParts = [shipping.address1, shipping.address2, shipping.city, shipping.province, shipping.country]
+  // `address2` en Shopify es literalmente el campo "Apartamento, oficina, etc." — el checkout YA lo
+  // separó. Volver a pegarlo aquí era deshacer ese trabajo y mandarlo a geocodificar. Va a las
+  // instrucciones, junto con lo que se detecte dentro de la calle ("3er Piso" en el pedido #8871).
+  const addressParts = [shipping.address1, shipping.city, shipping.province, shipping.country]
     .filter(Boolean)
     .join(', ');
+  const detalle = detallesDeUnidad(shipping.address2, shipping.address1);
+  const instrucciones = [
+    detalle ? `🏠 Entrega exacta: ${detalle}` : '',
+    String(shopifyOrder.note ?? '').trim(),
+  ].filter(Boolean).join('\n');
 
   const order: Record<string, unknown> = {
     orderNumber: String(shopifyOrder.order_number ?? shopifyOrder.name ?? shopifyOrder.id),
@@ -73,7 +114,7 @@ export function shopifyOrderToShipday(shopifyOrder: any, pickup: Pickup = defaul
     restaurantPhoneNumber: pickup.phone,
     totalOrderCost: Number(shopifyOrder.total_price) || undefined,
     deliveryFee: Number(shopifyOrder.total_shipping_price_set?.shop_money?.amount) || undefined,
-    deliveryInstruction: shopifyOrder.note || undefined,
+    deliveryInstruction: instrucciones || undefined,
     orderSource: 'Shopify',
     orderItem: (shopifyOrder.line_items || []).map((li: any) => ({
       name: li.title,
@@ -189,7 +230,14 @@ export function watiCaptureToShipday(capture: WatiCapture, pickup: Pickup = defa
   if (!isValidPhone(normalizePhone(capture.telefono!))) {
     throw new HttpError(400, `Teléfono inválido: "${normalizePhone(capture.telefono!)}"`);
   }
-  const direccion = [capture.direccion, capture.referencia].filter(Boolean).join(' — ');
+  // La referencia YA NO se pega a la dirección. Iba al campo que Google geocodifica, y ahí "al lado de
+  // la Universidad del Istmo, cualquier pregunta me llaman gracias" no ubica nada: solo aleja el pin.
+  //
+  // Tenía además un efecto de vuelta que se comprobó en producción (contacto 6328-6286): la orden salía
+  // con "dirección — referencia", Shipday guardaba esa concatenación, y la pierna de vuelta de
+  // shipday-status la leía como "la dirección cambió" y la escribía de regreso en `contacts.address`.
+  // La referencia terminaba DENTRO de la dirección, duplicada, y de ahí se espejaba a la ficha de WATI.
+  const direccion = String(capture.direccion ?? '').trim();
   const items = Array.isArray(capture.items)
     ? capture.items.map((it) =>
         typeof it === 'string'
@@ -198,9 +246,14 @@ export function watiCaptureToShipday(capture: WatiCapture, pickup: Pickup = defa
       )
     : undefined;
 
+  // Lo que el repartidor necesita cuando ya está parado frente al edificio, primero: casa, piso,
+  // oficina, y la referencia que dio el cliente. Después el mapa y el pedido.
+  const detalle = detallesDeUnidad(capture.direccion);
   const instrucciones = [
-    capture.pedido ? `Pedido: ${capture.pedido}` : '',
+    detalle ? `🏠 Entrega exacta: ${detalle}` : '',
+    capture.referencia ? `📝 Referencia: ${String(capture.referencia).trim()}` : '',
     capture.maps_url ? `📍 Mapa: ${capture.maps_url}` : '',
+    capture.pedido ? `Pedido: ${capture.pedido}` : '',
   ].filter(Boolean).join('\n');
   const coords = (capture.lat != null && capture.lng != null)
     ? { lat: Number(capture.lat), lng: Number(capture.lng) }

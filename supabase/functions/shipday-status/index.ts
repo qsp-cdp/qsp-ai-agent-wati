@@ -88,9 +88,23 @@ async function ubicacionPorPin(lat: number, lng: number): Promise<UbicacionPin |
   }
 }
 
+// Las órdenes creadas ANTES de separar los campos salieron con "dirección — referencia" pegadas, y
+// Shipday las guardó así. Al volver, esa concatenación se leía como "la dirección cambió" y se escribía
+// de regreso en la libreta: la referencia terminaba DENTRO de `contacts.address`, duplicada, y de ahí
+// se espejaba a la ficha de WATI (caso real, contacto 6328-6286). Se le quita la cola antes de comparar
+// para que las órdenes viejas que sigan vivas en Shipday no vuelvan a ensuciar la libreta.
+function sinLaReferenciaPegada(dirShipday: string, referencia?: string | null): string {
+  const ref = String(referencia ?? '').trim();
+  if (!ref) return dirShipday;
+  const i = dirShipday.lastIndexOf(' — ');
+  if (i <= 0) return dirShipday;
+  const cola = dirShipday.slice(i + 3).trim();
+  return cola.toLowerCase() === ref.toLowerCase() ? dirShipday.slice(0, i).trim() : dirShipday;
+}
+
 async function sincronizarDireccionDesdeShipday(payload: any, waId: string, pedidoRef: string): Promise<void> {
   const dd = payload?.delivery_details ?? {};
-  const dirShipday = String(dd.address ?? '').trim();
+  let dirShipday = String(dd.address ?? '').trim();
   if (!dirShipday || !waId) return;
   const lat = Number(dd?.location?.lat ?? dd?.location?.latitude);
   const lng = Number(dd?.location?.lng ?? dd?.location?.longitude);
@@ -98,6 +112,7 @@ async function sincronizarDireccionDesdeShipday(payload: any, waId: string, pedi
 
   const c = await findContactByPhone(waId).catch(() => null);
   if (!c) return;
+  dirShipday = sinLaReferenciaPegada(dirShipday, c.referencia);
   if (normDir(c.address) === normDir(dirShipday)) return; // igual: nada que sincronizar (dedup)
 
   const base = {
