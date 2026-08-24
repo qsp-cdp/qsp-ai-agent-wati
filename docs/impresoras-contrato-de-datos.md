@@ -20,7 +20,17 @@ así que son comparables entre sí y el orden por velocidad significa algo. La v
 es siempre más alta y NO va en las columnas `ppm_negro`/`ppm_color` — va en las notas si vale la pena.
 Los fabricantes publican ambas en el mismo párrafo; ahí está la trampa.
 
-*De aquí salieron todos los errores encontrados: L5590, G3170, G4170, GX4010.*
+**La nota al pie no basta como prueba.** El folleto de la MAXIFY GX7110 dice "45 ppm negro / 25 ppm
+color" y su nota al pie dice que las velocidades son promedios de ESAT según ISO/IEC 24734. Es falso:
+el folleto de la GX7010 —mismo escalón, modelo anterior— publica las dos cifras por separado, y **45/25
+es la de borrador**; su ESAT es 24 / 15.5 ipm. La nota al pie era texto genérico, no estaba pegada a
+esa fila.
+
+La señal que sí sirve, en Canon: **ESAT se publica en `ipm`, en una fila rotulada "Velocidad de
+Impresión (ESAT)"** — así están la GX4010 (18.0/13.0 ipm) y la G3170 (11.0/6.0 ipm). Cuando una hoja
+de Canon dice "ppm" a secas, no es ESAT, diga lo que diga el pie de página.
+
+*De aquí salieron todos los errores encontrados: L5590, G3170, G4170, GX4010, GX7110.*
 
 **2. Solo se afirma lo que la fuente dice.**
 Si la ficha no menciona el ADF, `adf` queda en **NULL**, no en `false`. Comprobado: la HP LaserJet Pro
@@ -40,9 +50,27 @@ Si la ficha lista Oficio entre los tamaños soportados, es `legal` aunque casi t
 
 1. Buscar la **ficha oficial del fabricante** (sitio de Latinoamérica, en español). Si el PDF existe, se
    procesa con la función `ficha-pdf`, que lo baja y deja su texto en `fichas_pdf` para consultarlo con
-   SQL. Dónde están los PDF: Shopify (Contenido → Archivos) y el sitio del fabricante. Canon
-   Latinoamérica tiene ruta predecible:
-   `cla.canon.com/es_PA/app/pdf/brochures/<Serie>/<MODELO>_Brochure.pdf`
+   SQL.
+
+   **Buscar primero en Shopify (Contenido → Archivos).** No es el último recurso, es el primero: la
+   tienda ya hospeda los folletos que los fabricantes publican, y de ahí salieron los de la GX7110, la
+   MF1538C, la MF289dw, la OfficeJet Pro 9730 y la SP-1. A veces el número de parte viene en el propio
+   nombre del archivo (`…-OFFICEJET-PRO-9730-…-537P5C.pdf`, `…-SMART-TANK-580-…-1F3Y2A.pdf`).
+
+   Después, el sitio del fabricante. Canon Latinoamérica tiene ruta predecible —
+   `cla.canon.com/es_PA/app/pdf/brochures/<Serie>/<MODELO>_Brochure.pdf` — pero **desde Supabase hay
+   dominios que no se alcanzan**, y conviene saberlo antes de perder media hora:
+
+   | Origen | Estado |
+   |---|---|
+   | `cdn.shopify.com` (Archivos de la tienda) | funciona |
+   | `cla.canon.com`, `usa.canon.com`, `canon.com.mx` | **bloqueado / sin respuesta** |
+   | `h20195.www2.hp.com` (fichas de HP) | **falla TLS desde Deno** |
+
+   Cuando el PDF no se puede bajar, el número de parte suele estar igual en **la URL de la tienda
+   oficial del fabricante** (así salió la Smart Tank 583: `…-smart-tank-583-4a8d7a.html`) o en el
+   título de su portal de documentos (`HP LaserJet Pro M501dn (J8H61A)`). Eso cuenta como fuente; una
+   tienda de terceros, no.
 2. Llenar los metacampos de Shopify con esos valores, aplicando las cuatro reglas.
 3. Agregar la fila a `impresoras_specs` con su `handle`, `fuente_url` y `fuente_fecha`.
 4. Dejar `verificado = false` hasta que un humano que conozca el equipo lo repase.
