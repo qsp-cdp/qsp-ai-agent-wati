@@ -1,0 +1,4 @@
+
+# Artefactos de Python (armar.py se corre a mano; el .pyc no aporta nada al repo)
+__pycache__/
+*.pyc
