@@ -57,6 +57,25 @@ function lineaIndicaCiudad(lineas: string, esLineaCiudad: boolean): boolean {
   return esLineaCiudad || lineas.includes('domicilio') || lineas.includes('ciudad de panam') || lineas.includes('san miguelito');
 }
 
+// v65: señal de ciudad por la PROVINCIA de la dirección, no por el nombre de la línea de envío.
+//
+// Caso real, pedido #8871 (24-ago): la línea era "¡Envío GRATIS! 🚚 Compra mayor a $300", que NO dice
+// ciudad ni interior — el envío gratis aplica en ambos (en el interior, solo hasta sucursal o agente
+// verde de Servientrega). Como además la dirección no resolvió zona, el pedido quedó sin despachar y
+// nadie se enteró hasta que el cliente reclamó.
+//
+// La provincia sí discrimina, y se comprobó contra los pedidos reales: los de ciudad traen "Panamá"
+// (#8871, #8865, #8861…) y los de interior traen la suya (#8870 "Bocas del Toro", #8863 "Chiriquí").
+// "Panamá Oeste" queda FUERA a propósito: Arraiján y La Chorrera no son flota propia.
+function provinciaEsMetro(shopifyOrder: any): boolean {
+  const p = String(shopifyOrder?.shipping_address?.province ?? '')
+    .toLowerCase()
+    .normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+  return p === 'panama';
+}
+
 // F4 (v31): detecta ventas imposibles o mal ruteadas comparando la LÍNEA de envío elegida en el
 // checkout con la zona real resuelta. NO bloquea nada — el agente humano maneja y asigna todos los
 // pedidos; esto produce `envio_flag` (pedidos) + job_log `pedido_flag` + nota 🚨 en Shipday.
@@ -117,7 +136,14 @@ Deno.serve(async (req) => {
     const retiro = esRetiroEnTienda(shopifyOrder);
     const zona = retiro ? null : await resolverTarifa(String(order.customerAddress ?? ''));
     const lineasEnvio: string = (shopifyOrder?.shipping_lines || []).map((l: any) => `${l?.title ?? ''} ${l?.code ?? ''}`).join(' ').toLowerCase();
-    const sinMatchCiudad = zona?.estado === 'sin_match' && lineaIndicaCiudad(lineasEnvio, esLineaCiudad);
+    // La provincia solo rescata cuando la dirección NO nombró un lugar del interior: si el resolver la
+    // descartó por eso (`fuera_del_area_metro`), manda ese motivo aunque Shopify diga provincia Panamá.
+    // Ese guardián se aplica SOLO a este camino nuevo — el de la línea de envío se deja intacto para no
+    // dejar de despachar nada que hoy sí se despacha.
+    const provinciaRescata = provinciaEsMetro(shopifyOrder) &&
+      (zona as unknown as { motivo?: string } | null)?.motivo !== 'fuera_del_area_metro';
+    const sinMatchCiudad = zona?.estado === 'sin_match' &&
+      (lineaIndicaCiudad(lineasEnvio, esLineaCiudad) || provinciaRescata);
     // RPC caído (zona null, no retiro) → respaldo al filtro por nombre: mejor despachar un pedido de
     // ciudad sin zona que perderlo en silencio. En retiro nunca se despacha.
     const despachar = retiro ? false : (zona ? (esFlotaPropia(zona) || sinMatchCiudad) : esLineaCiudad);
