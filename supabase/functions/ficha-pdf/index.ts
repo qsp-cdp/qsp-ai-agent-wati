@@ -14,7 +14,7 @@
 //   GET  /ficha-pdf?key=<KEY>   → healthcheck con la versión
 import { extractText, getDocumentProxy } from 'npm:unpdf@0.12.1';
 
-const VERSION = 'v1-ficha-pdf';
+const VERSION = 'v2-ficha-pdf-texto-legible';
 const KEY = 'fichapdf-3n7q2x8m';
 
 // Solo fabricantes y el CDN de la propia tienda. Sin esto, cualquiera con la llave podría usar la
@@ -89,6 +89,30 @@ Deno.serve(async (req) => {
     return json({ error: `No se pudo extraer el texto: ${String(err).slice(0, 200)}` }, 422);
   }
   if (!texto) return json({ error: 'PDF sin texto (¿escaneado?), haría falta OCR', paginas }, 422);
+
+  // TEXTO ILEGIBLE — más peligroso que un PDF escaneado, porque este SÍ pasa el filtro de arriba.
+  //
+  // Caso real: la ficha de la Epson DFX-9000 usa una codificación no estándar (fuente incrustada con
+  // cmap propio), y unpdf devuelve los bytes tal cual: 'Beneficios Principales' sale bien pero la tabla
+  // de velocidad sale como ")VYYHKVY\u0003\S[YH]LSVJPKHK" — un cifrado por desplazamiento. El chequeo
+  // de `!texto` no lo atrapa: hay texto, solo que no significa nada.
+  //
+  // Por qué importa más de lo que parece: esta tabla existe para que cada dato de `impresoras_specs`
+  // tenga una fuente AUDITABLE. Una ficha ilegible guardada como fuente es peor que no tener fuente —
+  // la fila queda con su `fuente_url` puesto, aparenta estar respaldada, y nadie puede comprobar nada.
+  //
+  // Se mide por caracteres de control (los \u0003 que separan cada glifo mal mapeado): un PDF sano trae
+  // cero o alguno suelto; el de la DFX-9000 trae 991 en 6.639 caracteres (14,9%). El umbral de 2% deja
+  // pasar el ruido normal y corta la basura sin ambigüedad.
+  const control = (texto.match(/[\x00-\x08\x0B\x0C\x0E-\x1F]/g) ?? []).length;
+  const pctControl = (control / texto.length) * 100;
+  if (pctControl > 2) {
+    return json({
+      error: 'El texto extraído está ilegible (codificación no estándar en el PDF): no sirve como fuente auditable',
+      paginas, caracteres: texto.length, pct_control: Math.round(pctControl * 10) / 10,
+      muestra: texto.slice(0, 160),
+    }, 422);
+  }
 
   const guardado = await fetch(`${Deno.env.get('SUPABASE_URL')}/rest/v1/fichas_pdf?on_conflict=url`, {
     method: 'POST',
