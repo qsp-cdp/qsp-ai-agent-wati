@@ -76,6 +76,34 @@ function provinciaEsMetro(shopifyOrder: any): boolean {
   return p === 'panama';
 }
 
+// v66: EL PIN QUE SHOPIFY YA MANDA. Google resuelve la dirección en el checkout y Shopify guarda
+// `shipping_address.latitude/longitude` — un dato que teníamos delante y no estábamos usando. Contra
+// nuestros polígonos da el corregimiento exacto, sin depender de que el diccionario conozca el nombre
+// del edificio ni de cómo el cliente ordenó las palabras.
+//
+// Pero el pin NO es palabra santa, y el mismo día lo demostró un pedido: el #8870 iba a **Almirante,
+// Bocas del Toro** y su pin cayó en **Natá, Coclé** — Google geocodificó flojo una dirección vaga. Por
+// eso solo se consulta cuando el TEXTO no nombró el interior: si lo nombró, ese motivo manda y el pin
+// no se mira. El texto y el pin se cubren mutuamente.
+async function zonaPorPin(lat: number, lng: number): Promise<ZonaResuelta | null> {
+  try {
+    const res = await fetch(`${Deno.env.get('SUPABASE_URL')}/rest/v1/rpc/ubicacion_por_coordenadas`, {
+      method: 'POST',
+      headers: {
+        apikey: Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? '',
+        Authorization: `Bearer ${Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? ''}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ p_lat: lat, p_lng: lng }),
+      signal: AbortSignal.timeout(5000),
+    });
+    if (!res.ok) return null;
+    return await res.json() as ZonaResuelta;
+  } catch {
+    return null; // el pin es un extra: si falla, el pedido sigue el camino de siempre
+  }
+}
+
 // F4 (v31): detecta ventas imposibles o mal ruteadas comparando la LÍNEA de envío elegida en el
 // checkout con la zona real resuelta. NO bloquea nada — el agente humano maneja y asigna todos los
 // pedidos; esto produce `envio_flag` (pedidos) + job_log `pedido_flag` + nota 🚨 en Shipday.
@@ -140,13 +168,32 @@ Deno.serve(async (req) => {
     // descartó por eso (`fuera_del_area_metro`), manda ese motivo aunque Shopify diga provincia Panamá.
     // Ese guardián se aplica SOLO a este camino nuevo — el de la línea de envío se deja intacto para no
     // dejar de despachar nada que hoy sí se despacha.
-    const provinciaRescata = provinciaEsMetro(shopifyOrder) &&
-      (zona as unknown as { motivo?: string } | null)?.motivo !== 'fuera_del_area_metro';
+    const nombroElInterior = (zona as unknown as { motivo?: string } | null)?.motivo === 'fuera_del_area_metro';
+    const provinciaRescata = provinciaEsMetro(shopifyOrder) && !nombroElInterior;
     const sinMatchCiudad = zona?.estado === 'sin_match' &&
       (lineaIndicaCiudad(lineasEnvio, esLineaCiudad) || provinciaRescata);
+
+    // v66: el pin solo se consulta cuando el texto NO resolvió y NO nombró el interior. Si el texto ya
+    // dio zona, esa manda: viene del diccionario que el negocio mantiene, con su tarifa revisada.
+    const lat = Number(shopifyOrder?.shipping_address?.latitude);
+    const lng = Number(shopifyOrder?.shipping_address?.longitude);
+    const hayPin = Number.isFinite(lat) && Number.isFinite(lng) && (lat !== 0 || lng !== 0);
+    const zonaPin = (!retiro && hayPin && zona?.estado !== 'ok' && !nombroElInterior)
+      ? await zonaPorPin(lat, lng)
+      : null;
+    if (zonaPin) {
+      await logJob('shopify-webhook', 'zona_por_pin_shopify', true, {
+        order: order.orderNumber,
+        texto: zona?.estado ?? 'n/d',
+        pin: zonaPin.estado,
+        corregimiento: (zonaPin as unknown as { corregimiento?: string }).corregimiento ?? null,
+      });
+    }
     // RPC caído (zona null, no retiro) → respaldo al filtro por nombre: mejor despachar un pedido de
     // ciudad sin zona que perderlo en silencio. En retiro nunca se despacha.
-    const despachar = retiro ? false : (zona ? (esFlotaPropia(zona) || sinMatchCiudad) : esLineaCiudad);
+    const despachar = retiro
+      ? false
+      : (zona ? (esFlotaPropia(zona) || sinMatchCiudad || esFlotaPropia(zonaPin)) : (esLineaCiudad || esFlotaPropia(zonaPin)));
     if (gratis && !retiro) {
       // Traza del envío gratis (>$300, aplica en todo el país): en ciudad va a flota propia, en el
       // interior es retiro en la sucursal Servientrega. La zona ya decidió arriba; esto solo registra.
@@ -230,6 +277,21 @@ Deno.serve(async (req) => {
       nota.push('⚠️ Dirección no reconocida en el diccionario de zonas — verificar antes de despachar.');
     } else if (zona?.estado === 'sin_servicio') {
       nota.push('🚨 Zona SIN SERVICIO de entrega (comarca) — coordinar con el cliente antes de despachar.');
+    }
+    // v66: lo que dice el PIN del checkout, cuando el texto no alcanzó. Va como línea aparte y siempre
+    // rotulada como "pin de Google": quien despacha tiene que poder distinguir de dónde salió cada dato.
+    if (zonaPin) {
+      const correg = (zonaPin as unknown as { corregimiento?: string }).corregimiento;
+      if (zonaPin.estado === 'ok') {
+        nota.push(`📍 Pin de Google (checkout): ${correg ?? 's/d'} · ${zonaPin.zona} · $${zonaPin.tarifa_usd} · ${zonaPin.metodo}`);
+      } else if (zonaPin.estado === 'ambiguo') {
+        const ops = (zonaPin.opciones ?? [])
+          .map((o: Record<string, unknown>) => `${o.zona} $${o.tarifa_usd} ${o.metodo}`)
+          .join(' | ');
+        nota.push(`📍 Pin de Google (checkout): ${correg ?? 's/d'} — confirmar sector, hay más de una zona posible: ${ops}`);
+      } else if (correg) {
+        nota.push(`📍 Pin de Google (checkout): ${correg} — sin zona asignada en el diccionario.`);
+      }
     }
     if (nota.length) {
       order.deliveryInstruction = [order.deliveryInstruction, ...nota].filter(Boolean).join('\n');
