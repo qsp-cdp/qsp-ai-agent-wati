@@ -4,12 +4,12 @@
 GRUPOS = [
  ("CZ993A#AKY", [
    ("HP OfficeJet 200 portatil", "hp-officejet-200-mobile-impresora-de-inyeccion-portatil", "CZ993A#AKY", "probable dueno"),
-   ("Canon Pixma TR160 portatil", "canon-pixma-tr160-impresora-portatil-canon-inalambrica-para-imprimir-en-cualquier-lugar-8-ppm-negro-5-ppm-color", "", "PENDIENTE"),
+   ("Canon Pixma TR160 portatil", "canon-pixma-tr160-impresora-portatil-canon-inalambrica-para-imprimir-en-cualquier-lugar-8-ppm-negro-5-ppm-color", "7069C002", "Canon USA: es el SKU de su propia pagina de producto (usa.canon.com/shop/p/pixma-tr160)"),
  ]),
  ("4SB24A#AKY", [
    ("HP Smart Tank 530", "hp-smarttank-530-impresora-multifunciona-l", "4SB24A#AKY", "probable dueno"),
    ("HP Smart Tank 580", "impresora-hp-smart-tank-580", "1F3Y2A", "ficha oficial (nombre del PDF de HP en Archivos)"),
-   ("HP Smart Tank 583", "impresora-hp-smart-tank-583-wifi-con-tanque-de-tinta-de-alta-capacidad-reemplaza-hp-smart-tank-415-12-ppm-negro-5-ppm-color", "", "PENDIENTE"),
+   ("HP Smart Tank 583", "impresora-hp-smart-tank-583-wifi-con-tanque-de-tinta-de-alta-capacidad-reemplaza-hp-smart-tank-415-12-ppm-negro-5-ppm-color", "4A8D7A", "Tienda oficial HP Mexico: el numero va dentro de la URL del producto (...-smart-tank-583-4a8d7a.html)"),
  ]),
  ("QL-800", [
    ("Brother QL-800 etiquetas", "impresora-de-etiquetas-brother-ql-800-imprime-negro-y-rojo-brother", "QL-800", "probable dueno"),
@@ -24,22 +24,22 @@ GRUPOS = [
  ]),
  ("T671600", [
    ("Caja de mantenimiento Epson C13T671600", "epson-c13t671600-caja-de-mantenimiento", "C13T671600", "handle"),
-   ("Caja de mantenimiento Epson T3170", "epson-t3170-caja-de-mantenimiento", "", "PENDIENTE"),
+   ("Caja de mantenimiento Epson T3170", "epson-t3170-caja-de-mantenimiento", "C13S210057", "Ficha oficial Epson SureColor T3170X: 'Tanque de mantenimiento C13S210057'. CONFIRMAR que el T3170 a secas use el mismo tanque"),
  ]),
  ("MC-G01", [
-   ("Cartucho de mantenimiento Canon MC-G01", "cartucho-de-mantenimiento-canon-mc-g01", "MC-G01", "probable dueno"),
+   ("Cartucho de mantenimiento Canon MC-G01", "cartucho-de-mantenimiento-canon-mc-g01", "4628C001AA", "Folleto oficial Canon MAXIFY GX7110: la tabla da MC-G01 = 4628C001AA. Hoy el MPN es el texto 'MC-G01', que no es numero de item"),
    ("Cartucho de mantenimiento Canon MC-32", "canon-mc-32-cartucho-de-mantenimiento-imageprograf-tc-20-tc-20m", "MC-32", "titulo"),
    ("Cartucho de mantenimiento Canon MC-31", "canon-mc-31-cartucho-de-mantenimiento-imageprograf-tm-240-tm-340-tm-250-tm-350-tm-355-gp-300", "MC-31", "titulo"),
  ]),
  ("4589C001", [
    ("Cartucho de mantenimiento Canon MC-G02", "cartucho-de-mantenimiento-canon-mc-g02-para-pixma-g2160-g3160", "4589C001", "probable dueno"),
-   ("Cartucho de mantenimiento Canon MC-G04", "cartucho-de-mantenimiento-canon-mc-g04-para-pixma-g1130-g2170-g3170-y-g4170", "", "PENDIENTE"),
-   ("Cartucho de mantenimiento Canon MC-G03", "cartucho-de-mantenimiento-canon-mc-g03-para-maxify-gx4010-gx3010", "", "PENDIENTE"),
+   ("Cartucho de mantenimiento Canon MC-G04", "cartucho-de-mantenimiento-canon-mc-g04-para-pixma-g1130-g2170-g3170-y-g4170", "5813C001AA", "Folleto oficial Canon PIXMA G3170: 'MC-G04 WW Cartucho de Mantenimiento 5813C001AA'"),
+   ("Cartucho de mantenimiento Canon MC-G03", "cartucho-de-mantenimiento-canon-mc-g03-para-maxify-gx4010-gx3010", "5794C001AA", "Folleto oficial Canon MAXIFY GX4010: 'MC-G03 Cartucho de mantenimiento 5794C001AA'"),
    ("Cartucho de mantenimiento Canon MC-10", "cartucho-de-mantenimiento-canon-mc-10-1320b014", "1320B014", "handle"),
  ]),
  ("2Z610A", [
    ("HP LaserJet Pro 4003dw", "impresora-hp-laserjet-pro-4003dw", "2Z610A", "probable dueno"),
-   ("HP LaserJet Pro M501dn", "impresora-hp-laserjet-pro-m501dn-43-ppm", "", "PENDIENTE"),
+   ("HP LaserJet Pro M501dn", "impresora-hp-laserjet-pro-m501dn-43-ppm", "J8H61A", "Portal de documentacion de HP: 'HP LaserJet Pro M501dn (J8H61A) - Product documentation'"),
  ]),
  ("T671200", [
    ("Caja de mantenimiento Epson T671200", "epson-t671200-caja-de-mantenimiento", "T671200", "probable dueno"),
@@ -74,25 +74,25 @@ GRUPOS = [
  ]),
  ("4471C004AA", [
    ("Canon MAXIFY GX4010", "impresora-canon-maxify-gx4010-calidad-profesional-para-tu-oficina", "5779C004AA", "folleto oficial Canon: 'MAXIFY GX4010 ** Impresora Multifuncional Inalambrica MegaTank ... 5779C004AA'"),
-   ("Canon MAXIFY GX7110", "impresora-canon-maxify-gx7110-impresion-profesional-inalambrica-conectividad-canon-print-app-alta-velocidad-2-7-lcd-tactil-45-ppm-negro-25-ppm-color", "", "PENDIENTE (4471C004AA es de la GX7010, otro modelo)"),
+   ("Canon MAXIFY GX7110", "impresora-canon-maxify-gx7110-impresion-profesional-inalambrica-conectividad-canon-print-app-alta-velocidad-2-7-lcd-tactil-45-ppm-negro-25-ppm-color", "6880C004AA", "Folleto oficial Canon: la fila 'Modelo GX7110 / Impresora multifuncion' lleva Codigo mercury 6880C004AA"),
  ]),
  ("7KW55A#BGJ", [
    ("HP Color LaserJet Enterprise 5700dn", "hp-color-laserjet-enterprise-5700dn-imprime-escanea-y-copia-con-calidad-laser-en-color", "6QN28A", "hp.com: el numero va en el titulo, la URL y el nombre de su hoja de especificaciones"),
    ("HP Color LaserJet Pro 3303fdw", "hp-color-laserjet-pro-3303fdw-imprime-escanea-y-copia-con-calidad-laser-en-color", "499M8A", "tienda oficial HP Argentina (el numero va en la URL del producto)"),
-   ("HP Color LaserJet Enterprise Flow 6800zf", "hp-color-laserjet-enterprise-flow-6800zf", "", "PENDIENTE"),
+   ("HP Color LaserJet Enterprise Flow 6800zf", "hp-color-laserjet-enterprise-flow-6800zf", "6QN36A", "Ficha oficial HP: 'Model HP Color LaserJet Enterprise Flow MFP 6800zf Printer  Product number 6QN36A'"),
  ]),
  ("MFCL3710CW", [
-   ("Canon imageRUNNER 1643i", "impresora-laser-multifuncional-canon-imagerunner-1643i-vidrio-del-escaner-tamano-legal", "", "PENDIENTE"),
+   ("Canon imageRUNNER 1643i", "impresora-laser-multifuncional-canon-imagerunner-1643i-vidrio-del-escaner-tamano-legal", "3630C006AA", "Folleto de Canon (hospedado por distribuidor): 1643i = Codigo Mercury 3630C006AA; el 1643iF es 3630C005AA. CONFIRMAR cual se vende (con o sin fax)"),
    ("Brother MFC-T4500DW", "impresora-laser-multifuncional-brother-mfc-t4500dw-e", "MFCT4500DW", "patron Brother (confirmar)"),
    ("Brother MFC-L5705DW", "impresora-laser-multifuncional-brother-mfc-l5705dw-escaner-legal-velocidad-52-ppm-conectividad-inalambrica-pantalla-tactil-4-85-duplex-copia", "MFCL5705DW", "patron Brother (confirmar)"),
    ("Brother MFC-L3720CDW", "impresora-laser-multifuncional-monocromatica-brother-mfc-l3720cdw-impresion-duplex-escaneo-y-copia-y-conexion-inalambrica-a-red-copia", "MFCL3720CDW", "patron Brother (confirmar)"),
    ("Brother HL-L2460DW", "impresora-laser-multifuncional-monocromatica-brother-hl-l2460dw-impresion-duplex-escaneo-y-copia-y-conexion-inalambrica-a-red-copia", "HLL2460DW", "patron Brother (confirmar)"),
    ("Canon imageCLASS X MF1538C", "impresora-laser-a-color-multifuncional-canon-imageclass-x-mf1538c-copia-escaneo-y-fax-impresion-duplex-y-movil", "", "PENDIENTE"),
-   ("Canon imageCLASS MF289dw", "impresora-laser-monocromatica-multifuncional-canon-imageclass-mf289dw-copia-escaneo-y-fax-impresion-duplex-y-movil-35-ppm", "", "PENDIENTE"),
+   ("Canon imageCLASS MF289dw", "impresora-laser-monocromatica-multifuncional-canon-imageclass-mf289dw-copia-escaneo-y-fax-impresion-duplex-y-movil-35-ppm", "6354C005AA", "Folleto oficial Canon: 'Modelo imageCLASS MF289dw. Codigo mercury 6354C005AA'. Los otros dos numeros del folleto son toners"),
  ]),
  ("C11CJ80201", [
    ("Epson SureColor F170 sublimacion", "impresora-de-sublimacion-epson-surecolor-f170-1", "C11CJ80201", "probable dueno"),
-   ("Brother SP-1 sublimacion", "impresora-de-sublimacion-brother-sp-1", "", "PENDIENTE (mismo copy-paste que le dio a la SP-1 la descripcion de la F170)"),
+   ("Brother SP-1 sublimacion", "impresora-de-sublimacion-brother-sp-1", "SP1", "Pagina oficial Brother: brother-usa.com/p/sublimation-printers/SP1"),
  ]),
  ("DCPT720DW", [
    ("Brother DCP-T730DW", "impresora-multifuncional-brother-dcp-t730dw-color-dcpt-730dw-tinta-continua-conectividad-inalambrica-impresion-duplex-27-ppm-negro-23-ppm-color", "DCPT730DW", "patron Brother (confirmar)"),
@@ -109,8 +109,8 @@ OTROS = [
   "Lista de precios oficial de Lexmark: '42C7360 Lexmark CX522ade'. El 29S0150 es de la MX331adn."),
  ("Lexmark MX522adhe", "lexmark-multifuncional-b-n-mx522adhe-1100", "29S0150", "36S0840",
   "Lista de precios oficial de Lexmark: '36S0840 Lexmark MX522adhe'. El 29S0150 es de la MX331adn."),
- ("HP OfficeJet Pro 9730", "impresora-hp-officejet-pro-9730-ideal-para-formatos-grandes-11-x-17-incluye-dos-bandejas", "G5J38A#AKY", "",
-  "G5J38A es de la OfficeJet Pro 7740, a la que reemplaza. PENDIENTE."),
+ ("HP OfficeJet Pro 9730", "impresora-hp-officejet-pro-9730-ideal-para-formatos-grandes-11-x-17-incluye-dos-bandejas", "G5J38A#AKY", "537P5C",
+  "Ficha oficial HP: 'Contenido de la caja 537P5C Impresora Todo-en-Uno HP OfficeJet Pro 9730'. El G5J38A es de la OfficeJet Pro 7740, a la que reemplaza."),
  ("HP OfficeJet Pro 9130", "impresora-hp-officejet-pro-9130-multifuncional-profesionalismo-y-eficiencia-accesos-directos-y-conexiones-seguras", "1MR69C#AKY", "C2WM3B (confirmar)",
   "1MR69C es de la OfficeJet Pro 9020. El C2WM3B sale de hp.com pero no lo vi en una URL: confirmar antes de aplicar."),
  ("HP DeskJet Ink Advantage 2875", "impresora-hp-deskjet-ink-advantage-2875-588s4a", "7FR21A", "588S4A",

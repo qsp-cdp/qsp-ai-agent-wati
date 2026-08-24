@@ -69,9 +69,19 @@ for i, (titulo, handle, actual, propuesto, porque) in enumerate(OTROS, start=2):
 ws3 = wb.create_sheet("Como usar", 0)
 ws3.column_dimensions["A"].width = 3
 ws3.column_dimensions["B"].width = 108
+
+# Los conteos se calculan, no se escriben a mano: la hoja no puede decir una cifra
+# distinta a la que tienen las filas de al lado.
+filas = [(p, o) for _, ps in GRUPOS for _, _, p, o in ps] + [(p, q) for _, _, _, p, q in OTROS]
+n_verde = sum(1 for p, o in filas if o == "probable dueno")
+n_rojo  = sum(1 for p, o in filas if not p)
+n_ambar = len(filas) - n_verde - n_rojo
+n_conf  = sum(1 for p, o in filas if p and "CONFIRMAR" in (o or ""))
+
 texto = [
  ("Numeros de parte (MPN) duplicados en Shopify", "titulo"),
- ("Detectado por specs-centinela el 22-ago-2026. 20 grupos, sobre productos ACTIVOS.", "sub"),
+ (f"Detectado por specs-centinela el 22-ago-2026, sobre productos ACTIVOS. {len(GRUPOS)} grupos. "
+  f"Estado: {n_ambar} con propuesta ({n_conf} de ellas por confirmar), {n_verde} correctos, {n_rojo} sin resolver.", "sub"),
  ("", ""),
  ("Por que importa", "h"),
  ("El MPN es la llave con la que indexan Google Shopping y cualquier catalogo de contenido sindicado", "p"),
@@ -87,6 +97,13 @@ texto = [
  ("VERDE  = es el dueno legitimo del numero. No se toca.", "verde"),
  ("AMBAR  = hay propuesta de correccion, con su origen en la columna de al lado. Verificar y aplicar.", "ambar"),
  ("ROJO   = falta buscar el numero correcto en el fabricante.", "rojo"),
+ ("", ""),
+ ("Las dos filas que dicen CONFIRMAR", "h"),
+ ("Tienen numero propuesto, pero la fuente no es del producto exacto y eso hay que cerrarlo antes de", "p"),
+ ("aplicarlas. Un numero equivocado no se ve distinto a uno bueno, y por eso van marcadas:", "p"),
+ ("  - Canon imageRUNNER 1643i: el folleto da 1643i = 3630C006AA y 1643iF = 3630C005AA. La 'F' es el", "p"),
+ ("    fax. Hay que mirar cual de los dos equipos se vende antes de escribir el numero.", "p"),
+ ("  - Caja de mantenimiento Epson T3170: el numero sale de la ficha del T3170X, no del T3170 a secas.", "p"),
  ("", ""),
  ("Donde se corrige", "h"),
  ("Shopify admin -> el producto -> Metacampos -> mm-google-shopping / mpn", "p"),
