@@ -3206,6 +3206,30 @@ async function ejecutarAsistencia(
           if (salida && pareceFuncionEnTexto(salida)) { await log("fuga_tool_texto", false, { waId, fase: "asistencia", muestra: (r.text ?? "").slice(0, 200) }); salida = null; }
           // v87 — el modelo escribió su abstención en vez de callar → cuenta como respuesta vacía.
           if (salida && esMetaAbstencion(salida)) { await log("abstencion_meta", true, { waId, origen, muestra: salida.slice(0, 160) }); salida = null; }
+          // v110 — SIN HERRAMIENTA Y CON EL ASESOR ACTIVO: no se interrumpe. Caso real (24-ago 21:21,
+          // Javier 🎣): el asesor acababa de mandar la cotización en PDF hacía 72 segundos; el cliente
+          // preguntó "¿esto lo tienen en Panamá o es por pedido?" y el bot se metió con "ese caso lo
+          // maneja mejor el asesor que ya lo está atendiendo… enseguida le confirma 🙂". Dos minutos
+          // después el asesor dio la respuesta de verdad: "En 1 día lo tenemos". El bot interrumpió Y no
+          // aportó nada — lo peor de los dos mundos.
+          //
+          // Pasó el filtro de contenido porque la pregunta ERA de disponibilidad (NEEDS_TOOL_RE), que es
+          // justo lo que v79 quiso habilitar. Pero v79 se sostiene sobre una premisa: el bot responde
+          // porque puede traer un DATO REAL de una herramienta. Si no llamó a ninguna, esa premisa no se
+          // cumplió y la interrupción no tiene con qué justificarse.
+          //
+          // esMetaAbstencion (v87) no lo atrapa: aquello es el modelo narrando que se abstiene ("no
+          // respondo"); esto es un desvío cortés al asesor, que se lee como una respuesta normal.
+          //
+          // Solo aplica con el asesor ACTIVO (escribió hace menos de HANDOFF_ASSIST_MIN) y fuera de los
+          // modos que el propio asesor pidió (captura / envío) y del barrido tardío: ahí una respuesta
+          // sin tool puede ser legítima (preguntar la dirección, cerrar con cortesía tras horas de
+          // silencio). Con el humano tecleando, no.
+          const modoInvitado = origen === "captura" || origen === "asesor_pidio_envio" || origen.startsWith("barrido");
+          if (salida && !modoInvitado && r.toolCalls.length === 0 && ultHumano && minsSinHumano < HANDOFF_ASSIST_MIN) {
+            await log("asistencia_handoff", true, { waId, enviado: false, motivo: "sin_tool_asesor_activo", mins_sin_asesor: Math.round(minsSinHumano * 10) / 10, muestra: salida.slice(0, 160) });
+            salida = null;
+          }
           if (!salida) { await log("asistencia_handoff", true, { waId, enviado: false, motivo: "sin_respuesta" }); return; }
           // anti-duplicado (llegó otro mensaje del cliente) + anti-carrera (el asesor volvió a escribir
           // durante el LLM → reseteó el reloj → él sigue; o la conversación dejó de estar en handoff).
@@ -3516,7 +3540,7 @@ Deno.serve(async (req) => {
         texto: tr?.texto ?? null, ts: new Date().toISOString(),
       });
     }
-    return Response.json({ status: "ok", function: "copilot-webhook", version: "v109-cierre-sin-adelantar-envio", mode: MODE, mode_raw: MODE_RAW, model: MODEL, llm_configured: !!anthropic, wati_send_configured: !!(WATI_API_TOKEN && WATI_API_BASE), inventario_configurado: !!(SHOPIFY_ADMIN_TOKEN && SHOPIFY_ADMIN_API_BASE), resolve_configured: !!RESOLVE_SECRET, webhook_key_es_default: WEBHOOK_KEY_ES_DEFAULT, handoff_assist_min: HANDOFF_ASSIST_MIN, handoff_cold_hours: HANDOFF_COLD_HOURS, debounce_ms: DEBOUNCE_MS, sesion_gap_dias: SESION_GAP_DIAS, burbujas: BURBUJAS, burbuja_ms: BURBUJA_MS, audio_puente: AUDIO_PUENTE, sweep: SWEEP_MODE, sweep_espera_min: SWEEP_ESPERA_MIN, stt: STT_MODE, stt_raw: STT_RAW, stt_configurado: !!OPENAI_API_KEY, stt_model: STT_MODEL, busqueda_shadow: BUSQUEDA_SHADOW, busqueda_mcp: BUSQUEDA_MCP, busqueda_mcp_limit: BUSQUEDA_MCP_LIMIT, catalog_mcp_url: CATALOG_MCP_URL, ucp_profile_url: UCP_PROFILE_URL, live_targets: MODE === "live" ? (LIVE_ALL ? "all" : LIVE_ALLOWLIST.length) : 0, ts: new Date().toISOString() });
+    return Response.json({ status: "ok", function: "copilot-webhook", version: "v110-no-pisar-al-asesor", mode: MODE, mode_raw: MODE_RAW, model: MODEL, llm_configured: !!anthropic, wati_send_configured: !!(WATI_API_TOKEN && WATI_API_BASE), inventario_configurado: !!(SHOPIFY_ADMIN_TOKEN && SHOPIFY_ADMIN_API_BASE), resolve_configured: !!RESOLVE_SECRET, webhook_key_es_default: WEBHOOK_KEY_ES_DEFAULT, handoff_assist_min: HANDOFF_ASSIST_MIN, handoff_cold_hours: HANDOFF_COLD_HOURS, debounce_ms: DEBOUNCE_MS, sesion_gap_dias: SESION_GAP_DIAS, burbujas: BURBUJAS, burbuja_ms: BURBUJA_MS, audio_puente: AUDIO_PUENTE, sweep: SWEEP_MODE, sweep_espera_min: SWEEP_ESPERA_MIN, stt: STT_MODE, stt_raw: STT_RAW, stt_configurado: !!OPENAI_API_KEY, stt_model: STT_MODEL, busqueda_shadow: BUSQUEDA_SHADOW, busqueda_mcp: BUSQUEDA_MCP, busqueda_mcp_limit: BUSQUEDA_MCP_LIMIT, catalog_mcp_url: CATALOG_MCP_URL, ucp_profile_url: UCP_PROFILE_URL, live_targets: MODE === "live" ? (LIVE_ALL ? "all" : LIVE_ALLOWLIST.length) : 0, ts: new Date().toISOString() });
   }
   if (req.method !== "POST") return Response.json({ error: "method_not_allowed" }, { status: 405 });
   if (url.searchParams.get("key") !== WEBHOOK_KEY) return Response.json({ error: "forbidden" }, { status: 403 });
