@@ -159,9 +159,22 @@ Reporta nueve cosas:
 | `mpn_vs_sku` | el metacampo `mpn` no coincide con el SKU de la variante |
 | `mpn_duplicado` | dos productos distintos compartiendo número de parte |
 | `sin_mpn` | producto sin número de parte: no lo indexa ni Google Shopping ni la sindicación |
-| `mal_clasificados` | consumibles con tipo de producto de impresora (ensucia los filtros de la tienda) |
+| `mal_clasificados` | repuestos **tipados como impresora** en Shopify (ensucia los filtros de la tienda) |
 | `sin_fuente` | filas que nadie puede auditar |
 | `fuente_vieja` | fichas leídas hace más de 18 meses |
+
+**Dos alcances, y confundirlos cuesta chequeos.** Los de impresoras (`nuevos`, `retirados`,
+`titulo_vs_ficha`, `mal_clasificados`) miran solo impresoras. Los de número de parte (`mpn_*`) miran el
+**catálogo entero, repuestos incluidos**: Google Shopping y los catálogos sindicados los indexan igual,
+y un MPN repetido en un tóner hace el mismo daño que en una impresora. Al separar los dos alcances por
+primera vez (v3) filtré una sola lista y `mpn_vs_sku` cayó de 2 a 0 en la misma corrida — los dos
+hallazgos reales están en productos tipo "Partes de Impresora". Se corrigió en v4.
+
+**`mal_clasificados` decía 35 y en realidad era 0.** La consulta filtra por `product_type:Impresora*`,
+y ese comodín casa también con "Partes de Impresora" y "Accesorios para Impresoras" — que están
+**bien** tipados. Los 35 eran repuestos correctos arrastrados por un filtro demasiado ancho, no
+productos que alguien tuviera que ir a corregir. Ahora salen en `fuera_de_alcance` (un conteo, no una
+lista de tareas) y `mal_clasificados` quedó reservado para lo que de verdad está mal tipado.
 
 **`mpn_vs_sku` es el que más trabajo ahorra.** El 24-ago se descubrió que el campo SKU ya tenía el
 número de parte correcto en casi todo el catálogo, mientras el metacampo `mpn` era una copia que nadie
@@ -177,8 +190,25 @@ tres contradicciones que habían costado un día entero de trabajo manual:
 | Canon PIXMA G3170 | 8.8 negro / 5 color | 11 negro / 6 color |
 | Canon MAXIFY GX4010 | 30 negro / 18 color | 18 negro / 13 color |
 
-Solo compara filas **verificadas**: ahí la ficha manda y un título que no cuadra es un error del título.
-En una fila sin fuente no se sabe cuál de los dos está mal, y avisar de eso sería ruido.
+Solo compara filas **con `fuente_url`** — no las marcadas `verificado`, que son cosas distintas:
+`verificado` significa que un humano repasó el equipo, `fuente_url` que la cifra salió de un documento
+del fabricante que se puede volver a leer. Para este chequeo manda la fuente. En una fila sin fuente sí
+se calla: no se sabe cuál de los dos está mal, y avisar de eso sería ruido.
+
+**Al cerrar las fuentes, este chequeo pasó de mirar ~20 filas a mirar 85, y saltaron 7 choques.**
+Cuatro son el mismo caso y son los que hay que arreglar: las Brother de tinta continua tienen en el
+título la velocidad de **Modo Eco**, que es borrador.
+
+| Modelo | El título anuncia | La ficha oficial dice |
+|---|---|---|
+| Brother MFC-T930DW | 30 negro / 26 color | **17 / 16** |
+| Brother DCP-T730DW | 27 negro / 23 color | **16 / 15** |
+| Brother DCP-T530DW | 27 negro / 11 color | **16 / 9** |
+| Brother DCP-T230 | 27 negro / 11 color | **16 / 9** |
+
+Los otros tres son de tamaño de papel, no de estándar: la 3003dw (título 33 = A4, ficha 35 = carta), la
+M501dn (título 43 = A4, ficha 45 = carta) y la 5800dn (título 45 = carta, ficha 43 = A4, que es lo
+único que HP publica para ese modelo).
 
 El centinela **no corrige nada**. Reporta. Corregir specs sin leer la fuente es exactamente como
 llegamos hasta aquí.
