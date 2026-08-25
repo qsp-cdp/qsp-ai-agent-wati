@@ -98,7 +98,31 @@ que igual se iba a bloquear.
 Para verificar que quedó cargado sin que el número aparezca en ningún lado, el endpoint de estado
 publica **cuántos** hay: `wa_ignorar: 2`. Nunca cuáles.
 
-## Lo que NO se puede hacer todavía: filtrar por equipo de WATI
+## Tercera capa, y la que usa su gente: el atributo `no_es_cliente` (v119)
+
+**Esta es la forma normal de marcar a alguien.** Las dos de arriba quedan de respaldo.
+
+En WATI, en la ficha del contacto, se agrega el atributo:
+
+| Atributo | Valor |
+|---|---|
+| `no_es_cliente` | `si` |
+
+El copiloto lo lee y pone la conversación en `cerrada` solo. Para devolverla, se le quita el atributo.
+
+Cómo está construido, y por qué así:
+
+- **Una consulta por contacto cada 12 h**, no una por mensaje (`no_cliente_revisado_at` lo marca).
+- **Ante la duda, atiende.** Si WATI no responde, si tarda, si el JSON viene raro — el mensaje sigue su
+  camino normal. Un cliente real sin respuesta porque WATI tosió es mucho peor que un proveedor con una
+  respuesta de más: lo primero no lo ve nadie.
+- **Se exige que el teléfono coincida.** El filtro `name` de WATI es difuso; si devolviera otro contacto,
+  aplicar su marca silenciaría a un tercero.
+- **Solo reabre lo que él mismo cerró.** La columna `cerrada_por` guarda quién cerró. Si dice
+  `wati_atributo`, quitar el atributo la reabre. Si está en NULL, la cerró una persona y el código no la
+  toca — reabrir una decisión humana porque un campo no está sería repetir el defecto de la v115.
+
+## Lo que NO se puede hacer: filtrar por equipo de WATI
 
 Isaac propuso marcar a los proveedores con un **equipo** de WATI en vez de a mano. Es el lugar correcto
 —la decisión viviría donde su gente ya trabaja— pero al medirlo aparecieron dos obstáculos, ninguno de
@@ -118,6 +142,26 @@ Lo que ese mismo endpoint **sí** devuelve, y el copiloto ya sabe escribir con
 `no_es_cliente = si` se edita desde la ficha del contacto en la bandeja —igual de cómodo que un
 equipo— y se puede leer hoy, sin incógnitas.
 
-Queda una prueba pendiente y es corta: si Isaac crea el equipo "Proveedores" y le asigna un contacto,
-se vuelve a pedir el diagnóstico `?diag=wati_contacto` y se ve si `teamIds` se llena. Si se llena, el
-equipo gana por visibilidad; si sigue en null, el atributo es el camino.
+**La prueba se hizo y salió que no.** Se creó el equipo "Contacto con Proveedores", se le asignó el
+contacto del proveedor —el CDP de WATI lo confirma— y el endpoint siguió devolviendo `teamIds: null`.
+Se probaron cinco rutas con el token del copiloto:
+
+| ruta | HTTP | `teamIds` |
+|---|---|---|
+| `/api/v1/getContacts` | 200 | **null** |
+| `/api/v2/getContacts` | 404 | — |
+| `/api/v1/getTeams` | 404 | — |
+| `/api/v1/getContact/<num>` | 404 | — |
+| `/api/v1/getContactAttributes/<num>` | 404 | — |
+
+El token abre solo la v1 pública, y esa API declara el campo pero no lo llena. El MCP lee los equipos
+por otra puerta que el copiloto no tiene. Por eso la marca es un **atributo** y no un equipo.
+
+El equipo igual sirvió para dos cosas: organiza la bandeja, y al mover el contacto **se le apagaron
+`allow_broadcast` y `allow_sms`**, que es lo que lo sacó de las campañas.
+
+Un detalle que confunde: dentro del equipo aparece un usuario **"Api Token 764"**. Ese es el propio
+copiloto (`api-token-user.764@clare.ai`, el `operatorEmail` de sus envíos). **Sacarlo del equipo no lo
+callaría**: el copiloto no trabaja por el enrutamiento de WATI sino por un webhook que le llega en todos
+los mensajes, esté la conversación asignada a quien esté. Y es la identidad con la que le manda mensajes
+a todo el mundo, así que quitarlo tiene más riesgo que beneficio.

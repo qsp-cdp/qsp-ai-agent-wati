@@ -2903,6 +2903,72 @@ function reaplicarTracking(texto: string, links: Record<string, string>): string
     (m, handle) => links[String(handle).toLowerCase()] ?? m);
 }
 
+// v119 — El atributo `no_es_cliente` del contacto en WATI decide si el copiloto atiende. Lee la ficha
+// por `/api/v1/getContacts`, que es la única puerta que abre el token del copiloto (probado: la v2,
+// `getTeams`, `getContact/<num>` y `getContactAttributes/<num>` dan 404, y `teamIds` vuelve en null
+// incluso con el contacto dentro del equipo — por eso es un atributo y no un equipo).
+//
+// Muta `conv` en sitio para que quien llama vea el estado nuevo sin volver a consultar.
+//
+// Tres decisiones que valen más que el código:
+//
+//  1. UNA CONSULTA POR CONTACTO CADA 12 h, no una por mensaje. `no_cliente_revisado_at` lo marca.
+//  2. ANTE LA DUDA, ATENDER. Cualquier fallo —API caída, timeout, JSON raro— sale por `catch` y el
+//     mensaje sigue su camino normal. Un cliente real que se queda sin respuesta porque WATI tosió es
+//     mucho peor que un proveedor que recibe una respuesta de más: lo primero no lo ve nadie.
+//  3. SOLO REABRE LO QUE ÉL MISMO CERRÓ. Si `cerrada_por` es NULL la cerró una persona, y quitar el
+//     atributo NO la reabre. Reabrir una decisión humana porque un campo no está es exactamente el
+//     defecto de la v115, donde el código pisó `cerrada` por no mirar de dónde venía.
+async function sincronizarNoEsCliente(conv: any, waId: string): Promise<void> {
+  if (!WATI_API_TOKEN || !WATI_API_BASE || !waId || !conv?.id) return;
+  // `upsert_conversation` devuelve SOLO (id, status, turns_today), así que estas dos columnas hay que
+  // pedirlas aparte. Si se leyeran de `conv` llegarían undefined y el resultado sería silencioso y malo:
+  // el corte de 12 h nunca se activaría —una llamada a WATI por CADA mensaje— y una conversación cerrada
+  // por el puente no se reabriría jamás. Un select por id es más barato que cambiar el tipo de retorno
+  // de un RPC que usan otros caminos.
+  const { data: fila } = await sb.from("conversations")
+    .select("cerrada_por,no_cliente_revisado_at").eq("id", conv.id).maybeSingle();
+  const cerradaPor = (fila as any)?.cerrada_por ?? null;
+  const revisadoAt = (fila as any)?.no_cliente_revisado_at ?? null;
+
+  const cerradaPorElPuente = conv.status === "cerrada" && cerradaPor === "wati_atributo";
+  // Una conversación cerrada A MANO no se consulta siquiera: no hay nada que el atributo pueda decidir.
+  if (conv.status === "cerrada" && !cerradaPorElPuente) return;
+  const rev = revisadoAt ? Date.parse(revisadoAt) : 0;
+  if (rev && Number.isFinite(rev) && Date.now() - rev < 12 * 60 * 60 * 1000) return;
+
+  try {
+    const r = await fetch(
+      `${WATI_API_BASE}/api/v1/getContacts?pageSize=1&pageNumber=0&name=${encodeURIComponent(waId)}`,
+      { headers: { Authorization: `Bearer ${WATI_API_TOKEN}` }, signal: AbortSignal.timeout(8000) },
+    );
+    if (!r.ok) throw new Error(`http_${r.status}`);
+    const j = await r.json();
+    const c = j?.contact_list?.[0];
+    // El filtro `name` es difuso: si WATI devuelve OTRO contacto, la marca no es de este número y
+    // aplicarla silenciaría a un tercero. Se exige que el teléfono coincida.
+    if (!c || soloDigitos(String(c.wAid ?? c.phone ?? "")) !== soloDigitos(waId)) throw new Error("otro_contacto");
+    const par = (c.customParams ?? []).find((x: any) => String(x?.name ?? "").toLowerCase() === "no_es_cliente");
+    const marcado = /^(s[ií]|si|yes|true|1|x)$/i.test(String(par?.value ?? "").trim());
+
+    const parche: Record<string, unknown> = { no_cliente_revisado_at: new Date().toISOString() };
+    if (marcado && conv.status !== "cerrada") {
+      parche.status = "cerrada"; parche.cerrada_por = "wati_atributo";
+      await log("no_es_cliente_sync", true, { waId, accion: "cerrada_por_atributo" });
+    } else if (!marcado && cerradaPorElPuente) {
+      parche.status = "bot"; parche.cerrada_por = null;
+      await log("no_es_cliente_sync", true, { waId, accion: "reabierta_por_atributo" });
+    }
+    await sb.from("conversations").update(parche).eq("id", conv.id);
+    Object.assign(conv, parche); // que quien llama vea el estado nuevo
+  } catch (e) {
+    // Se marca revisado igual: si WATI está caído, no tiene sentido reintentar en cada mensaje.
+    await sb.from("conversations").update({ no_cliente_revisado_at: new Date().toISOString() }).eq("id", conv.id);
+    conv.no_cliente_revisado_at = new Date().toISOString();
+    await log("no_es_cliente_sync", false, { waId, error: String(e).slice(0, 120) });
+  }
+}
+
 async function enviarWati(waId: string, texto: string): Promise<boolean> {
   // v117 — FRENO DURO. El secret `WA_IGNORAR` lista números a los que el bot NO le escribe jamás.
   //
@@ -3660,7 +3726,7 @@ Deno.serve(async (req) => {
         texto: tr?.texto ?? null, ts: new Date().toISOString(),
       });
     }
-    return Response.json({ status: "ok", function: "copilot-webhook", version: "v118.2-buscar-donde-vive-el-equipo", mode: MODE, mode_raw: MODE_RAW, model: MODEL, llm_configured: !!anthropic, wati_send_configured: !!(WATI_API_TOKEN && WATI_API_BASE), inventario_configurado: !!(SHOPIFY_ADMIN_TOKEN && SHOPIFY_ADMIN_API_BASE), resolve_configured: !!RESOLVE_SECRET, webhook_key_es_default: WEBHOOK_KEY_ES_DEFAULT, handoff_assist_min: HANDOFF_ASSIST_MIN, handoff_cold_hours: HANDOFF_COLD_HOURS, debounce_ms: DEBOUNCE_MS, sesion_gap_dias: SESION_GAP_DIAS, burbujas: BURBUJAS, burbuja_ms: BURBUJA_MS, audio_puente: AUDIO_PUENTE, sweep: SWEEP_MODE, sweep_espera_min: SWEEP_ESPERA_MIN, stt: STT_MODE, stt_raw: STT_RAW, stt_configurado: !!OPENAI_API_KEY, stt_model: STT_MODEL, busqueda_shadow: BUSQUEDA_SHADOW, busqueda_mcp: BUSQUEDA_MCP, busqueda_mcp_limit: BUSQUEDA_MCP_LIMIT, catalog_mcp_url: CATALOG_MCP_URL, ucp_profile_url: UCP_PROFILE_URL, live_targets: MODE === "live" ? (LIVE_ALL ? "all" : LIVE_ALLOWLIST.length) : 0, wa_ignorar: WA_IGNORAR.size, ts: new Date().toISOString() });
+    return Response.json({ status: "ok", function: "copilot-webhook", version: "v119-puente-no-es-cliente", mode: MODE, mode_raw: MODE_RAW, model: MODEL, llm_configured: !!anthropic, wati_send_configured: !!(WATI_API_TOKEN && WATI_API_BASE), inventario_configurado: !!(SHOPIFY_ADMIN_TOKEN && SHOPIFY_ADMIN_API_BASE), resolve_configured: !!RESOLVE_SECRET, webhook_key_es_default: WEBHOOK_KEY_ES_DEFAULT, handoff_assist_min: HANDOFF_ASSIST_MIN, handoff_cold_hours: HANDOFF_COLD_HOURS, debounce_ms: DEBOUNCE_MS, sesion_gap_dias: SESION_GAP_DIAS, burbujas: BURBUJAS, burbuja_ms: BURBUJA_MS, audio_puente: AUDIO_PUENTE, sweep: SWEEP_MODE, sweep_espera_min: SWEEP_ESPERA_MIN, stt: STT_MODE, stt_raw: STT_RAW, stt_configurado: !!OPENAI_API_KEY, stt_model: STT_MODEL, busqueda_shadow: BUSQUEDA_SHADOW, busqueda_mcp: BUSQUEDA_MCP, busqueda_mcp_limit: BUSQUEDA_MCP_LIMIT, catalog_mcp_url: CATALOG_MCP_URL, ucp_profile_url: UCP_PROFILE_URL, live_targets: MODE === "live" ? (LIVE_ALL ? "all" : LIVE_ALLOWLIST.length) : 0, wa_ignorar: WA_IGNORAR.size, ts: new Date().toISOString() });
   }
   if (req.method !== "POST") return Response.json({ error: "method_not_allowed" }, { status: 405 });
   if (url.searchParams.get("key") !== WEBHOOK_KEY) return Response.json({ error: "forbidden" }, { status: 403 });
@@ -4138,8 +4204,14 @@ Deno.serve(async (req) => {
     // se calla, sin cold-return que lo resucite a las 24 h. Se marca a mano y es reversible:
     //   update conversations set status='cerrada' where wa_id='507…';  -- el bot no vuelve a responder
     //   update conversations set status='bot'     where wa_id='507…';  -- vuelve a atender
+    // v119 — PUENTE CON WATI: el atributo `no_es_cliente` del contacto manda sobre `status`. Así la
+    // marca la pone cualquiera del equipo desde la ficha del contacto en la bandeja, en vez de hacer
+    // falta una consulta SQL que solo se puede correr desde aquí. Va ANTES del corte de 'cerrada' para
+    // que el puente funcione en los dos sentidos.
+    await sincronizarNoEsCliente(conv, waId);
+
     if (conv.status === "cerrada") {
-      await log("conversacion_cerrada", true, { waId, motivo: "no_es_cliente" });
+      await log("conversacion_cerrada", true, { waId, motivo: (conv as any).cerrada_por ?? "no_es_cliente" });
       return Response.json({ ok: true, skipped: "conversacion_cerrada" });
     }
     // v117 — mismo corte, pero por el secret `WA_IGNORAR`. El freno de verdad está en la puerta de salida
