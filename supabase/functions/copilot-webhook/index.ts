@@ -3644,7 +3644,7 @@ Deno.serve(async (req) => {
         texto: tr?.texto ?? null, ts: new Date().toISOString(),
       });
     }
-    return Response.json({ status: "ok", function: "copilot-webhook", version: "v116-sonda-de-equipos", mode: MODE, mode_raw: MODE_RAW, model: MODEL, llm_configured: !!anthropic, wati_send_configured: !!(WATI_API_TOKEN && WATI_API_BASE), inventario_configurado: !!(SHOPIFY_ADMIN_TOKEN && SHOPIFY_ADMIN_API_BASE), resolve_configured: !!RESOLVE_SECRET, webhook_key_es_default: WEBHOOK_KEY_ES_DEFAULT, handoff_assist_min: HANDOFF_ASSIST_MIN, handoff_cold_hours: HANDOFF_COLD_HOURS, debounce_ms: DEBOUNCE_MS, sesion_gap_dias: SESION_GAP_DIAS, burbujas: BURBUJAS, burbuja_ms: BURBUJA_MS, audio_puente: AUDIO_PUENTE, sweep: SWEEP_MODE, sweep_espera_min: SWEEP_ESPERA_MIN, stt: STT_MODE, stt_raw: STT_RAW, stt_configurado: !!OPENAI_API_KEY, stt_model: STT_MODEL, busqueda_shadow: BUSQUEDA_SHADOW, busqueda_mcp: BUSQUEDA_MCP, busqueda_mcp_limit: BUSQUEDA_MCP_LIMIT, catalog_mcp_url: CATALOG_MCP_URL, ucp_profile_url: UCP_PROFILE_URL, live_targets: MODE === "live" ? (LIVE_ALL ? "all" : LIVE_ALLOWLIST.length) : 0, ts: new Date().toISOString() });
+    return Response.json({ status: "ok", function: "copilot-webhook", version: "v116.1-sonda-de-equipos", mode: MODE, mode_raw: MODE_RAW, model: MODEL, llm_configured: !!anthropic, wati_send_configured: !!(WATI_API_TOKEN && WATI_API_BASE), inventario_configurado: !!(SHOPIFY_ADMIN_TOKEN && SHOPIFY_ADMIN_API_BASE), resolve_configured: !!RESOLVE_SECRET, webhook_key_es_default: WEBHOOK_KEY_ES_DEFAULT, handoff_assist_min: HANDOFF_ASSIST_MIN, handoff_cold_hours: HANDOFF_COLD_HOURS, debounce_ms: DEBOUNCE_MS, sesion_gap_dias: SESION_GAP_DIAS, burbujas: BURBUJAS, burbuja_ms: BURBUJA_MS, audio_puente: AUDIO_PUENTE, sweep: SWEEP_MODE, sweep_espera_min: SWEEP_ESPERA_MIN, stt: STT_MODE, stt_raw: STT_RAW, stt_configurado: !!OPENAI_API_KEY, stt_model: STT_MODEL, busqueda_shadow: BUSQUEDA_SHADOW, busqueda_mcp: BUSQUEDA_MCP, busqueda_mcp_limit: BUSQUEDA_MCP_LIMIT, catalog_mcp_url: CATALOG_MCP_URL, ucp_profile_url: UCP_PROFILE_URL, live_targets: MODE === "live" ? (LIVE_ALL ? "all" : LIVE_ALLOWLIST.length) : 0, ts: new Date().toISOString() });
   }
   if (req.method !== "POST") return Response.json({ error: "method_not_allowed" }, { status: 405 });
   if (url.searchParams.get("key") !== WEBHOOK_KEY) return Response.json({ error: "forbidden" }, { status: 403 });
@@ -3730,16 +3730,20 @@ Deno.serve(async (req) => {
   // de NOSOTROS —equipo, asesor asignado—, nunca del cliente; y recortadas. Se quita cuando se resuelva.
   if (SONDA_EQUIPOS && p && typeof p === "object") {
     const claves = Object.keys(p).sort();
-    const firma = claves.join(",");
-    if (!FIRMAS_VISTAS.has(firma) && FIRMAS_VISTAS.size < 25) {
-      FIRMAS_VISTAS.add(firma);
-      const RE_CLAVE_EQUIPO = /team|equipo|assign|asignad|operator|agent|owner|inbox|department/i;
-      const equipo: Record<string, string> = {};
-      for (const k of claves) {
-        if (!RE_CLAVE_EQUIPO.test(k)) continue;
-        const v = (p as any)[k];
-        equipo[k] = v === null || v === undefined ? String(v) : JSON.stringify(v).slice(0, 120);
-      }
+    const RE_CLAVE_EQUIPO = /team|equipo|assign|asignad|operator|agent|owner|inbox|department/i;
+    const equipo: Record<string, string> = {};
+    for (const k of claves) {
+      if (!RE_CLAVE_EQUIPO.test(k)) continue;
+      const v = (p as any)[k];
+      equipo[k] = v === null || v === undefined ? String(v) : JSON.stringify(v).slice(0, 120);
+    }
+    // La firma incluye si cada clave de equipo viene LLENA o VACÍA, no solo su nombre. Primera versión
+    // deduplicaba solo por nombres y por eso no podía distinguir "WATI nunca manda el asignado en el
+    // mensaje del cliente" de "esa conversación en particular no tenía a nadie asignado" — que es
+    // justamente la pregunta. Sigue acotado: dos formas por juego de claves, no una fila por mensaje.
+    const forma = claves.map((k) => (k in equipo ? `${k}=${equipo[k] === "null" ? "0" : "1"}` : k)).join(",");
+    if (!FIRMAS_VISTAS.has(forma) && FIRMAS_VISTAS.size < 25) {
+      FIRMAS_VISTAS.add(forma);
       await log("sonda_equipos", true, { eventType, owner: esDelNegocio, tipo, claves: claves.slice(0, 60), equipo });
     }
   }
