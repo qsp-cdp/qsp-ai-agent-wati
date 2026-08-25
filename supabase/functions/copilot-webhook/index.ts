@@ -3637,7 +3637,7 @@ Deno.serve(async (req) => {
         texto: tr?.texto ?? null, ts: new Date().toISOString(),
       });
     }
-    return Response.json({ status: "ok", function: "copilot-webhook", version: "v114-acks-del-corpus-real", mode: MODE, mode_raw: MODE_RAW, model: MODEL, llm_configured: !!anthropic, wati_send_configured: !!(WATI_API_TOKEN && WATI_API_BASE), inventario_configurado: !!(SHOPIFY_ADMIN_TOKEN && SHOPIFY_ADMIN_API_BASE), resolve_configured: !!RESOLVE_SECRET, webhook_key_es_default: WEBHOOK_KEY_ES_DEFAULT, handoff_assist_min: HANDOFF_ASSIST_MIN, handoff_cold_hours: HANDOFF_COLD_HOURS, debounce_ms: DEBOUNCE_MS, sesion_gap_dias: SESION_GAP_DIAS, burbujas: BURBUJAS, burbuja_ms: BURBUJA_MS, audio_puente: AUDIO_PUENTE, sweep: SWEEP_MODE, sweep_espera_min: SWEEP_ESPERA_MIN, stt: STT_MODE, stt_raw: STT_RAW, stt_configurado: !!OPENAI_API_KEY, stt_model: STT_MODEL, busqueda_shadow: BUSQUEDA_SHADOW, busqueda_mcp: BUSQUEDA_MCP, busqueda_mcp_limit: BUSQUEDA_MCP_LIMIT, catalog_mcp_url: CATALOG_MCP_URL, ucp_profile_url: UCP_PROFILE_URL, live_targets: MODE === "live" ? (LIVE_ALL ? "all" : LIVE_ALLOWLIST.length) : 0, ts: new Date().toISOString() });
+    return Response.json({ status: "ok", function: "copilot-webhook", version: "v115-cerrada-no-se-pisa", mode: MODE, mode_raw: MODE_RAW, model: MODEL, llm_configured: !!anthropic, wati_send_configured: !!(WATI_API_TOKEN && WATI_API_BASE), inventario_configurado: !!(SHOPIFY_ADMIN_TOKEN && SHOPIFY_ADMIN_API_BASE), resolve_configured: !!RESOLVE_SECRET, webhook_key_es_default: WEBHOOK_KEY_ES_DEFAULT, handoff_assist_min: HANDOFF_ASSIST_MIN, handoff_cold_hours: HANDOFF_COLD_HOURS, debounce_ms: DEBOUNCE_MS, sesion_gap_dias: SESION_GAP_DIAS, burbujas: BURBUJAS, burbuja_ms: BURBUJA_MS, audio_puente: AUDIO_PUENTE, sweep: SWEEP_MODE, sweep_espera_min: SWEEP_ESPERA_MIN, stt: STT_MODE, stt_raw: STT_RAW, stt_configurado: !!OPENAI_API_KEY, stt_model: STT_MODEL, busqueda_shadow: BUSQUEDA_SHADOW, busqueda_mcp: BUSQUEDA_MCP, busqueda_mcp_limit: BUSQUEDA_MCP_LIMIT, catalog_mcp_url: CATALOG_MCP_URL, ucp_profile_url: UCP_PROFILE_URL, live_targets: MODE === "live" ? (LIVE_ALL ? "all" : LIVE_ALLOWLIST.length) : 0, ts: new Date().toISOString() });
   }
   if (req.method !== "POST") return Response.json({ error: "method_not_allowed" }, { status: 405 });
   if (url.searchParams.get("key") !== WEBHOOK_KEY) return Response.json({ error: "forbidden" }, { status: 403 });
@@ -3768,7 +3768,14 @@ Deno.serve(async (req) => {
       // El negocio está atendiendo: guarda el mensaje como contexto y marca la conversación como
       // ATENDIDA POR HUMANO (v15). El bot no la retoma hasta que se devuelva a status='bot'.
       await sb.from("messages").insert({ conversation_id: convH.id, role: "assistant", content: texto.slice(0, 4000), mode: "live", model: "human-agent" });
-      if (convH.status !== "handoff") await sb.from("conversations").update({ status: "handoff" }).eq("id", convH.id);
+      // v115 — 'cerrada' NO se pisa. Esta línea promovía CUALQUIER status a 'handoff' en cuanto un asesor
+      // escribía, y con eso resucitaba al bot en una conversación marcada "no es cliente". Caso real del
+      // 25-ago con nuestro PROVEEDOR (5076741…): a las 14:15 se marcó 'cerrada'; a las 15:04 un asesor le
+      // escribió ("Oneyda, CF230X"), esta línea la devolvió a 'handoff', y a las 15:06 el bot contestó con
+      // NUESTRO precio de venta ($132.00 + ITBMS) frente a la cotización del proveedor ($112.35) — o sea,
+      // le enseñó nuestro margen. 'cerrada' es una decisión del negocio, no un estado transitorio: solo
+      // sale de ahí quien la escribió, a mano.
+      if (convH.status !== "handoff" && convH.status !== "cerrada") await sb.from("conversations").update({ status: "handoff" }).eq("id", convH.id);
       await log("mensaje_humano", true, { waId, operador: operador || null });
     }
     return Response.json({ ok: true, skipped: "negocio_atendiendo" });
@@ -3784,7 +3791,7 @@ Deno.serve(async (req) => {
       const marca = texto ? `${texto.slice(0, 3900)} [${tipo}]` : `[${tipo}]`;
       const insH = await sb.from("messages").insert({ conversation_id: convH.id, role: "assistant", content: marca, mode: "live", model: "human-agent" });
       if (insH.error) await log("error", false, { fase: "media_asesor_insert", waId, error: String(insH.error.message ?? "").slice(0, 120) });
-      if (convH.status !== "handoff") await sb.from("conversations").update({ status: "handoff" }).eq("id", convH.id);
+      if (convH.status !== "handoff" && convH.status !== "cerrada") await sb.from("conversations").update({ status: "handoff" }).eq("id", convH.id); // v115: misma razón que arriba — el asesor que manda un PDF tampoco resucita al bot en una 'cerrada'
       await log("mensaje_humano", true, { waId, operador: operador || null, tipo });
     }
     return Response.json({ ok: true, skipped: "negocio_atendiendo_media" });
