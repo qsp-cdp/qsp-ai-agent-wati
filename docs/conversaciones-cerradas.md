@@ -74,3 +74,50 @@ proveedor escribe y el bot **sigue** callado. Antes, ese tercer renglón no exis
 
 La lección para el resto del sistema: un estado que representa una **decisión del negocio** no puede
 vivir en el mismo campo que los estados de tránsito sin que alguien lo proteja de forma explícita.
+
+## Segunda capa: el secret `WA_IGNORAR` (v117)
+
+Idea de Isaac. Un freno guardado en la base **lo puede borrar un bug nuestro** — es literalmente lo que
+acaba de pasar. Un secret no: el copiloto lo lee y nunca lo escribe, así que ninguna ruta del código
+puede pisarlo. No es un duplicado de `cerrada`, es una capa de otra naturaleza.
+
+Se configura en Supabase → *Project Settings* → *Edge Functions* → *Secrets*:
+
+| Nombre | Valor |
+|---|---|
+| `WA_IGNORAR` | números separados por comas |
+
+Se guardan solo los dígitos, así que `+507 6741-7632`, `507-6741-7632` y `50767417632` son el mismo
+número. Vacío = apagado.
+
+El freno se aplica en **`enviarWati`**, la única función que le habla a WhatsApp, y no en la entrada.
+Así ninguna ruta futura —asistencia, puente de audio, avisos de trámite, barridos— puede saltárselo por
+descuido. El corte que hay junto al gate de `cerrada` es solo para no gastar el modelo en una respuesta
+que igual se iba a bloquear.
+
+Para verificar que quedó cargado sin que el número aparezca en ningún lado, el endpoint de estado
+publica **cuántos** hay: `wa_ignorar: 2`. Nunca cuáles.
+
+## Lo que NO se puede hacer todavía: filtrar por equipo de WATI
+
+Isaac propuso marcar a los proveedores con un **equipo** de WATI en vez de a mano. Es el lugar correcto
+—la decisión viviría donde su gente ya trabaja— pero al medirlo aparecieron dos obstáculos, ninguno de
+diseño:
+
+1. **El equipo no viaja en el webhook.** Sonda de 25-ago sobre tráfico real: en 8 mensajes de clientes
+   el campo del asignado vino vacío, y ninguno de los tres tipos de evento (`message`,
+   `newcontactmessagereceived`, `sessionmessagesent`) trae equipo. O sea que el bot no puede decidir en
+   el mismo mensaje; tendría que leer el contacto por API.
+2. **La API que el bot alcanza devuelve `teamIds: null`.** `/api/v1/getContacts` sí expone el campo,
+   pero llega vacío en los dos contactos probados, aunque el CDP de WATI sí reporta un equipo.
+3. Y sobre todo: **hoy el equipo no clasifica nada.** El proveedor y una clienta real están los dos en
+   `"Ventas Online | Clientes VIP"`. El campo existe pero nadie lo ha usado para separar.
+
+Lo que ese mismo endpoint **sí** devuelve, y el copiloto ya sabe escribir con
+`updateContactAttributes`, son los **atributos personalizados** (`customParams`). Un atributo
+`no_es_cliente = si` se edita desde la ficha del contacto en la bandeja —igual de cómodo que un
+equipo— y se puede leer hoy, sin incógnitas.
+
+Queda una prueba pendiente y es corta: si Isaac crea el equipo "Proveedores" y le asigna un contacto,
+se vuelve a pedir el diagnóstico `?diag=wati_contacto` y se ve si `teamIds` se llena. Si se llena, el
+equipo gana por visibilidad; si sigue en null, el atributo es el camino.
