@@ -3660,7 +3660,7 @@ Deno.serve(async (req) => {
         texto: tr?.texto ?? null, ts: new Date().toISOString(),
       });
     }
-    return Response.json({ status: "ok", function: "copilot-webhook", version: "v118.1-verificar-el-freno", mode: MODE, mode_raw: MODE_RAW, model: MODEL, llm_configured: !!anthropic, wati_send_configured: !!(WATI_API_TOKEN && WATI_API_BASE), inventario_configurado: !!(SHOPIFY_ADMIN_TOKEN && SHOPIFY_ADMIN_API_BASE), resolve_configured: !!RESOLVE_SECRET, webhook_key_es_default: WEBHOOK_KEY_ES_DEFAULT, handoff_assist_min: HANDOFF_ASSIST_MIN, handoff_cold_hours: HANDOFF_COLD_HOURS, debounce_ms: DEBOUNCE_MS, sesion_gap_dias: SESION_GAP_DIAS, burbujas: BURBUJAS, burbuja_ms: BURBUJA_MS, audio_puente: AUDIO_PUENTE, sweep: SWEEP_MODE, sweep_espera_min: SWEEP_ESPERA_MIN, stt: STT_MODE, stt_raw: STT_RAW, stt_configurado: !!OPENAI_API_KEY, stt_model: STT_MODEL, busqueda_shadow: BUSQUEDA_SHADOW, busqueda_mcp: BUSQUEDA_MCP, busqueda_mcp_limit: BUSQUEDA_MCP_LIMIT, catalog_mcp_url: CATALOG_MCP_URL, ucp_profile_url: UCP_PROFILE_URL, live_targets: MODE === "live" ? (LIVE_ALL ? "all" : LIVE_ALLOWLIST.length) : 0, wa_ignorar: WA_IGNORAR.size, ts: new Date().toISOString() });
+    return Response.json({ status: "ok", function: "copilot-webhook", version: "v118.2-buscar-donde-vive-el-equipo", mode: MODE, mode_raw: MODE_RAW, model: MODEL, llm_configured: !!anthropic, wati_send_configured: !!(WATI_API_TOKEN && WATI_API_BASE), inventario_configurado: !!(SHOPIFY_ADMIN_TOKEN && SHOPIFY_ADMIN_API_BASE), resolve_configured: !!RESOLVE_SECRET, webhook_key_es_default: WEBHOOK_KEY_ES_DEFAULT, handoff_assist_min: HANDOFF_ASSIST_MIN, handoff_cold_hours: HANDOFF_COLD_HOURS, debounce_ms: DEBOUNCE_MS, sesion_gap_dias: SESION_GAP_DIAS, burbujas: BURBUJAS, burbuja_ms: BURBUJA_MS, audio_puente: AUDIO_PUENTE, sweep: SWEEP_MODE, sweep_espera_min: SWEEP_ESPERA_MIN, stt: STT_MODE, stt_raw: STT_RAW, stt_configurado: !!OPENAI_API_KEY, stt_model: STT_MODEL, busqueda_shadow: BUSQUEDA_SHADOW, busqueda_mcp: BUSQUEDA_MCP, busqueda_mcp_limit: BUSQUEDA_MCP_LIMIT, catalog_mcp_url: CATALOG_MCP_URL, ucp_profile_url: UCP_PROFILE_URL, live_targets: MODE === "live" ? (LIVE_ALL ? "all" : LIVE_ALLOWLIST.length) : 0, wa_ignorar: WA_IGNORAR.size, ts: new Date().toISOString() });
   }
   if (req.method !== "POST") return Response.json({ error: "method_not_allowed" }, { status: 405 });
   if (url.searchParams.get("key") !== WEBHOOK_KEY) return Response.json({ error: "forbidden" }, { status: 403 });
@@ -3686,9 +3686,16 @@ Deno.serve(async (req) => {
   if (url.searchParams.get("diag") === "wati_contacto") {
     const num = soloDigitos(url.searchParams.get("num") ?? "");
     if (!num || !WATI_API_TOKEN || !WATI_API_BASE) return Response.json({ error: "faltan_datos" }, { status: 400 });
+    // v118.2 — el contacto YA está en el equipo "Contacto con Proveedores" (el CDP de WATI lo confirma) y
+    // aun así `/api/v1/getContacts` devuelve `teamIds: null`. O sea que el equipo se guarda en otro lado y
+    // el v1 solo declara el campo. Se prueban rutas candidatas antes de mandar a nadie a hacer una segunda
+    // cosa: el equipo ya está creado y sería mejor aprovecharlo que pedir un atributo aparte.
     const rutas = [
       `/api/v1/getContacts?pageSize=1&pageNumber=0&name=${encodeURIComponent(num)}`,
-      `/api/v1/getContacts?pageSize=1&pageNumber=0`,
+      `/api/v2/getContacts?pageSize=1&pageNumber=0&name=${encodeURIComponent(num)}`,
+      `/api/v1/getTeams`,
+      `/api/v1/getContact/${encodeURIComponent(num)}`,
+      `/api/v1/getContactAttributes/${encodeURIComponent(num)}`,
     ];
     const salida: any[] = [];
     for (const ruta of rutas) {
@@ -3698,16 +3705,28 @@ Deno.serve(async (req) => {
         });
         const cuerpo = await r.text();
         let j: any = null; try { j = JSON.parse(cuerpo); } catch { /* no era JSON */ }
-        // El primer contacto de la respuesta, venga como venga envuelto.
-        const c = j?.contact_list?.[0] ?? j?.result?.[0] ?? j?.data?.[0] ?? (Array.isArray(j) ? j[0] : null);
+        // El contacto, venga envuelto o suelto. `getContact/<num>` puede devolverlo directo, sin lista:
+        // sin este caso el objeto quedaba en null y el diagnóstico decía "no hay contacto" teniéndolo.
+        const suelto = j && typeof j === "object" && !Array.isArray(j)
+          && ("wAid" in j || "phone" in j || "customParams" in j) ? j : null;
+        const c = j?.contact_list?.[0] ?? j?.result?.[0] ?? j?.data?.[0]
+          ?? (Array.isArray(j) ? j[0] : null) ?? suelto;
         const RE_EQ = /team|equipo|assign|asignad|operator|agent|inbox|department/i;
         const equipo: Record<string, unknown> = {};
         for (const k of Object.keys(c ?? {})) if (RE_EQ.test(k)) equipo[k] = (c as any)[k];
+        // Lo mismo un nivel más arriba: si los equipos vienen fuera del contacto (una lista propia), están
+        // en la envoltura y no en la ficha. Son datos NUESTROS —nombres de equipos— no del cliente.
+        const equipo_sobre: Record<string, unknown> = {};
+        if (j && typeof j === "object" && !Array.isArray(j)) {
+          // Se guarda como TEXTO recortado, no como JSON: cortar un JSON a la mitad y volver a parsearlo
+          // revienta, y aquí solo hace falta ver la forma del valor.
+          for (const k of Object.keys(j)) if (RE_EQ.test(k)) equipo_sobre[k] = JSON.stringify(j[k] ?? null).slice(0, 300);
+        }
         salida.push({
           ruta: ruta.split("?")[0], http: r.status,
           sobre: j && typeof j === "object" ? Object.keys(j).slice(0, 15) : null,
-          claves_contacto: c ? Object.keys(c).sort() : null,
-          equipo,
+          claves_contacto: c ? Object.keys(c).sort().slice(0, 70) : null,
+          equipo, equipo_sobre,
           // Solo los NOMBRES de los atributos personalizados: ahí es donde iría un `no_es_cliente`.
           custom: Array.isArray((c as any)?.customParams)
             ? (c as any).customParams.map((x: any) => x?.name).filter(Boolean).slice(0, 40) : null,
