@@ -3370,10 +3370,22 @@ const SWEEP_MAX = (() => { const n = parseInt((Deno.env.get("COPILOT_SWEEP_MAX")
 // y una pregunta real sobrevive aunque empiece con cortesía ("gracias, y tienen la 664 negra?").
 // Es el mismo criterio del resumen diario (RPC resumen_diario) — conviene que ambos coincidan: el resumen
 // LISTA a quien espera, el barrido ATIENDE a ese mismo conjunto.
-const ACK_PALABRAS = "ok|okis|okay|oki|listo|dale|perfecto|excelente|bueno|buenas|buenos|dias|tardes|no|si|s[ií]|claro|correcto|entiendo|entendido|acuerdo|de|muy|amable|gracias|graciass+|muchas|mil|1000|100|much[ií]simas|thanks|thank|you|ty|reviso|revisando|revisar[eé]|ya|vale|bien|igualmente|saludos|atento|atenta|nada|voy|hacerla|hacerlo|a|ustedes|usted|todos|toda|super";
+// ⚠️ ESPEJO EXACTO de v_pal en la función SQL `es_ack`. El golden test que citaba el comentario viejo
+// (tests/golden.mjs) NO existe en el repo: el espejo lo sostiene la mano, así que si tocas esta lista,
+// toca la de la migración en el MISMO commit.
+//
+// 25-ago: las variantes nuevas (oks, okiis, ahh, recibido, estabien, las truncadas «Graci»/«Gracia»)
+// salieron del corpus real de 14 días, no de imaginarlas. Ver la migración para el caso que lo motivó.
+const ACK_PALABRAS = "ok|oks|okis|okiis|okay|okey|oki|ah|ahh|listo|dale|perfecto|excelente|bueno|buenas|buenos|dias|tardes|no|si|s[ií]|claro|correcto|entiendo|entendido|acuerdo|de|en|por|la|muy|amable|estabien|recibido|recibida|informaci[oó]n|informacion|gracias|graciass+|graci|gracia|muchas|mil|1000|100|much[ií]simas|thanks|thank|you|ty|reviso|revisando|revisar[eé]|ya|vale|bien|igualmente|saludos|atento|atenta|nada|voy|hacerla|hacerlo|a|ustedes|usted|todos|toda|super";
 const ACK_RE = new RegExp(`^(${ACK_PALABRAS})([\\s,\\.!¡]+(${ACK_PALABRAS}))*[\\s,\\.!👍🙏👌😊❤️😉🤝]*$`, "i");
 function esAck(t: string): boolean {
-  const s = String(t ?? "").trim().replace(/[👍🙏👌😊❤️😉🤝]/g, "").trim();
+  // Se quitan los emojis de cortesía Y sus MODIFICADORES. Antes solo caía el emoji base: «Ah ok 👍🏻»
+  // quedaba como «Ah ok 🏻» (sobrevive el tono de piel U+1F3FB-FF) y no contaba como ack — apareció en
+  // la lista de "esperando respuesta" con 4h 31m de espera falsa.
+  const s = String(t ?? "").trim()
+    .replace(/[\u{1F3FB}-\u{1F3FF}\uFE0F]/gu, "")
+    .replace(/[👍🙏👌😊❤😉🤝✅🫡🤗]/gu, "")
+    .trim();
   return !s || ACK_RE.test(s);
 }
 
@@ -3625,7 +3637,7 @@ Deno.serve(async (req) => {
         texto: tr?.texto ?? null, ts: new Date().toISOString(),
       });
     }
-    return Response.json({ status: "ok", function: "copilot-webhook", version: "v113.1-repuestos-no-son-equipos", mode: MODE, mode_raw: MODE_RAW, model: MODEL, llm_configured: !!anthropic, wati_send_configured: !!(WATI_API_TOKEN && WATI_API_BASE), inventario_configurado: !!(SHOPIFY_ADMIN_TOKEN && SHOPIFY_ADMIN_API_BASE), resolve_configured: !!RESOLVE_SECRET, webhook_key_es_default: WEBHOOK_KEY_ES_DEFAULT, handoff_assist_min: HANDOFF_ASSIST_MIN, handoff_cold_hours: HANDOFF_COLD_HOURS, debounce_ms: DEBOUNCE_MS, sesion_gap_dias: SESION_GAP_DIAS, burbujas: BURBUJAS, burbuja_ms: BURBUJA_MS, audio_puente: AUDIO_PUENTE, sweep: SWEEP_MODE, sweep_espera_min: SWEEP_ESPERA_MIN, stt: STT_MODE, stt_raw: STT_RAW, stt_configurado: !!OPENAI_API_KEY, stt_model: STT_MODEL, busqueda_shadow: BUSQUEDA_SHADOW, busqueda_mcp: BUSQUEDA_MCP, busqueda_mcp_limit: BUSQUEDA_MCP_LIMIT, catalog_mcp_url: CATALOG_MCP_URL, ucp_profile_url: UCP_PROFILE_URL, live_targets: MODE === "live" ? (LIVE_ALL ? "all" : LIVE_ALLOWLIST.length) : 0, ts: new Date().toISOString() });
+    return Response.json({ status: "ok", function: "copilot-webhook", version: "v114-acks-del-corpus-real", mode: MODE, mode_raw: MODE_RAW, model: MODEL, llm_configured: !!anthropic, wati_send_configured: !!(WATI_API_TOKEN && WATI_API_BASE), inventario_configurado: !!(SHOPIFY_ADMIN_TOKEN && SHOPIFY_ADMIN_API_BASE), resolve_configured: !!RESOLVE_SECRET, webhook_key_es_default: WEBHOOK_KEY_ES_DEFAULT, handoff_assist_min: HANDOFF_ASSIST_MIN, handoff_cold_hours: HANDOFF_COLD_HOURS, debounce_ms: DEBOUNCE_MS, sesion_gap_dias: SESION_GAP_DIAS, burbujas: BURBUJAS, burbuja_ms: BURBUJA_MS, audio_puente: AUDIO_PUENTE, sweep: SWEEP_MODE, sweep_espera_min: SWEEP_ESPERA_MIN, stt: STT_MODE, stt_raw: STT_RAW, stt_configurado: !!OPENAI_API_KEY, stt_model: STT_MODEL, busqueda_shadow: BUSQUEDA_SHADOW, busqueda_mcp: BUSQUEDA_MCP, busqueda_mcp_limit: BUSQUEDA_MCP_LIMIT, catalog_mcp_url: CATALOG_MCP_URL, ucp_profile_url: UCP_PROFILE_URL, live_targets: MODE === "live" ? (LIVE_ALL ? "all" : LIVE_ALLOWLIST.length) : 0, ts: new Date().toISOString() });
   }
   if (req.method !== "POST") return Response.json({ error: "method_not_allowed" }, { status: 405 });
   if (url.searchParams.get("key") !== WEBHOOK_KEY) return Response.json({ error: "forbidden" }, { status: 403 });
