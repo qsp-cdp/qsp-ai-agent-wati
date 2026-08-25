@@ -3726,7 +3726,7 @@ Deno.serve(async (req) => {
         texto: tr?.texto ?? null, ts: new Date().toISOString(),
       });
     }
-    return Response.json({ status: "ok", function: "copilot-webhook", version: "v119-puente-no-es-cliente", mode: MODE, mode_raw: MODE_RAW, model: MODEL, llm_configured: !!anthropic, wati_send_configured: !!(WATI_API_TOKEN && WATI_API_BASE), inventario_configurado: !!(SHOPIFY_ADMIN_TOKEN && SHOPIFY_ADMIN_API_BASE), resolve_configured: !!RESOLVE_SECRET, webhook_key_es_default: WEBHOOK_KEY_ES_DEFAULT, handoff_assist_min: HANDOFF_ASSIST_MIN, handoff_cold_hours: HANDOFF_COLD_HOURS, debounce_ms: DEBOUNCE_MS, sesion_gap_dias: SESION_GAP_DIAS, burbujas: BURBUJAS, burbuja_ms: BURBUJA_MS, audio_puente: AUDIO_PUENTE, sweep: SWEEP_MODE, sweep_espera_min: SWEEP_ESPERA_MIN, stt: STT_MODE, stt_raw: STT_RAW, stt_configurado: !!OPENAI_API_KEY, stt_model: STT_MODEL, busqueda_shadow: BUSQUEDA_SHADOW, busqueda_mcp: BUSQUEDA_MCP, busqueda_mcp_limit: BUSQUEDA_MCP_LIMIT, catalog_mcp_url: CATALOG_MCP_URL, ucp_profile_url: UCP_PROFILE_URL, live_targets: MODE === "live" ? (LIVE_ALL ? "all" : LIVE_ALLOWLIST.length) : 0, wa_ignorar: WA_IGNORAR.size, ts: new Date().toISOString() });
+    return Response.json({ status: "ok", function: "copilot-webhook", version: "v119.1-probar-el-puente-a-pedido", mode: MODE, mode_raw: MODE_RAW, model: MODEL, llm_configured: !!anthropic, wati_send_configured: !!(WATI_API_TOKEN && WATI_API_BASE), inventario_configurado: !!(SHOPIFY_ADMIN_TOKEN && SHOPIFY_ADMIN_API_BASE), resolve_configured: !!RESOLVE_SECRET, webhook_key_es_default: WEBHOOK_KEY_ES_DEFAULT, handoff_assist_min: HANDOFF_ASSIST_MIN, handoff_cold_hours: HANDOFF_COLD_HOURS, debounce_ms: DEBOUNCE_MS, sesion_gap_dias: SESION_GAP_DIAS, burbujas: BURBUJAS, burbuja_ms: BURBUJA_MS, audio_puente: AUDIO_PUENTE, sweep: SWEEP_MODE, sweep_espera_min: SWEEP_ESPERA_MIN, stt: STT_MODE, stt_raw: STT_RAW, stt_configurado: !!OPENAI_API_KEY, stt_model: STT_MODEL, busqueda_shadow: BUSQUEDA_SHADOW, busqueda_mcp: BUSQUEDA_MCP, busqueda_mcp_limit: BUSQUEDA_MCP_LIMIT, catalog_mcp_url: CATALOG_MCP_URL, ucp_profile_url: UCP_PROFILE_URL, live_targets: MODE === "live" ? (LIVE_ALL ? "all" : LIVE_ALLOWLIST.length) : 0, wa_ignorar: WA_IGNORAR.size, ts: new Date().toISOString() });
   }
   if (req.method !== "POST") return Response.json({ error: "method_not_allowed" }, { status: 405 });
   if (url.searchParams.get("key") !== WEBHOOK_KEY) return Response.json({ error: "forbidden" }, { status: 403 });
@@ -3748,6 +3748,39 @@ Deno.serve(async (req) => {
   if (url.searchParams.get("diag") === "wa_ignorar") {
     const num = soloDigitos(url.searchParams.get("num") ?? "");
     return Response.json({ diag: "wa_ignorar", cargados: WA_IGNORAR.size, bloqueado: !!num && WA_IGNORAR.has(num) });
+  }
+  // v119.1 — probar el puente `no_es_cliente` A PEDIDO, sin esperar a que escriba un cliente. Se hizo
+  // falta enseguida: la primera versión se desplegó a las 16:05, el tráfico del día ya se estaba
+  // apagando, y no había forma de distinguir "el puente funciona y nadie ha escrito" de "el puente está
+  // roto". Un botón para probarlo vale más que la espera, y sirve cada vez que se toque esto.
+  // `seco=1` (el default) NO escribe: solo dice qué decidiría.
+  if (url.searchParams.get("diag") === "no_es_cliente") {
+    const num = soloDigitos(url.searchParams.get("num") ?? "");
+    if (!num) return Response.json({ error: "falta_num" }, { status: 400 });
+    const { data: c0 } = await sb.from("conversations")
+      .select("id,status,cerrada_por,no_cliente_revisado_at").eq("wa_id", num).maybeSingle();
+    if (!c0) return Response.json({ error: "sin_conversacion" }, { status: 404 });
+    const seco = url.searchParams.get("seco") !== "0";
+    const antes = { status: (c0 as any).status, cerrada_por: (c0 as any).cerrada_por, revisado: (c0 as any).no_cliente_revisado_at };
+    if (seco) {
+      // Sin escribir: se repite la lectura de WATI y se informa lo que se encontró.
+      let marcado: unknown = "no_consultado", err: string | null = null;
+      try {
+        const r = await fetch(`${WATI_API_BASE}/api/v1/getContacts?pageSize=1&pageNumber=0&name=${encodeURIComponent(num)}`,
+          { headers: { Authorization: `Bearer ${WATI_API_TOKEN}` }, signal: AbortSignal.timeout(8000) });
+        const j = await r.json();
+        const c = j?.contact_list?.[0];
+        const coincide = !!c && soloDigitos(String(c.wAid ?? c.phone ?? "")) === num;
+        const par = (c?.customParams ?? []).find((x: any) => String(x?.name ?? "").toLowerCase() === "no_es_cliente");
+        marcado = { http: r.status, telefono_coincide: coincide, valor: par?.value ?? null };
+      } catch (e) { err = String(e).slice(0, 140); }
+      return Response.json({ diag: "no_es_cliente", seco: true, antes, wati: marcado, error: err });
+    }
+    const conv0: any = { id: (c0 as any).id, status: (c0 as any).status };
+    await sincronizarNoEsCliente(conv0, num);
+    const { data: c1 } = await sb.from("conversations")
+      .select("status,cerrada_por,no_cliente_revisado_at").eq("id", (c0 as any).id).maybeSingle();
+    return Response.json({ diag: "no_es_cliente", seco: false, antes, despues: c1 });
   }
   if (url.searchParams.get("diag") === "wati_contacto") {
     const num = soloDigitos(url.searchParams.get("num") ?? "");
