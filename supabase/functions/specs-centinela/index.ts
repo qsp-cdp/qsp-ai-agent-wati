@@ -6,22 +6,25 @@
 // que alguien edita) vuelve a desalinearse solo; la única defensa que aguanta el paso del tiempo es
 // algo que MIRE y AVISE sin que nadie se acuerde de mirar.
 //
-// Compara el catálogo vivo de Shopify contra `impresoras_specs` y reporta cinco cosas:
-//   1. nuevos          — impresora en la tienda que el bot NO conoce (no la va a recomendar jamás)
-//   2. retirados       — fila cuya impresora ya no está activa en la tienda
-//   3. titulo_vs_ficha — el título anuncia una velocidad distinta a la de la ficha VERIFICADA.
-//                        Es el chequeo estrella: es exactamente el caso de la L5590, cuyo título
-//                        decía 33 ppm cuando Epson dice 30 (borrador) y 15 (ISO).
-//   4. sin_fuente      — filas sin `fuente_url`: el dato existe pero nadie puede auditarlo
-//   5. fuente_vieja    — fichas leídas hace más de 18 meses (los fabricantes las actualizan)
-//   6. mpn_vs_sku      — el metacampo `mpn` no coincide con el SKU de la variante. El SKU es el
-//                        número que el equipo mantiene de verdad; el `mpn` es una copia que se
-//                        desincroniza sola. Ver el comentario largo junto al cálculo.
+// Compara el catálogo vivo de Shopify contra `impresoras_specs` y reporta nueve cosas:
+//   1. nuevos           — impresora en la tienda que el bot NO conoce (no la va a recomendar jamás)
+//   2. retirados        — fila cuya impresora ya no está activa en la tienda
+//   3. titulo_vs_ficha  — el título anuncia una velocidad distinta a la de la ficha CON FUENTE.
+//                         Es el chequeo estrella: es exactamente el caso de la L5590, cuyo título
+//                         decía 33 ppm cuando Epson dice 30 (borrador) y 15 (ISO).
+//   4. mpn_duplicado    — dos productos activos con el mismo número de parte
+//   5. sin_mpn          — producto activo sin número de parte
+//   6. mpn_vs_sku       — el metacampo `mpn` no coincide con el SKU de la variante. El SKU es el
+//                         número que el equipo mantiene de verdad; el `mpn` es una copia que se
+//                         desincroniza sola. Ver el comentario largo junto al cálculo.
+//   7. mal_clasificados — consumibles y accesorios tipados como impresora en Shopify
+//   8. sin_fuente       — filas sin `fuente_url`: el dato existe pero nadie puede auditarlo
+//   9. fuente_vieja     — fichas leídas hace más de 18 meses (los fabricantes las actualizan)
 //
 // No corrige nada por su cuenta: reporta. Corregir specs sin leer la fuente es como llegamos aquí.
 import { logJob } from '../_shared/db.ts';
 
-const VERSION = 'v2-specs-centinela-mpn-vs-sku';
+const VERSION = 'v3-specs-centinela-par-ambiguo';
 const KEY = 'centinela-8k4p1n6r';
 const MESES_PARA_REVISAR_FUENTE = 18;
 
@@ -41,6 +44,22 @@ const json = (body: unknown, status = 200) =>
 // raros desaparezcan sin que nadie los vea — que es de donde venimos.
 const RE_ACCESORIO =
   /^(bandeja|pedestal|bater[ií]a|soporte|alimentador|kit|cable|tapa|rodillo|fusor|correa|caja de mantenimiento|cartucho de mantenimiento|tambor|colector|conjunto|interfaz|unidad de imagen|revelador)\b/i;
+
+// El filtro de la consulta es `product_type:Impresora*`, y ese comodín casa con más de lo que dice:
+// "Partes de Impresora" y "Accesorios para Impresoras" entran igual. Esos productos NO están mal
+// clasificados — su tipo es el correcto — simplemente no son de este barrido.
+//
+// Sin esto pasaban dos cosas malas: una bandeja de papel titulada "Impresora  Bandeja alimentadora de
+// 550 hojas (CF404A)" se reportaba como `nuevos`, o sea "una impresora que el bot no conoce" (y no es
+// una impresora); y los que sí traían nombre de repuesto engordaban `mal_clasificados`, que debería
+// listar SOLO lo que de verdad está mal tipado. Con 35 entradas, esa lista no se revisa.
+//
+// Va por coincidencia EXACTA y no por palabras sueltas. Los tipos reales de la tienda son
+// "Impresoras de Tinta", "Impresoras Laser", "Impresoras Termicas", "Impresora de Matriz",
+// "Impresora de Etiquetas", "Impresora fotográfica", "Impresora Sublimacion" y "Plotters"; un regex
+// laxo con palabras como "cartucho" o "papel" podría tragarse un tipo nuevo de impresora sin avisar.
+// Si aparece una categoría de accesorio nueva, cae en `nuevos` y se ve — que es lo que se quiere.
+const RE_TIPO_ACCESORIO = /^(partes de impresoras?|accesorios? para impresoras?)$/i;
 
 interface ProductoShopify {
   handle: string;
@@ -101,10 +120,27 @@ async function filasDeLaTabla(): Promise<FilaSpec[]> {
   return await r.json();
 }
 
-// Los títulos rematan con "| 33 ppm Negro / 20 ppm Color" o "| 40 ppm". Se lee el primer número como
-// negro y el segundo como color solo cuando el título los ETIQUETA; sin etiqueta no se adivina cuál es.
-function ppmDelTitulo(titulo: string): { negro?: number; color?: number } {
-  const out: { negro?: number; color?: number } = {};
+// Los títulos rematan con "| 33 ppm Negro / 20 ppm Color", "| 40 ppm" o "| 35/33 ppm". Se lee el
+// primer número como negro y el segundo como color SOLO cuando el título los etiqueta; sin etiqueta no
+// se adivina cuál es cuál, y el par se devuelve como par para que quien compara decida.
+function ppmDelTitulo(titulo: string): { negro?: number; color?: number; par?: [number, number] } {
+  const out: { negro?: number; color?: number; par?: [number, number] } = {};
+
+  // PAR PEGADO — "35/33 ppm", "27/23 ppm". Es AMBIGUO y hay que tratarlo como tal, porque los
+  // fabricantes usan el mismo formato para dos cosas distintas:
+  //   · Brother lo usa como negro/color.
+  //   · Lexmark lo usa como carta/A4 — las dos cifras son del negro. Su propia ficha dice
+  //     "up to 35/33 ppm on letter/A4 paper".
+  // Antes esto se leía mal dos veces: el regex de abajo solo alcanza el número pegado a "ppm", así que
+  // de "35/33 ppm" sacaba 33 y lo reportaba como "33 negro" — el número más bajo, y con la etiqueta
+  // equivocada. Eso levantó una falsa alarma en la CX532adwe, cuyo título en realidad está bien.
+  const mPar = titulo.match(/(\d+(?:[.,]\d+)?)\s*\/\s*(\d+(?:[.,]\d+)?)\s*ppm/i);
+  if (mPar) {
+    out.par = [Number(mPar[1].replace(',', '.')), Number(mPar[2].replace(',', '.'))];
+  }
+
+  // El caso etiquetado ("30 ppm negro / 26 ppm color") NO cae en el par de arriba, porque lleva un
+  // "ppm" entre los dos números. Ese sí se puede leer sin ambigüedad.
   const re = /(\d+(?:[.,]\d+)?)\s*ppm(?:\s*(negro|color|b\/n|monocrom\w*))?/gi;
   let m: RegExpExecArray | null;
   let sinEtiqueta: number | undefined;
@@ -115,8 +151,11 @@ function ppmDelTitulo(titulo: string): { negro?: number; color?: number } {
     else if (etiqueta === 'color') out.color ??= valor;
     else sinEtiqueta ??= valor;
   }
-  // "| 40 ppm" a secas, en una monocromática, es la velocidad en negro.
-  if (out.negro === undefined && sinEtiqueta !== undefined && out.color === undefined) out.negro = sinEtiqueta;
+  // "| 40 ppm" a secas, en una monocromática, es la velocidad en negro. No aplica si hubo par: ahí ese
+  // número suelto es la mitad derecha del par, no una cifra por su cuenta.
+  if (!out.par && out.negro === undefined && sinEtiqueta !== undefined && out.color === undefined) {
+    out.negro = sinEtiqueta;
+  }
   return out;
 }
 
@@ -143,6 +182,11 @@ Deno.serve(async (req) => {
     return json({ error: String(err).slice(0, 300) }, 502);
   }
 
+  // Se descartan los productos cuyo TIPO ya dice que son accesorios o consumibles: entraron por el
+  // comodín de la consulta, no por estar mal puestos. Ver el comentario de RE_TIPO_ACCESORIO.
+  const fuera_de_alcance = tienda.filter((p) => RE_TIPO_ACCESORIO.test(p.productType)).length;
+  tienda = tienda.filter((p) => !RE_TIPO_ACCESORIO.test(p.productType));
+
   const porHandle = new Map(tabla.filter((f) => f.handle).map((f) => [f.handle as string, f]));
   const handlesTienda = new Set(tienda.map((p) => p.handle));
 
@@ -160,21 +204,42 @@ Deno.serve(async (req) => {
     .filter((f) => f.handle && !handlesTienda.has(f.handle))
     .map((f) => ({ modelo: f.modelo, handle: f.handle }));
 
-  // Solo se comparan las filas VERIFICADAS: ahí la ficha manda y un título que no cuadra es un error
-  // del título. En una fila sin fuente no se sabe cuál de los dos está mal, y avisar de eso sería ruido.
+  // Solo se comparan las filas CON FUENTE (`fuente_url`), no las marcadas `verificado`. Es lo que hace
+  // el código desde el principio, pero este comentario decía "verificadas" y confundía: son cosas
+  // distintas. `verificado` significa que un humano que conoce el equipo lo repasó; `fuente_url`
+  // significa que la cifra salió de un documento del fabricante que se puede volver a leer.
+  //
+  // Para ESTE chequeo manda la fuente. Si la ficha oficial dice una cosa y el título de la tienda dice
+  // otra, el equivocado es el título — que un humano lo haya repasado o no, no cambia eso. Y gatillar
+  // por `verificado` dejaba el chequeo casi ciego: al 25-ago cubre 85 filas en vez de las ~20 que
+  // tenían el visto bueno humano.
+  //
+  // En una fila SIN fuente sí se calla, y ahí el razonamiento original se sostiene: no se sabe cuál de
+  // los dos está mal, y avisar de eso sería ruido.
   const titulo_vs_ficha: unknown[] = [];
   for (const p of tienda) {
     const fila = porHandle.get(p.handle);
     if (!fila?.fuente_url) continue;
     const t = ppmDelTitulo(p.title);
     const n = num(fila.ppm_negro), c = num(fila.ppm_color);
-    const choqueNegro = t.negro !== undefined && n !== undefined && Math.abs(t.negro - n) > 0.5;
-    const choqueColor = t.color !== undefined && c !== undefined && Math.abs(t.color - c) > 0.5;
-    if (choqueNegro || choqueColor) {
+    const cerca = (a: number, b: number) => Math.abs(a - b) <= 0.5;
+
+    const choqueNegro = t.negro !== undefined && n !== undefined && !cerca(t.negro, n);
+    const choqueColor = t.color !== undefined && c !== undefined && !cerca(t.color, c);
+
+    // Par ambiguo ("35/33 ppm"): se avisa solo si NINGUNO de los dos números cuadra con el negro de la
+    // ficha. Sea cual sea la convención del fabricante, uno de los dos ES la velocidad en negro — en
+    // carta/A4 lo son las dos, y en negro/color lo es la primera. Si ninguno cuadra, el título anuncia
+    // algo que la ficha no respalda, y ahí sí hay que mirarlo.
+    const choquePar = t.par !== undefined && n !== undefined && !cerca(t.par[0], n) && !cerca(t.par[1], n);
+
+    if (choqueNegro || choqueColor || choquePar) {
       titulo_vs_ficha.push({
         modelo: fila.modelo,
         handle: p.handle,
-        titulo_anuncia: [t.negro !== undefined ? `${t.negro} negro` : null, t.color !== undefined ? `${t.color} color` : null].filter(Boolean).join(' / '),
+        titulo_anuncia: t.par
+          ? `${t.par[0]}/${t.par[1]} (el título no dice si es negro/color o carta/A4)`
+          : [t.negro !== undefined ? `${t.negro} negro` : null, t.color !== undefined ? `${t.color} color` : null].filter(Boolean).join(' / '),
         ficha_verificada: [n !== undefined ? `${n} negro` : null, c !== undefined ? `${c} color` : null].filter(Boolean).join(' / '),
         fuente: fila.fuente_url,
       });
@@ -242,6 +307,7 @@ Deno.serve(async (req) => {
     fuente_vieja: fuente_vieja.length,
     mal_clasificados: mal_clasificados.length,
     impresoras_en_tienda: tienda.length,
+    fuera_de_alcance,
     filas_en_tabla: tabla.length,
   };
   // "Limpio" mira solo lo que rompe al bot. Un consumible mal tipado en Shopify o una fila sin fuente
