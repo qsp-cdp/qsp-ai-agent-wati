@@ -60,6 +60,20 @@ begin
          '[👍🙏👌😊❤😉🤝✅🫡🤗]', '', 'g'));
   if v = '' then return false; end if;
 
+  -- GUARDIA DE OBJECIÓN (endurecido tras auditar los 17 que filtraba en 60 días, todos, sin muestreo).
+  -- Catorce eran cierres limpios; tres no, y los tres importan comercialmente:
+  --   «…NO VAMOS HACER LA COMPRA de Limón, la máquina NO QUIERE IMPRIMIR el negro… y le aviso»
+  --   «Ok déjeme ver q SE SALE un poco de MI PRESUPUESTO le indico en todo caso»
+  --   «Paso la información»  (ambiguo: ¿"les paso la info" o "paso [por el local]"?)
+  -- Los dos primeros no necesitan respuesta técnicamente, pero son una venta perdida y una objeción de
+  -- precio: desaparecerlos del correo es peor que dejar una línea de ruido.
+  --
+  -- Ojo con `\y` al final: `\yreclam\y` NO casa con "reclamar". Se vio porque "ahora paso a reclamar"
+  -- seguía filtrándose. Por eso van `reclam[a-z]*` y `falla[a-z]*`.
+  if v ~* '\y(no vamos|no voy|no har[eé]|muy caro|m[aá]s caro|mas caro|se sale|presupuesto|no me sirve|no funciona|no imprime|no enciende|problema|falla[a-z]*|da error|reclam[a-z]*|devoluci[oó]n|garant[ií]a)\y' then
+    return false;
+  end if;
+
   -- Pregunta o pedido explícito → necesita respuesta, no es cierre.
   if v ~ '\?' then return false; end if;
   if v ~* '\y(favor|puede|podr[íi]a|necesito|quiero|manda|env[ií]a|cu[aá]nto|cu[aá]l|qu[eé]|c[oó]mo|d[oó]nde|cu[aá]ndo|aparta|separa|cotiza|total|factura|precio)\y' then
@@ -67,7 +81,10 @@ begin
   end if;
 
   return v ~* '^(ya\s+)?(voy|vamos|estoy|estamos)\s+(en\s+camino|para\s+all[aá]|saliendo|llegando|afuera)[\s\.,!]*$'
-      or v ~* '^(ok[a-z]*[\s,\.]*)?(ya\s+|ahora\s+|luego\s+)?(paso|pasar[eé]|pasamos|pasaron|pas[oó])\y.{0,40}$'
+      -- "paso" exige CONTEXTO de movimiento o tiempo, o un "ya|ahora|luego" delante. Sin eso,
+      -- "Paso la información" se colaba como si el cliente fuera a pasar por el local.
+      or v ~* '^(ok[a-z]*[\s,\.]*)?(ya|ahora|luego)\s+(paso|pasar[eé]|pasamos|pasaron|pas[oó])\y.{0,40}$'
+      or v ~* '^(ok[a-z]*[\s,\.]*)?(paso|pasar[eé]|pasamos|pasaron|pas[oó])\y.{0,40}\y(por|x|ahora|luego|ma[nñ]ana|temprano|tarde|rato|hoy|lunes|martes|mi[eé]rcoles|jueves|viernes|s[aá]bado|recoger|buscar|retirar|comprar|pagar|rollos)\y'
       or v ~* '(d[eé]j[ea](me|nos)|perm[ií]tame)\s+(hablar|consultar|ver|revisar|preguntar)'
       or v ~* '\y(estamos|tamos)\s+en\s+contacto\y'
       or v ~* '\yle\s+(aviso|avisamos|confirmo|confirmamos|escribo|escribimos)\y';
