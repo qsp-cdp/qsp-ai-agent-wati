@@ -3581,7 +3581,7 @@ Deno.serve(async (req) => {
         texto: tr?.texto ?? null, ts: new Date().toISOString(),
       });
     }
-    return Response.json({ status: "ok", function: "copilot-webhook", version: "v111-espera-con-horario", mode: MODE, mode_raw: MODE_RAW, model: MODEL, llm_configured: !!anthropic, wati_send_configured: !!(WATI_API_TOKEN && WATI_API_BASE), inventario_configurado: !!(SHOPIFY_ADMIN_TOKEN && SHOPIFY_ADMIN_API_BASE), resolve_configured: !!RESOLVE_SECRET, webhook_key_es_default: WEBHOOK_KEY_ES_DEFAULT, handoff_assist_min: HANDOFF_ASSIST_MIN, handoff_cold_hours: HANDOFF_COLD_HOURS, debounce_ms: DEBOUNCE_MS, sesion_gap_dias: SESION_GAP_DIAS, burbujas: BURBUJAS, burbuja_ms: BURBUJA_MS, audio_puente: AUDIO_PUENTE, sweep: SWEEP_MODE, sweep_espera_min: SWEEP_ESPERA_MIN, stt: STT_MODE, stt_raw: STT_RAW, stt_configurado: !!OPENAI_API_KEY, stt_model: STT_MODEL, busqueda_shadow: BUSQUEDA_SHADOW, busqueda_mcp: BUSQUEDA_MCP, busqueda_mcp_limit: BUSQUEDA_MCP_LIMIT, catalog_mcp_url: CATALOG_MCP_URL, ucp_profile_url: UCP_PROFILE_URL, live_targets: MODE === "live" ? (LIVE_ALL ? "all" : LIVE_ALLOWLIST.length) : 0, ts: new Date().toISOString() });
+    return Response.json({ status: "ok", function: "copilot-webhook", version: "v112-no-desaparecer-en-facturacion", mode: MODE, mode_raw: MODE_RAW, model: MODEL, llm_configured: !!anthropic, wati_send_configured: !!(WATI_API_TOKEN && WATI_API_BASE), inventario_configurado: !!(SHOPIFY_ADMIN_TOKEN && SHOPIFY_ADMIN_API_BASE), resolve_configured: !!RESOLVE_SECRET, webhook_key_es_default: WEBHOOK_KEY_ES_DEFAULT, handoff_assist_min: HANDOFF_ASSIST_MIN, handoff_cold_hours: HANDOFF_COLD_HOURS, debounce_ms: DEBOUNCE_MS, sesion_gap_dias: SESION_GAP_DIAS, burbujas: BURBUJAS, burbuja_ms: BURBUJA_MS, audio_puente: AUDIO_PUENTE, sweep: SWEEP_MODE, sweep_espera_min: SWEEP_ESPERA_MIN, stt: STT_MODE, stt_raw: STT_RAW, stt_configurado: !!OPENAI_API_KEY, stt_model: STT_MODEL, busqueda_shadow: BUSQUEDA_SHADOW, busqueda_mcp: BUSQUEDA_MCP, busqueda_mcp_limit: BUSQUEDA_MCP_LIMIT, catalog_mcp_url: CATALOG_MCP_URL, ucp_profile_url: UCP_PROFILE_URL, live_targets: MODE === "live" ? (LIVE_ALL ? "all" : LIVE_ALLOWLIST.length) : 0, ts: new Date().toISOString() });
   }
   if (req.method !== "POST") return Response.json({ error: "method_not_allowed" }, { status: 405 });
   if (url.searchParams.get("key") !== WEBHOOK_KEY) return Response.json({ error: "forbidden" }, { status: 403 });
@@ -4140,6 +4140,45 @@ Deno.serve(async (req) => {
     const rafaga = await textoDeRafagaSinResponder(conv.id, texto);
     if (INTERRUPT_RE.test(rafaga)) {
       await log("abstencion_interrupcion", true, { waId, por_rafaga: !INTERRUPT_RE.test(texto) });
+
+      // v112 — CALLARSE SÍ, DESAPARECER NO. La abstención de arriba es correcta y no se toca: el bot no
+      // habla de pagos ni de facturación. Pero hasta aquí también se iba SIN avisarle a nadie — ni al
+      // cliente ni a un asesor — y a esta altura del embudo eso es lo más caro que puede pasar.
+      //
+      // Medido sobre 14 días: 182 abstenciones en 100 clientes. En 169 había un asesor cerca (el candado
+      // haciendo justo su trabajo). Las otras 13 quedaron huérfanas, ~1 por día, y son el momento de
+      // compra: "A nombre de IEEE Región 9", "4-766-1413 DV 70", "Me podría enviar la cotización a
+      // nombre de Shalom", "Coordinar el envio", "Hay que pagar de una vez el total" → "161.57". Cero
+      // respuestas en las cuatro horas siguientes. Una clienta con número de EE.UU. pidió que alguien
+      // que hablara inglés la llamara y tampoco recibió nada.
+      //
+      // Se manda UN aviso fijo, escrito en código: sin LLM, sin tocar cifras, sin prometer nada de la
+      // transacción. Lo único que dice es que hay alguien detrás. Fuera de horario nombra el próximo
+      // horario hábil, igual que la despedida de handoff de aquí abajo.
+      //
+      // UNA sola vez por ventana: la ráfaga de facturación llega en varios mensajes (el caso del 24-ago
+      // disparó tres abstenciones en 53 segundos) y tres avisos iguales serían spam.
+      const { data: avisoPrevio } = await sb.from("messages").select("id")
+        .eq("conversation_id", conv.id).eq("model", "interrupcion-aviso")
+        .gt("created_at", new Date(Date.now() - 30 * 60 * 1000).toISOString()).limit(1);
+      if (!avisoPrevio?.length) {
+        const aviso = horarioPanama().dentro
+          ? "Con gusto — un asesor continúa con usted por aquí mismo en breve. 🙏"
+          : `Con gusto. En este momento estamos fuera del horario de atención; un asesor continúa con usted por aquí ${proximoHorarioHabil(Date.now())}. 🙏`;
+        // Mismo orden que la despedida de handoff (v45): insertar ANTES de enviar y con `model` explícito.
+        // Si se envía primero, el eco de WATI vuelve sin fila que lo reconozca y se guarda como mensaje de
+        // asesor fantasma, que además resetea el reloj del handoff.
+        const insA = await sb.from("messages").insert({
+          conversation_id: conv.id, role: "assistant", content: aviso,
+          mode: liveAllowed(waId) ? "live" : "shadow", model: "interrupcion-aviso", latency_ms: Date.now() - t0,
+        }).select("id");
+        if (insA.error) {
+          await log("error", false, { waId, fase: "interrupcion_aviso_insert", error: String(insA.error.message ?? insA.error).slice(0, 200) });
+        } else if (liveAllowed(waId)) {
+          const ok = await enviarWati(waId, aviso);
+          if (!ok) await sb.from("messages").update({ mode: "shadow" }).eq("id", (insA.data?.[0] as any)?.id);
+        }
+      }
       return Response.json({ ok: true, skipped: "interrupcion_tramite" });
     }
 
