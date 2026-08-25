@@ -746,6 +746,7 @@ LOGÍSTICA, PAGOS Y DATOS DE LA TIENDA (envíos, ubicación, horarios, métodos 
 - Si info_tienda no tiene el dato (devuelve "sin datos disponibles"): dilo con honestidad y deriva a un asesor para confirmarlo. No prometas plazos ni costos específicos.
 - DÍA DE LA SEMANA: si el cliente menciona cualquier día (lunes a domingo) al hablar de visitar, pasar, retirar o coordinar algo con la tienda, llama a info_tienda ANTES de confirmar o negar que ese día atienden — confirmar un día por inercia puede mandar a alguien a un viaje en vano (la tienda no atiende sábados ni domingos, pero el horario real siempre sale de info_tienda). Si el día es sábado, domingo o feriado, acláralo con ese horario en vez de seguirle la corriente.
 - TIENDA FÍSICA — COMPRA DIRECTA: QSP tiene una tienda física real (la ubicación y el horario los da info_tienda) donde el cliente puede LLEGAR Y COMPRAR directamente en el momento, sin pedido previo ni compra por la web. Cuando pregunten si pueden pasar, comprar en tienda o retirar, responde que sí pueden venir directo a comprar (con el horario de info_tienda). NUNCA presentes la tienda como "solo un punto de retiro" NI des a entender que primero hay que comprar en línea: la opción "Recoger en tienda" del checkout web es una ALTERNATIVA para quien prefiere dejar pagado en línea y pasar a buscar — menciónala como opcional, no como requisito.
+- AGOTADO NO ES INEXISTENTE, y nunca lo declares desde un resultado parcial. Si buscaste un modelo y solo te volvieron sus CONSUMIBLES (tintas, tóner, caja de mantenimiento), eso NO prueba que no manejemos el equipo: puede estar agotado. NO digas "no lo encontré en catálogo" ni "no lo manejamos" — di que un asesor confirma disponibilidad y reingreso. Caso real: a un cliente se le dijo que no teníamos la Epson L8180 y sí la tenemos, solo estaba sin stock; era una venta por referido. Cuando la tool SÍ devuelve el equipo con "❌ sin stock", esa es la respuesta buena: lo tenemos, está agotado, y aplica el aviso de disponibilidad de arriba.
 - POLÍTICAS COMERCIALES (descuentos, precios especiales, cliente frecuente, mayoreo/revendedor, crédito): si info_tienda NO trae el dato, NO las afirmes NI las niegues — nada de "no manejamos descuentos" ni "el precio es el mismo para todos" (solo un asesor decide precios especiales, y a veces los da). Di que un asesor le confirma si hay alguna opción para su caso.
 - SUCURSALES DEL INTERIOR: QSP NO tiene tiendas propias en el interior — el envío va por la red de Servientrega. Para dónde recoger en una provincia o ciudad del interior usa sucursales_interior (su descripción y su nota dicen cómo presentar cada punto). Deja claro que el pedido SE ENVÍA a ese punto y el cliente lo retira con su cédula — nunca "tenemos sucursal en [ciudad]", que suena a tienda propia de QSP. Ofrece SIEMPRE las dos vías del interior: retiro en el punto (lo más económico) o puerta a puerta, ambas con los costos de info_tienda (tarifa_interior/plazo_interior), tal cual los traiga. Si la ciudad exacta no aparece, deduce la provincia (sabes la geografía de Panamá) y vuelve a consultar.
 - COSTO/MÉTODO DE ENVÍO EN LA CIUDAD: para un sector concreto de Ciudad de Panamá/San Miguelito usa tarifa_entrega y relaya su respuesta armada — en algunas zonas SOLO hay retiro en un punto Servientrega: dilo tal cual y no ofrezcas domicilio ahí. El punto de retiro de un sector de la CIUDAD sale de tarifa_entrega; sucursales_interior es solo para el interior/provincias. Costo genérico sin sector → info_tienda.
@@ -1568,11 +1569,21 @@ function esComboTitulo(titulo: any): boolean {
 // cabezal (ni al revés). Caso real (03-ago): "cabezales para HP 410" → el "410" de "CF410A" hacía que la
 // escalera literal devolviera el TÓNER como coincidencia exacta. Con esto, un match de CÓDIGO en un producto
 // de otro tipo ya no cuenta como "encontré lo que pidió". Pura y auto-contenida (golden la extrae).
+// v113 — títulos que NO son un equipo: consumibles y repuestos. Se usa para el tipo "impresora".
+const RE_TITULO_NO_EQUIPO = /\btintas?\b|botella|t[oó]ner|cabezal|cartucho|caja de mantenimiento|tambor|fusor|bandeja|correa|rodillo|\bkit\b|papel/i;
+// Palabras que nombran el EQUIPO, y las que delatan que en realidad se pide un consumible para él.
+const RE_PIDE_EQUIPO = /\bimpresoras?\b|\bmultifuncional(es)?\b|\bplotter/i;
+const RE_PIDE_REPUESTO = /cartucho|caja de mantenimiento|tambor|fusor|bandeja|correa|rodillo|papel|repuesto/i;
+
 function tipoPedido(consulta: any): string {
   const q = String(consulta ?? "").toLowerCase();
   if (/cabezal/.test(q)) return "cabezal";
   if (/t[oó]ner/.test(q)) return "toner";
   if (/\btintas?\b|botella/.test(q)) return "tinta";
+  // v113 — "impresora" es el tipo que faltaba, y su ausencia costó una venta (ver el comentario del
+  // guard del MCP). Solo se declara si NO se nombró además un consumible o repuesto: "cartucho para
+  // impresora HP" pide el cartucho, no la impresora, y los tres tipos de arriba ya se descartaron.
+  if (RE_PIDE_EQUIPO.test(q) && !RE_PIDE_REPUESTO.test(q)) return "impresora";
   return "";   // sin tipo declarado → no se filtra nada
 }
 
@@ -1581,6 +1592,9 @@ function tipoPedido(consulta: any): string {
 function tituloDeTipo(titulo: any, tipo: string): boolean {
   if (!tipo) return true;
   const t = String(titulo ?? "").toLowerCase();
+  // v113 — se resuelve ANTES del early-return de abajo: "Caja de Mantenimiento Epson C9345" no dispara
+  // ninguna de las tres banderas, así que caía en "título sin tipo claro" y pasaba como si fuera un equipo.
+  if (tipo === "impresora") return !RE_TITULO_NO_EQUIPO.test(t);
   const esCabezal = /cabezal/.test(t), esToner = /t[oó]ner/.test(t), esTinta = /\btintas?\b|botella/.test(t);
   if (!esCabezal && !esToner && !esTinta) return true;        // título sin tipo claro → no descartar
   if (tipo === "cabezal") return esCabezal;
@@ -1738,7 +1752,27 @@ async function buscarProducto(consulta: string, waId: string = "", linksTracked?
         // El guard v60.1 se evalúa sobre el TOP-5 ORIGINAL del MCP (no sobre los 10 ni sobre el set
         // re-rankeado): pedir 10 no debe ensanchar qué se considera "coincidencia exacta" — un match casual
         // de subcadena en rank 6-10 haría pasar el guard y saltearía la escalera literal (revisión adversarial).
-        if (!codigos.length || algunTituloConCodigo(mcp.slice(0, 5).map((p: any) => p.titulo), codigos)) {
+        // v113 — el candado se evalúa SOLO sobre títulos DEL TIPO QUE PIDIÓ EL CLIENTE.
+        //
+        // Caso real (25-ago, 10:16am): "¿Tienen disponible impresora Epson L 8180?" → el bot respondió
+        // "no encontré la impresora Epson L8180 como tal en catálogo, solo tenemos sus consumibles". La
+        // impresora SÍ está: activa, agotada (inventario 0). Un asesor tuvo que corregirlo a mano, y era
+        // una venta por referido — la clienta preguntaba para una amiga.
+        //
+        // Dos causas que se combinan, y la segunda es la que hace que falle EN SILENCIO:
+        //   1. El Catalog MCP no devuelve lo agotado. Verificado: para "Epson L8180" devuelve 10
+        //      resultados y la impresora no está en ninguno, solo las cuatro tintas y tóners ajenos.
+        //   2. Este candado existe justo para detectar eso (v60.1) — pero preguntaba "¿el código aparece
+        //      en ALGÚN título?", y las tintas se titulan "Ecotank L8160/L8180" por COMPATIBILIDAD. Daba
+        //      verdadero, se devolvían las tintas como si fueran la respuesta, y la escalera literal
+        //      —que sí encuentra la impresora, porque suggest.json pide unavailable_products=show— nunca
+        //      llegaba a ejecutarse.
+        //
+        // Filtrar por tipo antes de preguntar arregla la asimetría: un consumible que menciona el modelo
+        // no prueba que tengamos el EQUIPO. Con `tipo` vacío el comportamiento es idéntico al de antes
+        // (tituloDeTipo devuelve true para todo), así que solo cambia el caso que estaba mal.
+        const titulosParaElCandado = mcp.slice(0, 5).map((p: any) => p.titulo).filter((t: any) => tituloDeTipo(t, tipo));
+        if (!codigos.length || algunTituloConCodigo(titulosParaElCandado, codigos)) {
           const conCombo = await anexarCombo(top, codigos);
           return await enriquecer(conCombo, true);
         }
@@ -3581,7 +3615,7 @@ Deno.serve(async (req) => {
         texto: tr?.texto ?? null, ts: new Date().toISOString(),
       });
     }
-    return Response.json({ status: "ok", function: "copilot-webhook", version: "v112-no-desaparecer-en-facturacion", mode: MODE, mode_raw: MODE_RAW, model: MODEL, llm_configured: !!anthropic, wati_send_configured: !!(WATI_API_TOKEN && WATI_API_BASE), inventario_configurado: !!(SHOPIFY_ADMIN_TOKEN && SHOPIFY_ADMIN_API_BASE), resolve_configured: !!RESOLVE_SECRET, webhook_key_es_default: WEBHOOK_KEY_ES_DEFAULT, handoff_assist_min: HANDOFF_ASSIST_MIN, handoff_cold_hours: HANDOFF_COLD_HOURS, debounce_ms: DEBOUNCE_MS, sesion_gap_dias: SESION_GAP_DIAS, burbujas: BURBUJAS, burbuja_ms: BURBUJA_MS, audio_puente: AUDIO_PUENTE, sweep: SWEEP_MODE, sweep_espera_min: SWEEP_ESPERA_MIN, stt: STT_MODE, stt_raw: STT_RAW, stt_configurado: !!OPENAI_API_KEY, stt_model: STT_MODEL, busqueda_shadow: BUSQUEDA_SHADOW, busqueda_mcp: BUSQUEDA_MCP, busqueda_mcp_limit: BUSQUEDA_MCP_LIMIT, catalog_mcp_url: CATALOG_MCP_URL, ucp_profile_url: UCP_PROFILE_URL, live_targets: MODE === "live" ? (LIVE_ALL ? "all" : LIVE_ALLOWLIST.length) : 0, ts: new Date().toISOString() });
+    return Response.json({ status: "ok", function: "copilot-webhook", version: "v113-agotado-no-es-inexistente", mode: MODE, mode_raw: MODE_RAW, model: MODEL, llm_configured: !!anthropic, wati_send_configured: !!(WATI_API_TOKEN && WATI_API_BASE), inventario_configurado: !!(SHOPIFY_ADMIN_TOKEN && SHOPIFY_ADMIN_API_BASE), resolve_configured: !!RESOLVE_SECRET, webhook_key_es_default: WEBHOOK_KEY_ES_DEFAULT, handoff_assist_min: HANDOFF_ASSIST_MIN, handoff_cold_hours: HANDOFF_COLD_HOURS, debounce_ms: DEBOUNCE_MS, sesion_gap_dias: SESION_GAP_DIAS, burbujas: BURBUJAS, burbuja_ms: BURBUJA_MS, audio_puente: AUDIO_PUENTE, sweep: SWEEP_MODE, sweep_espera_min: SWEEP_ESPERA_MIN, stt: STT_MODE, stt_raw: STT_RAW, stt_configurado: !!OPENAI_API_KEY, stt_model: STT_MODEL, busqueda_shadow: BUSQUEDA_SHADOW, busqueda_mcp: BUSQUEDA_MCP, busqueda_mcp_limit: BUSQUEDA_MCP_LIMIT, catalog_mcp_url: CATALOG_MCP_URL, ucp_profile_url: UCP_PROFILE_URL, live_targets: MODE === "live" ? (LIVE_ALL ? "all" : LIVE_ALLOWLIST.length) : 0, ts: new Date().toISOString() });
   }
   if (req.method !== "POST") return Response.json({ error: "method_not_allowed" }, { status: 405 });
   if (url.searchParams.get("key") !== WEBHOOK_KEY) return Response.json({ error: "forbidden" }, { status: 403 });
