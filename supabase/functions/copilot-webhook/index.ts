@@ -1570,10 +1570,20 @@ function esComboTitulo(titulo: any): boolean {
 // escalera literal devolviera el TÓNER como coincidencia exacta. Con esto, un match de CÓDIGO en un producto
 // de otro tipo ya no cuenta como "encontré lo que pidió". Pura y auto-contenida (golden la extrae).
 // v113 — títulos que NO son un equipo: consumibles y repuestos. Se usa para el tipo "impresora".
-const RE_TITULO_NO_EQUIPO = /\btintas?\b|botella|t[oó]ner|cabezal|cartucho|caja de mantenimiento|tambor|fusor|bandeja|correa|rodillo|\bkit\b|papel/i;
-// Palabras que nombran el EQUIPO, y las que delatan que en realidad se pide un consumible para él.
+const RE_TITULO_NO_EQUIPO = /\btintas?\b|botella|t[oó]ner|cabezal|cartucho|mantenimiento|filtro|fuente de poder|\bcintas?\b|encoder|codificador|\btira\b|\bbanda\b|tambor|fusor|bandeja|correa|rodillo|\bkit\b|papel|repuesto|pieza/i;
+// Palabras que nombran el EQUIPO, y las que delatan que en realidad se pide una PIEZA para él.
+//
+// La lista de repuestos salió de las frases REALES con las que la gente pide piezas, no de imaginarlas.
+// Con la primera versión (solo cartucho/tambor/fusor/bandeja/…) cuatro consultas de producción quedaban
+// mal clasificadas como "impresora" — "el filtro de mantenimiento de impresora modelo L5590", "la fuente
+// de poder de impresora epson L130", "cinta encoder o tira codificadora para impresora hp ink tank 415"
+// y "cinta para impresoras olivetti pr2plus" — y el filtro por tipo habría descartado justo la pieza que
+// el cliente buscaba. Peor que el defecto que este cambio arregla.
+//
+// Ante la duda conviene devolver "" : eso deja el comportamiento EXACTAMENTE como antes de v113. Por eso
+// la lista de repuestos se prefiere ancha — un falso "impresora" rompe; un falso "" solo no mejora.
 const RE_PIDE_EQUIPO = /\bimpresoras?\b|\bmultifuncional(es)?\b|\bplotter/i;
-const RE_PIDE_REPUESTO = /cartucho|caja de mantenimiento|tambor|fusor|bandeja|correa|rodillo|papel|repuesto/i;
+const RE_PIDE_REPUESTO = /cartucho|mantenimiento|filtro|fuente de poder|\bcintas?\b|encoder|codificador|\btira\b|\bbanda\b|tambor|fusor|bandeja|correa|rodillo|papel|repuesto|pieza|\bkit\b/i;
 
 function tipoPedido(consulta: any): string {
   const q = String(consulta ?? "").toLowerCase();
@@ -3615,7 +3625,7 @@ Deno.serve(async (req) => {
         texto: tr?.texto ?? null, ts: new Date().toISOString(),
       });
     }
-    return Response.json({ status: "ok", function: "copilot-webhook", version: "v113-agotado-no-es-inexistente", mode: MODE, mode_raw: MODE_RAW, model: MODEL, llm_configured: !!anthropic, wati_send_configured: !!(WATI_API_TOKEN && WATI_API_BASE), inventario_configurado: !!(SHOPIFY_ADMIN_TOKEN && SHOPIFY_ADMIN_API_BASE), resolve_configured: !!RESOLVE_SECRET, webhook_key_es_default: WEBHOOK_KEY_ES_DEFAULT, handoff_assist_min: HANDOFF_ASSIST_MIN, handoff_cold_hours: HANDOFF_COLD_HOURS, debounce_ms: DEBOUNCE_MS, sesion_gap_dias: SESION_GAP_DIAS, burbujas: BURBUJAS, burbuja_ms: BURBUJA_MS, audio_puente: AUDIO_PUENTE, sweep: SWEEP_MODE, sweep_espera_min: SWEEP_ESPERA_MIN, stt: STT_MODE, stt_raw: STT_RAW, stt_configurado: !!OPENAI_API_KEY, stt_model: STT_MODEL, busqueda_shadow: BUSQUEDA_SHADOW, busqueda_mcp: BUSQUEDA_MCP, busqueda_mcp_limit: BUSQUEDA_MCP_LIMIT, catalog_mcp_url: CATALOG_MCP_URL, ucp_profile_url: UCP_PROFILE_URL, live_targets: MODE === "live" ? (LIVE_ALL ? "all" : LIVE_ALLOWLIST.length) : 0, ts: new Date().toISOString() });
+    return Response.json({ status: "ok", function: "copilot-webhook", version: "v113.1-repuestos-no-son-equipos", mode: MODE, mode_raw: MODE_RAW, model: MODEL, llm_configured: !!anthropic, wati_send_configured: !!(WATI_API_TOKEN && WATI_API_BASE), inventario_configurado: !!(SHOPIFY_ADMIN_TOKEN && SHOPIFY_ADMIN_API_BASE), resolve_configured: !!RESOLVE_SECRET, webhook_key_es_default: WEBHOOK_KEY_ES_DEFAULT, handoff_assist_min: HANDOFF_ASSIST_MIN, handoff_cold_hours: HANDOFF_COLD_HOURS, debounce_ms: DEBOUNCE_MS, sesion_gap_dias: SESION_GAP_DIAS, burbujas: BURBUJAS, burbuja_ms: BURBUJA_MS, audio_puente: AUDIO_PUENTE, sweep: SWEEP_MODE, sweep_espera_min: SWEEP_ESPERA_MIN, stt: STT_MODE, stt_raw: STT_RAW, stt_configurado: !!OPENAI_API_KEY, stt_model: STT_MODEL, busqueda_shadow: BUSQUEDA_SHADOW, busqueda_mcp: BUSQUEDA_MCP, busqueda_mcp_limit: BUSQUEDA_MCP_LIMIT, catalog_mcp_url: CATALOG_MCP_URL, ucp_profile_url: UCP_PROFILE_URL, live_targets: MODE === "live" ? (LIVE_ALL ? "all" : LIVE_ALLOWLIST.length) : 0, ts: new Date().toISOString() });
   }
   if (req.method !== "POST") return Response.json({ error: "method_not_allowed" }, { status: 405 });
   if (url.searchParams.get("key") !== WEBHOOK_KEY) return Response.json({ error: "forbidden" }, { status: 403 });
