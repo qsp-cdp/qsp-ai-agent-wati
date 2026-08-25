@@ -24,7 +24,7 @@ import { hayAsesorDesde, jobLogRecientes, logJob, resumenDiario, ultimoJobLog, u
 import { enviarCorreo } from "../_shared/resend.ts";
 import { ahoraPanama, esDiaHabilPanama } from "../_shared/panama.ts";
 
-const VERSION = "watchdog-v2-facturacion-sin-atender";
+const VERSION = "watchdog-v2.1-ventana-cubre-la-tarde";
 const FN = "watchdog";
 
 const KEY = (Deno.env.get("WATCHDOG_KEY") ?? "").trim();
@@ -323,7 +323,13 @@ async function correrResumen(): Promise<Record<string, unknown>> {
 // "4-766-1413 DV 70", "Me podría enviar la cotización a nombre de Shalom", "Hay que pagar de una vez el
 // total" → "161.57". Cero respuestas en las cuatro horas siguientes.
 const FACT_MARGEN_MIN = intEnv("WATCHDOG_FACT_MARGEN_MIN", 25, 5, 240);   // cuánto se le da al asesor
-const FACT_VENTANA_H  = intEnv("WATCHDOG_FACT_VENTANA_H", 6, 1, 48);      // hasta dónde se mira atrás
+// 18 h y no 6: el watchdog corre de 9:00 a 16:30 (cron */30 14-21 UTC) y las abstenciones llegan de 6am
+// a 7pm. Con 6 h, todo lo que entra DESPUÉS de la última corrida quedaba sin avisar para siempre: a las
+// 9:00 del día siguiente ya tiene ~16 h y se caía de la ventana. Sobre 21 días eso son ~0,5 clientes por
+// día, y son clientes facturando — el peor lugar donde tener un agujero silencioso.
+// 18 h hace que la corrida de las 9:00 alcance hasta las 3pm del día anterior. El anti-repetición usa
+// ESTA MISMA ventana, así que ampliarla no genera correos repetidos: un cliente ya avisado sigue avisado.
+const FACT_VENTANA_H  = intEnv("WATCHDOG_FACT_VENTANA_H", 18, 1, 48);     // hasta dónde se mira atrás
 
 async function avisarFacturacionSinAtender(): Promise<Record<string, unknown>> {
   const ahora = Date.now();
