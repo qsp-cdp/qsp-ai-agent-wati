@@ -32,6 +32,14 @@ de Canon dice "ppm" a secas, no es ESAT, diga lo que diga el pie de página.
 
 *De aquí salieron todos los errores encontrados: L5590, G3170, G4170, GX4010, GX7110.*
 
+**Brother tiene dos disfraces para el borrador.** Uno es el nombre: llama **"Modo Eco"** o **"modo
+rápido"** a lo que los demás llaman borrador. El otro es más callado: rotula la fila **"Print Speed
+(maximum)"** y no cita ISO/IEC 24734 en ninguna parte, así que esa cifra **no es ESAT** y no se puede
+comparar de frente con una Lexmark o una HP. En la MFC-L5705DW hay que leer además la nota al pie:
+*"Based on one-sided printing. Change from default setting required"* — de fábrica sale en dúplex, y
+sus 42 ppm exigen cambiarle la configuración. Cuando la ficha no nombra la norma, la cifra va con esa
+advertencia pegada en las notas.
+
 **1-bis. La velocidad también depende del TAMAÑO DE PAPEL, y hay que decir cuál.**
 HP (y varios más) publican dos cifras por equipo: una en **carta** y otra en **A4**. La carta sale un
 poco más rápida porque la hoja es más corta. Tomar a veces una y a veces la otra rompe la comparación
@@ -45,6 +53,22 @@ la 3103fdw 33 (A4). Dos equipos iguales apareciendo distintos en el orden del as
 experimentar) y **el tamaño se escribe en las notas**. Si la ficha solo etiqueta A4, se usa A4 y se
 dice. Lo que NO se hace es deducir: la portada de la M111w anuncia "21/20 ppm" sin decir cuál es cuál,
 así que ese 21 no se usa — su tabla de especificaciones sí dice "A4: Hasta 20 ppm", y esa es la que va.
+
+**Un par "35/33" NO es negro/color hasta que la ficha lo diga.** Lexmark escribe el par al revés de
+como se lee por costumbre: en la CX532adwe dice *"up to 35/33 ppm on letter/A4 paper"* — es el mismo
+modo en los dos tamaños. La tabla lo confirma: *"Black: 35 ppm (Letter) / Color: 35 ppm (Letter)"*.
+La tabla guardaba 35 negro y **33 color**, o sea la cifra en A4 del negro puesta como si fuera la de
+color, y hacía parecer que imprime más lento a color cuando va igual de rápido. La MX331adn usa el
+mismo formato: *"hasta 40/38 páginas por minuto (carta/A4)"*.
+
+**Y el titular puede ser el que tiene razón.** Esa misma MX331adn casi la corrijo al revés: su tabla
+de especificaciones solo trae *"38 ppm (A4)"* y el 40 guardado parecía inventado — hasta que el
+titular de la misma ficha aclaró *"40/38 (carta/A4)"*. Cuando la tabla y el titular no coinciden,
+antes de corregir hay que descartar que sean **la misma cifra en el otro tamaño**.
+
+**Cuidado también con las fichas que cubren dos modelos.** El folleto de la MF662Cdw/MF665Cdw
+encabeza con *"Print Speeds Up to 35 pages per minute"* y la tabla propia de la MF665Cdw dice 26 ppm
+(carta) y 17,9 (legal). Manda la tabla del modelo, no el titular de la portada.
 
 **2. Solo se afirma lo que la fuente dice.**
 Si la ficha no menciona el ADF, `adf` queda en **NULL**, no en `false`. Comprobado: la HP LaserJet Pro
@@ -66,25 +90,52 @@ Si la ficha lista Oficio entre los tamaños soportados, es `legal` aunque casi t
    procesa con la función `ficha-pdf`, que lo baja y deja su texto en `fichas_pdf` para consultarlo con
    SQL.
 
-   **Buscar primero en Shopify (Contenido → Archivos).** No es el último recurso, es el primero: la
-   tienda ya hospeda los folletos que los fabricantes publican, y de ahí salieron los de la GX7110, la
-   MF1538C, la MF289dw, la OfficeJet Pro 9730 y la SP-1. A veces el número de parte viene en el propio
-   nombre del archivo (`…-OFFICEJET-PRO-9730-…-537P5C.pdf`, `…-SMART-TANK-580-…-1F3Y2A.pdf`).
+   **Buscar primero en Shopify (Contenido → Archivos), y listarlos TODOS.** No es el último recurso,
+   es el primero: la tienda ya hospeda los folletos que los fabricantes publican. De ahí salieron los
+   de la GX7110, la MF1538C, la MF289dw, la OfficeJet Pro 9730 y la SP-1, y el 25-ago salieron
+   **quince más de un solo barrido**. A veces el número de parte viene en el propio nombre del
+   archivo (`…-OFFICEJET-PRO-9730-…-537P5C.pdf`, `…-SMART-TANK-580-…-1F3Y2A.pdf`).
 
-   Después, el sitio del fabricante. Canon Latinoamérica tiene ruta predecible —
-   `cla.canon.com/es_PA/app/pdf/brochures/<Serie>/<MODELO>_Brochure.pdf` — pero **desde Supabase hay
-   dominios que no se alcanzan**, y conviene saberlo antes de perder media hora:
+   **Buscar por nombre de archivo no alcanza.** Catorce de esas quince tenían nombres que no dicen
+   nada — `mmo_110498370_1700988198_4566_2774827.pdf`, `647a4ff83d0dd0.39995500.pdf`, `high.pdf`,
+   `original.pdf`, `P012-518.pdf`, `015542-1.pdf` — y por eso llevaban meses ahí sin que nadie las
+   usara. Entre ellas estaban las fichas de la 5700dn, la 5800dn, la 4303fdw, la M501dn, la M528dn,
+   la MFC-L5705DW y los tres SureColor. **El barrido correcto es extraerlas todas con `ficha-pdf`
+   sin pasarle `modelo`, y después identificarlas por su primera línea**, que es donde el fabricante
+   pone el nombre del equipo. Después se etiqueta `fichas_pdf.modelo`, que es lo único que vuelve
+   consultable la tabla.
 
-   | Origen | Estado |
-   |---|---|
-   | `cdn.shopify.com` (Archivos de la tienda) | funciona |
-   | `cla.canon.com`, `usa.canon.com`, `canon.com.mx` | **bloqueado / sin respuesta** |
-   | `h20195.www2.hp.com` (fichas de HP) | **falla TLS desde Deno** |
+   Después, el sitio del fabricante. Rutas que funcionan:
+
+   - **Canon Latinoamérica**: `cla.canon.com/es_PA/app/pdf/brochures/<Serie>/<MODELO>_Brochure.pdf`
+     (ej. `G-Series_Inkjet_Printers/PIXMA-G3170_Brochure.pdf`). Si la serie o el modelo no existen
+     en esa ruta, devuelve 500 — no hay folleto, no es que esté mal la URL.
+   - **HP**: `pcb.inc.hp.com/dc/api/spec-sheet/<locale>/<idProducto>/pdf/<SKU>.pdf`. Es la API con la
+     que HP arma las fichas de sus propias páginas de producto, y trae más detalle que el folleto
+     (borrador y ISO por separado, carta y A4 por separado, volumen mensual recomendado). El
+     `idProducto` sale de la URL de la página del equipo en hp.com. **Ojo: la mayoría de las
+     combinaciones de locale devuelven 500**; hay que probar varias.
+   - **Epson**: `files.support.epson.com/pdf/<modelo>/<archivo>.pdf` para manuales oficiales.
+
+   **Y desde dónde se alcanza cada uno**, que no es lo mismo según quién haga la llamada:
+
+   | Origen | Desde `ficha-pdf` (Edge Function) | Desde pg_net / proxy local |
+   |---|---|---|
+   | `cdn.shopify.com` (Archivos de la tienda) | funciona | funciona |
+   | `cla.canon.com`, `canon.com.mx`, `canon.com.pa` | **funciona** | **bloqueado** |
+   | `pcb.inc.hp.com` (API de fichas de HP) | funciona | — |
+   | `h20195.www2.hp.com` (fichas viejas de HP) | **falla TLS desde Deno** | **403** |
 
    Cuando el PDF no se puede bajar, el número de parte suele estar igual en **la URL de la tienda
    oficial del fabricante** (así salió la Smart Tank 583: `…-smart-tank-583-4a8d7a.html`) o en el
    título de su portal de documentos (`HP LaserJet Pro M501dn (J8H61A)`). Eso cuenta como fuente; una
    tienda de terceros, no.
+
+   **Un manual de usuario SÍ sirve, si trae el dato.** Lo había descartado por largo, y estaba mal
+   planteado: lo que descalifica a un documento no es su tamaño sino que no traiga la cifra. El
+   manual de la DFX-9000 (30 páginas) trae la tabla completa de cps, y el de la SP-1 (257 páginas)
+   trae un apéndice "Printer Specifications" que publica resolución y ancho **pero no velocidad** —
+   lo cual también es un dato: el fabricante no la publica, igual que en la TC-20 y la SELPHY CP1500.
 2. Llenar los metacampos de Shopify con esos valores, aplicando las cuatro reglas.
 3. Agregar la fila a `impresoras_specs` con su `handle`, `fuente_url` y `fuente_fecha`.
 4. Dejar `verificado = false` hasta que un humano que conozca el equipo lo repase.
@@ -131,6 +182,21 @@ En una fila sin fuente no se sabe cuál de los dos está mal, y avisar de eso se
 
 El centinela **no corrige nada**. Reporta. Corregir specs sin leer la fuente es exactamente como
 llegamos hasta aquí.
+
+## Estado de las fuentes
+
+Al **25-ago-2026**: **85 de 87 filas con `fuente_url`**. Las dos que faltan son la **Canon TS3610** y
+la **Canon PIXMA G510** — Canon Latinoamérica no publica folleto de ninguna de las dos en su ruta de
+brochures (devuelve 500), y el PDF de la G510 que hospeda la tienda está escaneado, sin capa de
+texto. Quedan sin fuente a propósito; su velocidad guardada no está respaldada por nada todavía.
+
+Para ver cómo va:
+
+```sql
+select count(*) filter (where fuente_url is not null) as con_fuente,
+       count(*) filter (where fuente_url is null)     as sin_fuente
+from public.impresoras_specs;
+```
 
 ## Consulta rápida
 
