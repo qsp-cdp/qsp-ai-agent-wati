@@ -6,7 +6,9 @@
 // que alguien edita) vuelve a desalinearse solo; la única defensa que aguanta el paso del tiempo es
 // algo que MIRE y AVISE sin que nadie se acuerde de mirar.
 //
-// Compara el catálogo vivo de Shopify contra `impresoras_specs` y reporta nueve cosas:
+// Compara el catálogo vivo de Shopify contra `impresoras_specs` y reporta nueve cosas. OJO con el
+// alcance de cada una: las de IMPRESORAS miran solo impresoras, y las de NÚMERO DE PARTE miran el
+// catálogo entero, repuestos incluidos (Google Shopping los indexa igual).
 //   1. nuevos           — impresora en la tienda que el bot NO conoce (no la va a recomendar jamás)
 //   2. retirados        — fila cuya impresora ya no está activa en la tienda
 //   3. titulo_vs_ficha  — el título anuncia una velocidad distinta a la de la ficha CON FUENTE.
@@ -17,14 +19,15 @@
 //   6. mpn_vs_sku       — el metacampo `mpn` no coincide con el SKU de la variante. El SKU es el
 //                         número que el equipo mantiene de verdad; el `mpn` es una copia que se
 //                         desincroniza sola. Ver el comentario largo junto al cálculo.
-//   7. mal_clasificados — consumibles y accesorios tipados como impresora en Shopify
+//   7. mal_clasificados — consumibles y accesorios tipados como IMPRESORA en Shopify (no los que ya
+//                         están tipados como repuesto: esos salen en `fuera_de_alcance`)
 //   8. sin_fuente       — filas sin `fuente_url`: el dato existe pero nadie puede auditarlo
 //   9. fuente_vieja     — fichas leídas hace más de 18 meses (los fabricantes las actualizan)
 //
 // No corrige nada por su cuenta: reporta. Corregir specs sin leer la fuente es como llegamos aquí.
 import { logJob } from '../_shared/db.ts';
 
-const VERSION = 'v3-specs-centinela-par-ambiguo';
+const VERSION = 'v4-specs-centinela-dos-alcances';
 const KEY = 'centinela-8k4p1n6r';
 const MESES_PARA_REVISAR_FUENTE = 18;
 
@@ -34,14 +37,14 @@ const SHOPIFY_BASE = (Deno.env.get('SHOPIFY_ADMIN_API_BASE') ?? '').trim().repla
 const json = (body: unknown, status = 200) =>
   new Response(JSON.stringify(body, null, 2), { status, headers: { 'Content-Type': 'application/json' } });
 
-// El tipo de producto de una impresora en esta tienda empieza por "Impresora"/"Plotter", pero hay
-// CONSUMIBLES Y ACCESORIOS con ese mismo tipo: la primera corrida encontró 24 (cajas de mantenimiento
-// Epson, cartuchos de mantenimiento Canon, tambores Brother, colectores de tinta, bandejas, interfaces
-// de red). No es un problema del centinela sino de la clasificación en Shopify, y también afecta a los
-// filtros de la tienda.
+// Un repuesto TIPADO COMO IMPRESORA sí es un problema de catálogo: se cuela en los filtros de la
+// tienda y el cliente lo ve entre las impresoras. Se detecta por el nombre y se separa en su propia
+// lista — no se descarta, porque ocultarlo volvería a la costumbre de que los datos raros desaparezcan
+// sin que nadie los vea, que es de donde venimos.
 //
-// No se DESCARTAN: se separan en su propia lista. Ocultarlos volvería a la costumbre de que los datos
-// raros desaparezcan sin que nadie los vea — que es de donde venimos.
+// Al 25-ago esta lista quedó en CERO, y eso vale explicarlo: las 35 entradas que traía eran repuestos
+// tipados correctamente ("Partes de Impresora") que el comodín de la consulta arrastraba. O sea nunca
+// hubo 35 productos mal clasificados; había un filtro demasiado ancho. Ver RE_TIPO_ACCESORIO.
 const RE_ACCESORIO =
   /^(bandeja|pedestal|bater[ií]a|soporte|alimentador|kit|cable|tapa|rodillo|fusor|correa|caja de mantenimiento|cartucho de mantenimiento|tambor|colector|conjunto|interfaz|unidad de imagen|revelador)\b/i;
 
@@ -182,10 +185,21 @@ Deno.serve(async (req) => {
     return json({ error: String(err).slice(0, 300) }, 502);
   }
 
-  // Se descartan los productos cuyo TIPO ya dice que son accesorios o consumibles: entraron por el
-  // comodín de la consulta, no por estar mal puestos. Ver el comentario de RE_TIPO_ACCESORIO.
-  const fuera_de_alcance = tienda.filter((p) => RE_TIPO_ACCESORIO.test(p.productType)).length;
-  tienda = tienda.filter((p) => !RE_TIPO_ACCESORIO.test(p.productType));
+  // DOS ALCANCES DISTINTOS, y confundirlos cuesta chequeos:
+  //
+  //   `tienda`  — solo impresoras. Es contra lo que se comparan `impresoras_specs` y los títulos:
+  //               un repuesto no tiene fila en la tabla ni velocidad que contradecir.
+  //   `catalogo` — todo lo que devolvió la consulta, repuestos incluidos. Es el alcance de los
+  //               chequeos de NÚMERO DE PARTE, porque Google Shopping y los catálogos sindicados
+  //               indexan el catálogo entero: un MPN repetido en un tóner hace el mismo daño que en
+  //               una impresora.
+  //
+  // Al separarlos por primera vez se me fue justo eso: filtré una sola lista y `mpn_vs_sku` cayó de 2
+  // a 0 en la misma corrida — los dos hallazgos reales (los SKU con la marca pegada, `EPSON
+  // B12B808441` y `HP RM1-3717-020`) están en productos tipo "Partes de Impresora".
+  const catalogo = tienda;
+  const fuera_de_alcance = catalogo.filter((p) => RE_TIPO_ACCESORIO.test(p.productType)).length;
+  tienda = catalogo.filter((p) => !RE_TIPO_ACCESORIO.test(p.productType));
 
   const porHandle = new Map(tabla.filter((f) => f.handle).map((f) => [f.handle as string, f]));
   const handlesTienda = new Set(tienda.map((p) => p.handle));
@@ -252,8 +266,10 @@ Deno.serve(async (req) => {
   // HP Smart Tank 530 y la 580 comparten `4SB24A#AKY`, y el número de parte real de la 580 es 1F3Y2A
   // (aparece en el nombre de su propia ficha técnica). Sin esto sano, sindicar contenido empeora el
   // catálogo en vez de arreglarlo.
+  //
+  // Van sobre `catalogo`, no sobre `tienda`: los repuestos también se sindican.
   const porMpn = new Map<string, string[]>();
-  for (const p of tienda) {
+  for (const p of catalogo) {
     const mpn = String(p.mpn?.value ?? '').trim().toUpperCase();
     if (!mpn) continue;
     porMpn.set(mpn, [...(porMpn.get(mpn) ?? []), p.handle]);
@@ -261,7 +277,7 @@ Deno.serve(async (req) => {
   const mpn_duplicado = [...porMpn.entries()]
     .filter(([, handles]) => handles.length > 1)
     .map(([mpn, handles]) => ({ mpn, handles }));
-  const sin_mpn = tienda
+  const sin_mpn = catalogo
     .filter((p) => !RE_ACCESORIO.test(p.title) && !String(p.mpn?.value ?? '').trim())
     .map((p) => p.handle);
 
@@ -280,7 +296,7 @@ Deno.serve(async (req) => {
   // Se comparan en crudo, sin normalizar mayúsculas ni sufijos: si el SKU dice `6QN36A#BGJ`, el MPN
   // dice `6QN36A#BGJ`. Normalizar aquí sería volver a tener dos versiones del mismo número, que es
   // exactamente el problema del que venimos.
-  const mpn_vs_sku = tienda
+  const mpn_vs_sku = catalogo
     .map((p) => ({
       handle: p.handle,
       sku: String(p.variants?.nodes?.[0]?.sku ?? '').trim(),
@@ -307,6 +323,7 @@ Deno.serve(async (req) => {
     fuente_vieja: fuente_vieja.length,
     mal_clasificados: mal_clasificados.length,
     impresoras_en_tienda: tienda.length,
+    productos_en_catalogo: catalogo.length,
     fuera_de_alcance,
     filas_en_tabla: tabla.length,
   };
