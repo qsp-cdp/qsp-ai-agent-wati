@@ -492,6 +492,13 @@ const BUSQUEDA_MCP_LIMIT = (() => {
   const n = parseInt((Deno.env.get("BUSQUEDA_MCP_LIMIT") ?? "").trim(), 10);
   return Number.isFinite(n) && n >= 1 ? Math.min(n, 50) : 10;
 })();
+// v116 — sonda temporal: ¿WATI manda el EQUIPO del contacto en el webhook? Default ON porque solo escribe
+// en job_log y se apaga con SONDA_EQUIPOS=0 sin volver a desplegar. `FIRMAS_VISTAS` vive en el isolate: se
+// registra una fila por combinación de claves NUEVA, no una por mensaje (con ~1,6 mensajes/min, loguear
+// todo sería basura). El isolate se recicla cada tanto y vuelve a registrar — es el precio de no guardar
+// estado, y a cambio la sonda no puede crecer sin control (tope duro de 25 firmas por isolate).
+const SONDA_EQUIPOS = (Deno.env.get("SONDA_EQUIPOS") ?? "1").trim() !== "0";
+const FIRMAS_VISTAS = new Set<string>();
 // v61.5 — CORTE DE SESIÓN del historial: si entre el mensaje de hoy y los anteriores hay un hueco mayor a
 // N días, la conversación vieja NO entra al contexto (el modelo la leía y la trataba como parte de la de
 // hoy, aunque v32 la marcara con fecha). Default 7 días; 0 = apagado. Ayer/anteayer se conservan (v32).
@@ -3637,7 +3644,7 @@ Deno.serve(async (req) => {
         texto: tr?.texto ?? null, ts: new Date().toISOString(),
       });
     }
-    return Response.json({ status: "ok", function: "copilot-webhook", version: "v115-cerrada-no-se-pisa", mode: MODE, mode_raw: MODE_RAW, model: MODEL, llm_configured: !!anthropic, wati_send_configured: !!(WATI_API_TOKEN && WATI_API_BASE), inventario_configurado: !!(SHOPIFY_ADMIN_TOKEN && SHOPIFY_ADMIN_API_BASE), resolve_configured: !!RESOLVE_SECRET, webhook_key_es_default: WEBHOOK_KEY_ES_DEFAULT, handoff_assist_min: HANDOFF_ASSIST_MIN, handoff_cold_hours: HANDOFF_COLD_HOURS, debounce_ms: DEBOUNCE_MS, sesion_gap_dias: SESION_GAP_DIAS, burbujas: BURBUJAS, burbuja_ms: BURBUJA_MS, audio_puente: AUDIO_PUENTE, sweep: SWEEP_MODE, sweep_espera_min: SWEEP_ESPERA_MIN, stt: STT_MODE, stt_raw: STT_RAW, stt_configurado: !!OPENAI_API_KEY, stt_model: STT_MODEL, busqueda_shadow: BUSQUEDA_SHADOW, busqueda_mcp: BUSQUEDA_MCP, busqueda_mcp_limit: BUSQUEDA_MCP_LIMIT, catalog_mcp_url: CATALOG_MCP_URL, ucp_profile_url: UCP_PROFILE_URL, live_targets: MODE === "live" ? (LIVE_ALL ? "all" : LIVE_ALLOWLIST.length) : 0, ts: new Date().toISOString() });
+    return Response.json({ status: "ok", function: "copilot-webhook", version: "v116-sonda-de-equipos", mode: MODE, mode_raw: MODE_RAW, model: MODEL, llm_configured: !!anthropic, wati_send_configured: !!(WATI_API_TOKEN && WATI_API_BASE), inventario_configurado: !!(SHOPIFY_ADMIN_TOKEN && SHOPIFY_ADMIN_API_BASE), resolve_configured: !!RESOLVE_SECRET, webhook_key_es_default: WEBHOOK_KEY_ES_DEFAULT, handoff_assist_min: HANDOFF_ASSIST_MIN, handoff_cold_hours: HANDOFF_COLD_HOURS, debounce_ms: DEBOUNCE_MS, sesion_gap_dias: SESION_GAP_DIAS, burbujas: BURBUJAS, burbuja_ms: BURBUJA_MS, audio_puente: AUDIO_PUENTE, sweep: SWEEP_MODE, sweep_espera_min: SWEEP_ESPERA_MIN, stt: STT_MODE, stt_raw: STT_RAW, stt_configurado: !!OPENAI_API_KEY, stt_model: STT_MODEL, busqueda_shadow: BUSQUEDA_SHADOW, busqueda_mcp: BUSQUEDA_MCP, busqueda_mcp_limit: BUSQUEDA_MCP_LIMIT, catalog_mcp_url: CATALOG_MCP_URL, ucp_profile_url: UCP_PROFILE_URL, live_targets: MODE === "live" ? (LIVE_ALL ? "all" : LIVE_ALLOWLIST.length) : 0, ts: new Date().toISOString() });
   }
   if (req.method !== "POST") return Response.json({ error: "method_not_allowed" }, { status: 405 });
   if (url.searchParams.get("key") !== WEBHOOK_KEY) return Response.json({ error: "forbidden" }, { status: 403 });
@@ -3711,6 +3718,31 @@ Deno.serve(async (req) => {
   let tipo = (p.type ?? "text").toString();
   const eventType = (p.eventType ?? p.event ?? "").toString().toLowerCase();
   const operador = (p.operatorName ?? p.operatorEmail ?? "").toString().trim(); // asesor que escribió (v15)
+
+  // v116 — SONDA DE EQUIPOS. Isaac propone marcar a los proveedores con un EQUIPO de WATI ("Proveedores")
+  // en vez de a mano en SQL. La idea es mejor: la decisión vive donde su gente ya trabaja. Pero antes de
+  // construirlo hay que contestar una pregunta que no se puede contestar leyendo la documentación (el
+  // dominio de soporte de WATI está bloqueado por el proxy): ¿el equipo VIAJA en el webhook? Si viaja, el
+  // bot decide en el mismo mensaje, gratis. Si no, hay que consultar el contacto por API — una llamada más
+  // por conversación, cacheable, pero no gratis.
+  //
+  // PII (lección v45): se registran solo NOMBRES de claves. La única excepción son las claves que hablan
+  // de NOSOTROS —equipo, asesor asignado—, nunca del cliente; y recortadas. Se quita cuando se resuelva.
+  if (SONDA_EQUIPOS && p && typeof p === "object") {
+    const claves = Object.keys(p).sort();
+    const firma = claves.join(",");
+    if (!FIRMAS_VISTAS.has(firma) && FIRMAS_VISTAS.size < 25) {
+      FIRMAS_VISTAS.add(firma);
+      const RE_CLAVE_EQUIPO = /team|equipo|assign|asignad|operator|agent|owner|inbox|department/i;
+      const equipo: Record<string, string> = {};
+      for (const k of claves) {
+        if (!RE_CLAVE_EQUIPO.test(k)) continue;
+        const v = (p as any)[k];
+        equipo[k] = v === null || v === undefined ? String(v) : JSON.stringify(v).slice(0, 120);
+      }
+      await log("sonda_equipos", true, { eventType, owner: esDelNegocio, tipo, claves: claves.slice(0, 60), equipo });
+    }
+  }
 
   // v71.1 — SONDA DE EVENTOS DESCONOCIDOS. Hallazgo del 17-ago: cuando el asesor marca el chat "resuelto"
   // y el cliente vuelve a escribir, WATI devuelve la conversación A SU PROPIO BOT — o sea, para WATI ya no
