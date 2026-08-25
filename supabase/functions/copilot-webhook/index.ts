@@ -778,6 +778,7 @@ ASESORÍA DE IMPRESORAS — califica ANTES de mostrar modelos (experto, no catá
 
 SOPORTE TÉCNICO Y REPARACIONES
 - QSP NO ofrece soporte técnico ni servicios de reparación. Si preguntan por reparar/arreglar un equipo, soporte técnico, o que algo "no enciende/no imprime", usa info_tienda y sugiere la empresa de la marca correspondiente que ahí figure; NUNCA inventes teléfonos ni empresas, y si no hay dato, deriva a un asesor.
+- QSP NO ATIENDE POR TELÉFONO: toda la atención es por WhatsApp, en este mismo chat. Si el cliente pide que lo llamen ("me pueden llamar", "tienen algún número para llamar", "prefiero por teléfono"), NO prometas una llamada ni le des un número para marcar — dile en una línea que la atención se maneja por aquí y que un asesor le responde en este mismo chat. Eso va PRIMERO, antes de responder cualquier otra cosa que haya preguntado en el mismo mensaje: si además pidió un precio, dáselo después, en el mismo turno. Y si dice que está urgido o apurado, reconócelo en vez de ignorarlo y seguir con el dato. El número +507 6950-9988 que devuelve info_tienda ES este WhatsApp: sirve para que lo guarde, no para llamar. Esto NO aplica a terceros: los teléfonos de los puntos Servientrega (sucursales_interior) y los de las empresas de soporte de marca sí se dan tal cual vienen.
 
 IMÁGENES (el cliente envía una foto o captura)
 - Si te llega una imagen, OBSÉRVALA y actúa según lo que muestre:
@@ -3230,6 +3231,46 @@ async function ejecutarAsistencia(
             await log("asistencia_handoff", true, { waId, enviado: false, motivo: "sin_tool_asesor_activo", mins_sin_asesor: Math.round(minsSinHumano * 10) / 10, muestra: salida.slice(0, 160) });
             salida = null;
           }
+
+          // v111 — YA SE ANUNCIÓ EL TRASPASO Y EL ASESOR NO HA LLEGADO. El hueco que v110 no cubre:
+          // aquel exige `ultHumano`, o sea que un asesor YA haya escrito. Mientras nadie escribe, el
+          // cliente sigue solo con el bot, y ahí el saludo genérico es lo peor que puede recibir.
+          //
+          // Medido sobre 14 días: 36 traspasos, y en 8 de ellos el bot siguió hablando antes de que
+          // llegara ningún asesor — 34 mensajes. Casi todos están bien: 20 mencionan al asesor (ahí
+          // entran las respuestas con precio y stock, una de las cuales cerró una venta de tinta GT51 —
+          // esas son la regla de v79 funcionando y NO se tocan) y 6 son seguimientos con contexto.
+          // El defecto son los 8 restantes: el cliente lleva rato esperando, escribe "Buenas" o "?", y
+          // el bot contesta "¡Buenas! ¿En qué le puedo ayudar?" como si la conversación empezara de
+          // cero. Caso real del 24-ago: esperó 37 minutos y su "?" recibió "¿En qué le puedo ayudar? 😊".
+          //
+          // No se calla: un "Buenas" sin respuesta se lee como que lo están ignorando. Se responde lo
+          // que el propio bot ya escribe en sus mejores momentos ("Enseguida un asesor le confirma por
+          // aquí mismo"), y FUERA DE HORARIO se dice otra cosa — prometer "en breve" un sábado a las
+          // 9pm es una promesa que nadie va a cumplir. El próximo horario hábil ya lo calcula v36/v37
+          // con feriados incluidos, así que aquí solo se usa.
+          //
+          // La detección es POSITIVA: se busca la forma del relleno, no la ausencia de la palabra
+          // "asesor". Probarlo al revés sobre los 34 mensajes reales lo dejó claro — "¿Le confirmaron
+          // ya lo de la Brother?" se salvaba de casualidad porque "Le confirmaron" casa con "le
+          // confirma", y ese mensaje SÍ hay que conservarlo: es un seguimiento con contexto, mucho
+          // mejor que la línea genérica que lo habría reemplazado.
+          //
+          // Son dos formas, las dos vistas en producción: reiniciar la conversación ("¿en qué le puedo
+          // ayudar?", ofreciendo empezar de cero a alguien que lleva rato esperando) y la cortesía de
+          // cierre sin contenido ("quedamos atentos por aquí"). Contra los 34 mensajes: 8 caen aquí,
+          // 20 mencionan al asesor y 6 son seguimientos con contexto — esos 26 no se tocan.
+          const RE_RELLENO_ESPERA = /(en qu[ée] (le )?puedo (ayudar|servir)|quedamos atentos|estamos atentos|cualquier cosa.{0,25}(aqu[ií]|atentos))/i;
+          const esRelleno = RE_RELLENO_ESPERA.test(salida ?? "") && !/asesor/i.test(salida ?? "");
+          if (salida && !modoInvitado && r.toolCalls.length === 0 && !ultHumano && esRelleno) {
+            const original = salida;
+            const h = horarioPanama();
+            salida = h.dentro
+              ? "Un asesor le atiende en breve por aquí mismo. 🙏"
+              : `Ya quedó anotado su mensaje. En este momento estamos fuera del horario de atención; un asesor le responde por aquí ${proximoHorarioHabil(Date.now())}. 🙏`;
+            await log("asistencia_handoff", true, { waId, motivo: "relleno_reemplazado_por_espera", dentro_horario: h.dentro, muestra: original.slice(0, 160) });
+          }
+
           if (!salida) { await log("asistencia_handoff", true, { waId, enviado: false, motivo: "sin_respuesta" }); return; }
           // anti-duplicado (llegó otro mensaje del cliente) + anti-carrera (el asesor volvió a escribir
           // durante el LLM → reseteó el reloj → él sigue; o la conversación dejó de estar en handoff).
@@ -3540,7 +3581,7 @@ Deno.serve(async (req) => {
         texto: tr?.texto ?? null, ts: new Date().toISOString(),
       });
     }
-    return Response.json({ status: "ok", function: "copilot-webhook", version: "v110-no-pisar-al-asesor", mode: MODE, mode_raw: MODE_RAW, model: MODEL, llm_configured: !!anthropic, wati_send_configured: !!(WATI_API_TOKEN && WATI_API_BASE), inventario_configurado: !!(SHOPIFY_ADMIN_TOKEN && SHOPIFY_ADMIN_API_BASE), resolve_configured: !!RESOLVE_SECRET, webhook_key_es_default: WEBHOOK_KEY_ES_DEFAULT, handoff_assist_min: HANDOFF_ASSIST_MIN, handoff_cold_hours: HANDOFF_COLD_HOURS, debounce_ms: DEBOUNCE_MS, sesion_gap_dias: SESION_GAP_DIAS, burbujas: BURBUJAS, burbuja_ms: BURBUJA_MS, audio_puente: AUDIO_PUENTE, sweep: SWEEP_MODE, sweep_espera_min: SWEEP_ESPERA_MIN, stt: STT_MODE, stt_raw: STT_RAW, stt_configurado: !!OPENAI_API_KEY, stt_model: STT_MODEL, busqueda_shadow: BUSQUEDA_SHADOW, busqueda_mcp: BUSQUEDA_MCP, busqueda_mcp_limit: BUSQUEDA_MCP_LIMIT, catalog_mcp_url: CATALOG_MCP_URL, ucp_profile_url: UCP_PROFILE_URL, live_targets: MODE === "live" ? (LIVE_ALL ? "all" : LIVE_ALLOWLIST.length) : 0, ts: new Date().toISOString() });
+    return Response.json({ status: "ok", function: "copilot-webhook", version: "v111-espera-con-horario", mode: MODE, mode_raw: MODE_RAW, model: MODEL, llm_configured: !!anthropic, wati_send_configured: !!(WATI_API_TOKEN && WATI_API_BASE), inventario_configurado: !!(SHOPIFY_ADMIN_TOKEN && SHOPIFY_ADMIN_API_BASE), resolve_configured: !!RESOLVE_SECRET, webhook_key_es_default: WEBHOOK_KEY_ES_DEFAULT, handoff_assist_min: HANDOFF_ASSIST_MIN, handoff_cold_hours: HANDOFF_COLD_HOURS, debounce_ms: DEBOUNCE_MS, sesion_gap_dias: SESION_GAP_DIAS, burbujas: BURBUJAS, burbuja_ms: BURBUJA_MS, audio_puente: AUDIO_PUENTE, sweep: SWEEP_MODE, sweep_espera_min: SWEEP_ESPERA_MIN, stt: STT_MODE, stt_raw: STT_RAW, stt_configurado: !!OPENAI_API_KEY, stt_model: STT_MODEL, busqueda_shadow: BUSQUEDA_SHADOW, busqueda_mcp: BUSQUEDA_MCP, busqueda_mcp_limit: BUSQUEDA_MCP_LIMIT, catalog_mcp_url: CATALOG_MCP_URL, ucp_profile_url: UCP_PROFILE_URL, live_targets: MODE === "live" ? (LIVE_ALL ? "all" : LIVE_ALLOWLIST.length) : 0, ts: new Date().toISOString() });
   }
   if (req.method !== "POST") return Response.json({ error: "method_not_allowed" }, { status: 405 });
   if (url.searchParams.get("key") !== WEBHOOK_KEY) return Response.json({ error: "forbidden" }, { status: 403 });
