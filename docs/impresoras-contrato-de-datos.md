@@ -98,16 +98,24 @@ La función **`specs-centinela`** compara el catálogo vivo de Shopify contra la
 todos los **lunes a las 8:00 a.m. hora Panamá** (cron `specs-centinela-lunes`) y deja su resultado en
 `job_log`. Se puede correr a mano en cualquier momento.
 
-Reporta seis cosas:
+Reporta nueve cosas:
 
 | Qué | Por qué importa |
 |---|---|
 | `nuevos` | impresora en la tienda que el bot no conoce — no la va a recomendar jamás |
 | `retirados` | fila cuya impresora ya no está activa |
 | `titulo_vs_ficha` | el título anuncia una velocidad distinta a la de la ficha verificada |
+| `mpn_vs_sku` | el metacampo `mpn` no coincide con el SKU de la variante |
+| `mpn_duplicado` | dos productos distintos compartiendo número de parte |
+| `sin_mpn` | producto sin número de parte: no lo indexa ni Google Shopping ni la sindicación |
 | `mal_clasificados` | consumibles con tipo de producto de impresora (ensucia los filtros de la tienda) |
 | `sin_fuente` | filas que nadie puede auditar |
 | `fuente_vieja` | fichas leídas hace más de 18 meses |
+
+**`mpn_vs_sku` es el que más trabajo ahorra.** El 24-ago se descubrió que el campo SKU ya tenía el
+número de parte correcto en casi todo el catálogo, mientras el metacampo `mpn` era una copia que nadie
+mantenía. Se perdieron horas buscando en folletos números que estaban a un campo de distancia. La regla
+quedó: **el MPN se deriva del SKU**, y el centinela vigila que no se separen. Ver `docs/mpn/README.md`.
 
 **El chequeo estrella es `titulo_vs_ficha`.** En su primera corrida encontró solo, y sin ayuda, las
 tres contradicciones que habían costado un día entero de trabajo manual:
