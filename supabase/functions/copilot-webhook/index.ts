@@ -492,6 +492,14 @@ const BUSQUEDA_MCP_LIMIT = (() => {
   const n = parseInt((Deno.env.get("BUSQUEDA_MCP_LIMIT") ?? "").trim(), 10);
   return Number.isFinite(n) && n >= 1 ? Math.min(n, 50) : 10;
 })();
+// v117 — números a los que el copiloto NO le escribe nunca (proveedores, mensajería interna, pruebas).
+// Se aceptan comas, espacios o saltos de línea, y se guardan SOLO LOS DÍGITOS: así "+507 6741-7632",
+// "50767417632" y "507-6741-7632" son el mismo número, que es como la gente los escribe de verdad.
+// Vacío = apagado (el deploy no cambia nada hasta que el secret exista).
+const soloDigitos = (s: string) => String(s ?? "").replace(/\D/g, "");
+const WA_IGNORAR = new Set(
+  (Deno.env.get("WA_IGNORAR") ?? "").split(/[,;\s]+/).map(soloDigitos).filter((n) => n.length >= 7),
+);
 // v116 — sonda temporal: ¿WATI manda el EQUIPO del contacto en el webhook? Default ON porque solo escribe
 // en job_log y se apaga con SONDA_EQUIPOS=0 sin volver a desplegar. `FIRMAS_VISTAS` vive en el isolate: se
 // registra una fila por combinación de claves NUEVA, no una por mensaje (con ~1,6 mensajes/min, loguear
@@ -2903,6 +2911,21 @@ function reaplicarTracking(texto: string, links: Record<string, string>): string
 }
 
 async function enviarWati(waId: string, texto: string): Promise<boolean> {
+  // v117 — FRENO DURO. El secret `WA_IGNORAR` lista números a los que el bot NO le escribe jamás.
+  //
+  // Ya existe `status='cerrada'` en la base para lo mismo, y funciona. Pero el 25-ago quedó demostrado
+  // que un freno guardado en la base LO PUEDE BORRAR UN BUG NUESTRO: un asesor escribió, el manejador
+  // subió la conversación a 'handoff' sin mirar en qué estado estaba, y el bot volvió a contestarle al
+  // proveedor con nuestro precio de venta. Este freno es de otra naturaleza — el copiloto lo LEE y nunca
+  // lo escribe, así que ninguna ruta del código puede pisarlo.
+  //
+  // Va en la PUERTA DE SALIDA y no en la entrada a propósito: esta es la única función que le habla a
+  // WhatsApp, así que ninguna ruta futura (asistencia, puente de audio, avisos, barridos) puede saltárselo
+  // por descuido. Cuesta una comparación en memoria por envío.
+  if (WA_IGNORAR.size && WA_IGNORAR.has(soloDigitos(waId))) {
+    await log("envio_bloqueado", true, { waId, motivo: "wa_ignorar" });
+    return false;
+  }
   if (!WATI_API_TOKEN || !WATI_API_BASE) return false;
   const u = `${WATI_API_BASE}/api/v1/sendSessionMessage/${encodeURIComponent(waId)}?messageText=${encodeURIComponent(texto)}`;
   try {
@@ -3644,7 +3667,7 @@ Deno.serve(async (req) => {
         texto: tr?.texto ?? null, ts: new Date().toISOString(),
       });
     }
-    return Response.json({ status: "ok", function: "copilot-webhook", version: "v116.1-sonda-de-equipos", mode: MODE, mode_raw: MODE_RAW, model: MODEL, llm_configured: !!anthropic, wati_send_configured: !!(WATI_API_TOKEN && WATI_API_BASE), inventario_configurado: !!(SHOPIFY_ADMIN_TOKEN && SHOPIFY_ADMIN_API_BASE), resolve_configured: !!RESOLVE_SECRET, webhook_key_es_default: WEBHOOK_KEY_ES_DEFAULT, handoff_assist_min: HANDOFF_ASSIST_MIN, handoff_cold_hours: HANDOFF_COLD_HOURS, debounce_ms: DEBOUNCE_MS, sesion_gap_dias: SESION_GAP_DIAS, burbujas: BURBUJAS, burbuja_ms: BURBUJA_MS, audio_puente: AUDIO_PUENTE, sweep: SWEEP_MODE, sweep_espera_min: SWEEP_ESPERA_MIN, stt: STT_MODE, stt_raw: STT_RAW, stt_configurado: !!OPENAI_API_KEY, stt_model: STT_MODEL, busqueda_shadow: BUSQUEDA_SHADOW, busqueda_mcp: BUSQUEDA_MCP, busqueda_mcp_limit: BUSQUEDA_MCP_LIMIT, catalog_mcp_url: CATALOG_MCP_URL, ucp_profile_url: UCP_PROFILE_URL, live_targets: MODE === "live" ? (LIVE_ALL ? "all" : LIVE_ALLOWLIST.length) : 0, ts: new Date().toISOString() });
+    return Response.json({ status: "ok", function: "copilot-webhook", version: "v117-freno-duro", mode: MODE, mode_raw: MODE_RAW, model: MODEL, llm_configured: !!anthropic, wati_send_configured: !!(WATI_API_TOKEN && WATI_API_BASE), inventario_configurado: !!(SHOPIFY_ADMIN_TOKEN && SHOPIFY_ADMIN_API_BASE), resolve_configured: !!RESOLVE_SECRET, webhook_key_es_default: WEBHOOK_KEY_ES_DEFAULT, handoff_assist_min: HANDOFF_ASSIST_MIN, handoff_cold_hours: HANDOFF_COLD_HOURS, debounce_ms: DEBOUNCE_MS, sesion_gap_dias: SESION_GAP_DIAS, burbujas: BURBUJAS, burbuja_ms: BURBUJA_MS, audio_puente: AUDIO_PUENTE, sweep: SWEEP_MODE, sweep_espera_min: SWEEP_ESPERA_MIN, stt: STT_MODE, stt_raw: STT_RAW, stt_configurado: !!OPENAI_API_KEY, stt_model: STT_MODEL, busqueda_shadow: BUSQUEDA_SHADOW, busqueda_mcp: BUSQUEDA_MCP, busqueda_mcp_limit: BUSQUEDA_MCP_LIMIT, catalog_mcp_url: CATALOG_MCP_URL, ucp_profile_url: UCP_PROFILE_URL, live_targets: MODE === "live" ? (LIVE_ALL ? "all" : LIVE_ALLOWLIST.length) : 0, wa_ignorar: WA_IGNORAR.size, ts: new Date().toISOString() });
   }
   if (req.method !== "POST") return Response.json({ error: "method_not_allowed" }, { status: 405 });
   if (url.searchParams.get("key") !== WEBHOOK_KEY) return Response.json({ error: "forbidden" }, { status: 403 });
@@ -4081,6 +4104,13 @@ Deno.serve(async (req) => {
     if (conv.status === "cerrada") {
       await log("conversacion_cerrada", true, { waId, motivo: "no_es_cliente" });
       return Response.json({ ok: true, skipped: "conversacion_cerrada" });
+    }
+    // v117 — mismo corte, pero por el secret `WA_IGNORAR`. El freno de verdad está en la puerta de salida
+    // (enviarWati); esto es solo para no gastar el modelo en una respuesta que igual se iba a bloquear.
+    // El mensaje ya quedó guardado arriba, así que el asesor sigue viendo el hilo completo.
+    if (WA_IGNORAR.size && WA_IGNORAR.has(soloDigitos(waId))) {
+      await log("conversacion_cerrada", true, { waId, motivo: "wa_ignorar" });
+      return Response.json({ ok: true, skipped: "wa_ignorar" });
     }
     // v103 — autoresponder de otro negocio (ver BOT_AJENO_RE): jamás responderle a otra máquina.
     // Va ANTES del gate de handoff a propósito: también corta la continuidad de asistencia (v83),
