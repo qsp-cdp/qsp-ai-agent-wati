@@ -388,3 +388,28 @@ export async function resolverTarifa(lugar: string): Promise<ZonaResuelta | null
     return null;
   }
 }
+
+// --- Abstenciones de facturación sin atender (v112/watchdog) --------------------------------------
+// Cuando el cliente manda datos fiscales o habla de pago, el copiloto se ABSTIENE a propósito
+// (INTERRUPT_RE): no debe opinar de RUC, facturas ni transferencias. v112 le avisa al cliente que
+// alguien continúa con él. Falta la otra mitad, que es la que pidió Isaac: avisarle al asesor.
+//
+// Esto responde "¿escribió un asesor en esta conversación después de tal momento?". Si nadie escribió
+// pasado el margen, el cliente quedó colgado justo en el momento de compra — de eso se manda correo.
+export async function hayAsesorDesde(waId: string, desdeIso: string): Promise<boolean> {
+  try {
+    const c = await fetch(
+      restUrl(`/conversations?select=id&wa_id=eq.${encodeURIComponent(waId)}&limit=1`),
+      { headers: serviceHeaders(), signal: AbortSignal.timeout(10000) },
+    );
+    if (!c.ok) return true; // Ante la duda NO se alerta: un correo de más erosiona la confianza en la alerta.
+    const conv = (await c.json())?.[0];
+    if (!conv?.id) return true;
+    const m = await fetch(
+      restUrl(`/messages?select=id&conversation_id=eq.${conv.id}&model=eq.human-agent&created_at=gte.${encodeURIComponent(desdeIso)}&limit=1`),
+      { headers: serviceHeaders(), signal: AbortSignal.timeout(10000) },
+    );
+    if (!m.ok) return true;
+    return ((await m.json())?.length ?? 0) > 0;
+  } catch { return true; }
+}

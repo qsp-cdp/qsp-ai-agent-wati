@@ -20,11 +20,11 @@
 // Disparo: pg_cron cada 30 min en horario hábil (ver docs/watchdog.md).
 // Importa ../_shared → SOLO se despliega por CLI (deploy.ps1), nunca por dashboard.
 
-import { jobLogRecientes, logJob, resumenDiario, ultimoJobLog, ultimoMensajeAt, type ResumenDiario } from "../_shared/db.ts";
+import { hayAsesorDesde, jobLogRecientes, logJob, resumenDiario, ultimoJobLog, ultimoMensajeAt, type ResumenDiario } from "../_shared/db.ts";
 import { enviarCorreo } from "../_shared/resend.ts";
 import { ahoraPanama, esDiaHabilPanama } from "../_shared/panama.ts";
 
-const VERSION = "watchdog-v1";
+const VERSION = "watchdog-v2-facturacion-sin-atender";
 const FN = "watchdog";
 
 const KEY = (Deno.env.get("WATCHDOG_KEY") ?? "").trim();
@@ -309,6 +309,83 @@ async function correrResumen(): Promise<Record<string, unknown>> {
   return { ...resumenLog, enviado: envio.ok, error: envio.error ?? null };
 }
 
+// --- FACTURACIÓN SIN ATENDER (v112, 2a mitad) -----------------------------------------------------
+// El copiloto se abstiene a propósito cuando el cliente manda RUC, cédula, razón social o habla de pago
+// (INTERRUPT_RE): no debe opinar de facturación. v112 le avisa al CLIENTE que alguien continúa con él.
+// Esta es la otra mitad, la que pidió Isaac: avisarle al ASESOR, y por correo.
+//
+// Por qué aquí y no en el copiloto: en el momento de la abstención no se sabe si un asesor va a
+// aparecer. Medido sobre 14 días, en 169 de 182 abstenciones apareció — mandar correo en el acto sería
+// ~13 al día de los cuales 12 sobran, y una alerta que casi siempre sobra se deja de leer. Esperando el
+// margen y preguntando después, quedan ~1 al día y todas son de verdad.
+//
+// Las 13 que quedaron huérfanas en esos 14 días eran el momento de compra: "A nombre de IEEE Región 9",
+// "4-766-1413 DV 70", "Me podría enviar la cotización a nombre de Shalom", "Hay que pagar de una vez el
+// total" → "161.57". Cero respuestas en las cuatro horas siguientes.
+const FACT_MARGEN_MIN = intEnv("WATCHDOG_FACT_MARGEN_MIN", 25, 5, 240);   // cuánto se le da al asesor
+const FACT_VENTANA_H  = intEnv("WATCHDOG_FACT_VENTANA_H", 6, 1, 48);      // hasta dónde se mira atrás
+
+async function avisarFacturacionSinAtender(): Promise<Record<string, unknown>> {
+  const ahora = Date.now();
+  const desde = new Date(ahora - FACT_VENTANA_H * 3600 * 1000).toISOString();
+  const abstenciones = await jobLogRecientes("abstencion_interrupcion", desde, 200);
+  const yaAvisados = await jobLogRecientes("aviso_facturacion", desde, 200);
+  const avisados = new Set(yaAvisados.map((a) => String(a.detail?.waId ?? "")));
+
+  // Una entrada por cliente, la MÁS ANTIGUA sin avisar: es la que marca cuánto lleva esperando.
+  const porCliente = new Map<string, string>();
+  for (const a of abstenciones) {
+    const waId = String(a.detail?.waId ?? "");
+    if (!waId || avisados.has(waId)) continue;
+    const previo = porCliente.get(waId);
+    if (!previo || new Date(a.created_at) < new Date(previo)) porCliente.set(waId, a.created_at);
+  }
+
+  const colgados: { waId: string; desde: string; mins: number }[] = [];
+  for (const [waId, cuando] of porCliente) {
+    const mins = Math.round((ahora - new Date(cuando).getTime()) / 60000);
+    if (mins < FACT_MARGEN_MIN) continue;                 // todavía dentro del margen: no es un caso
+    if (await hayAsesorDesde(waId, cuando)) continue;     // alguien lo atendió: no hay nada que avisar
+    colgados.push({ waId, desde: cuando, mins });
+  }
+  if (!colgados.length) return { facturacion_colgados: 0 };
+
+  colgados.sort((a, b) => b.mins - a.mins);
+  const filas = colgados.map((c) => filaDato(
+    `+${c.waId}`,
+    `${fmtMin(c.mins)} sin respuesta`,
+    c.mins >= 120 ? ROJO : AMBAR,
+    c === colgados[colgados.length - 1],
+  )).join("");
+
+  const asunto = colgados.length === 1
+    ? `💳 Un cliente en facturación sin atender (+${colgados[0].waId})`
+    : `💳 ${colgados.length} clientes en facturación sin atender`;
+
+  const cuerpo = `<tr><td style="padding:26px 26px 6px">
+      ${rotulo("Facturación sin atender", AMBAR)}
+      <div style="font-size:15px;line-height:1.6;color:${TINTA}">
+        ${colgados.length === 1 ? "Este cliente mandó" : "Estos clientes mandaron"} datos de facturación o
+        habló de pago. El copiloto se calló a propósito —no debe opinar de RUC, facturas ni transferencias—
+        y ya le avisó que un asesor continúa con él. <strong>Falta que alguien lo atienda.</strong>
+      </div>
+      <table role="presentation" cellpadding="0" cellspacing="0" border="0"
+             style="width:100%;border-collapse:collapse;margin-top:18px;font-size:14px">${filas}</table>
+    </td></tr>`;
+
+  if (MODE !== "live") {
+    await logJob(FN, "aviso_facturacion_shadow", true, { colgados: colgados.length, asunto });
+    return { facturacion_colgados: colgados.length, shadow: true };
+  }
+  const envio = await enviarCorreo(asunto, marco(AMBAR, cuerpo,
+    `Se avisa cuando pasan ${FACT_MARGEN_MIN} min sin que un asesor escriba.<br>${PIE_VIGILANTE}`), DESTINATARIOS);
+  // Se marca cada cliente por separado para que el anti-repetición sea por cliente y no por correo.
+  for (const c of colgados) {
+    await logJob(FN, "aviso_facturacion", envio.ok, { waId: c.waId, mins: c.mins, email_id: envio.id ?? null, error: envio.error ?? null });
+  }
+  return { facturacion_colgados: colgados.length, enviado: envio.ok, error: envio.error ?? null };
+}
+
 async function correr(force: boolean): Promise<Record<string, unknown>> {
   const pa = ahoraPanama();
   const hora = pa.getHours();
@@ -328,7 +405,10 @@ async function correr(force: boolean): Promise<Record<string, unknown>> {
     && (!ultRecup || new Date(ultAlerta.created_at).getTime() > new Date(ultRecup.created_at).getTime());
 
   const accion = decidirAccion(minutos, UMBRAL_MIN, minDesdeAlerta, REPETIR_MIN, recuperacionPendiente);
-  const base = { mode: MODE, minutos_sin_mensajes: minutos, umbral: UMBRAL_MIN, ultimo_mensaje: ultimo, accion };
+  // Va ANTES del semáforo a propósito: el correo de salud solo sale cuando el copiloto está en problemas,
+  // y un cliente colgado en facturación es un problema aunque todo lo demás esté verde.
+  const fact = await avisarFacturacionSinAtender();
+  const base = { mode: MODE, minutos_sin_mensajes: minutos, umbral: UMBRAL_MIN, ultimo_mensaje: ultimo, accion, ...fact };
 
   if (accion === "ok") { await logJob(FN, "watchdog_run", true, base); return base; }
   if (accion === "alerta_suprimida") {
