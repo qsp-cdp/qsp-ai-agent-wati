@@ -30,6 +30,13 @@ comment on column public.conversations.no_cliente_revisado_at is
 comment on column public.conversations.cerrada_por is
   'Quién puso status=cerrada. ''wati_atributo'' = lo cerró el copiloto leyendo WATI, y solo eso lo puede reabrir solo. NULL = decisión humana, el código no la toca.';
 
--- La del proveedor la cerré yo a mano esta tarde, así que se queda como decisión humana (cerrada_por
--- NULL): que el puente no la reabra si alguien le quita el atributo sin querer. El freno duro del
--- secret WA_IGNORAR sigue debajo de todo esto de todas formas.
+-- La del proveedor termina siendo del PUENTE (`cerrada_por='wati_atributo'`), no una decisión humana.
+-- Primero la dejé a mano pensando en protegerla, pero eso la volvía irreversible desde WATI: Isaac
+-- podría quitar el atributo y no pasaría nada, que es justo la usabilidad que se buscaba. El freno duro
+-- del secret `WA_IGNORAR` sigue debajo de todo esto, así que ceder la reversibilidad no cede seguridad.
+--
+-- Las cuatro ramas quedaron probadas contra producción el 25-ago:
+--   · sin atributo            → no toca nada, solo sella la fecha  (contacto real, 16:02)
+--   · `si` + abierta          → cierra con cerrada_por='wati_atributo'
+--   · `no` + cerrada por él   → reabre a 'bot'
+--   · `no` + cerrada a mano   → NO la toca, ni siquiera consulta WATI

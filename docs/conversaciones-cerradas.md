@@ -122,6 +122,19 @@ Cómo está construido, y por qué así:
   `wati_atributo`, quitar el atributo la reabre. Si está en NULL, la cerró una persona y el código no la
   toca — reabrir una decisión humana porque un campo no está sería repetir el defecto de la v115.
 
+Las cuatro ramas se probaron contra producción el 25-ago:
+
+| caso | resultado |
+|---|---|
+| sin atributo | no toca nada, solo sella la fecha *(contacto real, 16:02)* |
+| `si` + abierta | cierra con `cerrada_por='wati_atributo'` |
+| `no` + cerrada por el puente | reabre a `bot` |
+| `no` + **cerrada por una persona** | **no la toca**, ni siquiera consulta WATI |
+
+Para probarlo sin esperar a que escriba un cliente hay un botón, detrás de la llave del webhook:
+`?diag=no_es_cliente&num=507…` dice qué decidiría sin escribir nada, y con `&seco=0` lo ejecuta y
+muestra el antes y el después.
+
 ## Lo que NO se puede hacer: filtrar por equipo de WATI
 
 Isaac propuso marcar a los proveedores con un **equipo** de WATI en vez de a mano. Es el lugar correcto
