@@ -32,6 +32,20 @@ de Canon dice "ppm" a secas, no es ESAT, diga lo que diga el pie de página.
 
 *De aquí salieron todos los errores encontrados: L5590, G3170, G4170, GX4010, GX7110.*
 
+**1-bis. La velocidad también depende del TAMAÑO DE PAPEL, y hay que decir cuál.**
+HP (y varios más) publican dos cifras por equipo: una en **carta** y otra en **A4**. La carta sale un
+poco más rápida porque la hoja es más corta. Tomar a veces una y a veces la otra rompe la comparación
+igual que mezclar borrador con ISO — solo que más disimulado: ~5% en vez de 2x, así que nadie lo nota.
+
+Se descubrió el 24-ago en dos parejas de hermanos que salen de la MISMA ficha, y que la tabla mostraba
+con velocidades distintas: la M111w tenía 20 (A4) y la M141w 21 (carta); la 3003dw tenía 35 (carta) y
+la 3103fdw 33 (A4). Dos equipos iguales apareciendo distintos en el orden del asesor.
+
+**Se prefiere la cifra en CARTA** (es el papel que se usa en Panamá y lo que el cliente va a
+experimentar) y **el tamaño se escribe en las notas**. Si la ficha solo etiqueta A4, se usa A4 y se
+dice. Lo que NO se hace es deducir: la portada de la M111w anuncia "21/20 ppm" sin decir cuál es cuál,
+así que ese 21 no se usa — su tabla de especificaciones sí dice "A4: Hasta 20 ppm", y esa es la que va.
+
 **2. Solo se afirma lo que la fuente dice.**
 Si la ficha no menciona el ADF, `adf` queda en **NULL**, no en `false`. Comprobado: la HP LaserJet Pro
 MFP 3103fdw sí tiene ADF y su metacampo solo lista "Almacenamiento de papel". Deducir el "no" desde el
