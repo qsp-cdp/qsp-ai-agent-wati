@@ -20,11 +20,11 @@
 // Disparo: pg_cron cada 30 min en horario hábil (ver docs/watchdog.md).
 // Importa ../_shared → SOLO se despliega por CLI (deploy.ps1), nunca por dashboard.
 
-import { hayAsesorDesde, jobLogRecientes, logJob, resumenDiario, ultimoJobLog, ultimoMensajeAt, type ResumenDiario } from "../_shared/db.ts";
+import { contactosQueParecenProveedor, hayAsesorDesde, jobLogRecientes, logJob, resumenDiario, ultimoJobLog, ultimoMensajeAt, type ResumenDiario } from "../_shared/db.ts";
 import { enviarCorreo } from "../_shared/resend.ts";
 import { ahoraPanama, esDiaHabilPanama } from "../_shared/panama.ts";
 
-const VERSION = "watchdog-v2.1-ventana-cubre-la-tarde";
+const VERSION = "watchdog-v3-proveedores";
 const FN = "watchdog";
 
 const KEY = (Deno.env.get("WATCHDOG_KEY") ?? "").trim();
@@ -392,6 +392,61 @@ async function avisarFacturacionSinAtender(): Promise<Record<string, unknown>> {
   return { facturacion_colgados: colgados.length, enviado: envio.ok, error: envio.error ?? null };
 }
 
+// --- CONTACTOS QUE PARECEN PROVEEDOR (v3) ---------------------------------------------------------
+// El copiloto le contestó 44 veces a un proveedor antes de que alguien lo notara, y no fue inocuo: el
+// asesor le preguntaba precios para COMPRARLE y el bot se metía con NUESTRO precio de venta y nuestro
+// stock. Un proveedor viendo nuestro margen. La heurística está en el RPC (ver su migración).
+//
+// Se avisa UNA vez por contacto, para siempre: es una tarea de una sola acción — marcarlo
+// `status='cerrada'` — y repetir el aviso cada semana solo enseñaría a ignorar el correo.
+async function avisarPosiblesProveedores(): Promise<Record<string, unknown>> {
+  const posibles = await contactosQueParecenProveedor(30);
+  if (!posibles.length) return { posibles_proveedores: 0 };
+
+  const yaAvisados = await jobLogRecientes("aviso_proveedor", "1970-01-01T00:00:00Z", 500);
+  const avisados = new Set(yaAvisados.map((a) => String(a.detail?.waId ?? "")));
+  const nuevos = posibles.filter((p) => !avisados.has(p.wa_id));
+  if (!nuevos.length) return { posibles_proveedores: posibles.length, nuevos: 0 };
+
+  const filas = nuevos.map((p, i) => filaDato(
+    `+${p.wa_id}${p.nombre ? ` · ${p.nombre}` : ""}`,
+    `${p.respuestas_bot} respuestas del bot`,
+    ROJO, i === nuevos.length - 1,
+  )).join("");
+
+  const cuerpo = `<tr><td style="padding:26px 26px 6px">
+      ${rotulo("¿Proveedor, no cliente?", ROJO)}
+      <div style="font-size:15px;line-height:1.6;color:${TINTA}">
+        En ${nuevos.length === 1 ? "este chat" : "estos chats"} el equipo pregunta precios para COMPRAR
+        ("¿tienes…?", "¿me cotizas…?"), así que probablemente ${nuevos.length === 1 ? "sea un proveedor" : "sean proveedores"}
+        y no ${nuevos.length === 1 ? "un cliente" : "clientes"}. El copiloto les está respondiendo con
+        <strong>nuestro precio de venta y nuestro inventario</strong>.
+      </div>
+      <table role="presentation" cellpadding="0" cellspacing="0" border="0"
+             style="width:100%;border-collapse:collapse;margin-top:18px;font-size:14px">${filas}</table>
+      <div style="font-size:13.5px;line-height:1.6;color:${SUAVE};margin-top:16px">
+        Para que el bot deje de responderle:<br>
+        <code style="font-size:12.5px">update conversations set status='cerrada' where wa_id='…';</code><br>
+        Se revierte con <code style="font-size:12.5px">status='bot'</code>. Este aviso NO se repite.
+      </div>
+    </td></tr>`;
+
+  const asunto = nuevos.length === 1
+    ? `🏷️ ¿+${nuevos[0].wa_id} es proveedor? El bot le está dando nuestros precios`
+    : `🏷️ ${nuevos.length} contactos parecen proveedores y el bot les responde`;
+
+  if (MODE !== "live") {
+    await logJob(FN, "aviso_proveedor_shadow", true, { nuevos: nuevos.length, asunto });
+    return { posibles_proveedores: posibles.length, nuevos: nuevos.length, shadow: true };
+  }
+  const envio = await enviarCorreo(asunto, marco(ROJO, cuerpo,
+    `Se avisa una sola vez por contacto.<br>${PIE_VIGILANTE}`), DESTINATARIOS);
+  for (const p of nuevos) {
+    await logJob(FN, "aviso_proveedor", envio.ok, { waId: p.wa_id, respuestas_bot: p.respuestas_bot, email_id: envio.id ?? null, error: envio.error ?? null });
+  }
+  return { posibles_proveedores: posibles.length, nuevos: nuevos.length, enviado: envio.ok };
+}
+
 async function correr(force: boolean): Promise<Record<string, unknown>> {
   const pa = ahoraPanama();
   const hora = pa.getHours();
@@ -414,7 +469,8 @@ async function correr(force: boolean): Promise<Record<string, unknown>> {
   // Va ANTES del semáforo a propósito: el correo de salud solo sale cuando el copiloto está en problemas,
   // y un cliente colgado en facturación es un problema aunque todo lo demás esté verde.
   const fact = await avisarFacturacionSinAtender();
-  const base = { mode: MODE, minutos_sin_mensajes: minutos, umbral: UMBRAL_MIN, ultimo_mensaje: ultimo, accion, ...fact };
+  const prov = await avisarPosiblesProveedores();
+  const base = { mode: MODE, minutos_sin_mensajes: minutos, umbral: UMBRAL_MIN, ultimo_mensaje: ultimo, accion, ...fact, ...prov };
 
   if (accion === "ok") { await logJob(FN, "watchdog_run", true, base); return base; }
   if (accion === "alerta_suprimida") {

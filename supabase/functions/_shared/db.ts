@@ -413,3 +413,26 @@ export async function hayAsesorDesde(waId: string, desdeIso: string): Promise<bo
     return ((await m.json())?.length ?? 0) > 0;
   } catch { return true; }
 }
+
+// --- Contactos que parecen PROVEEDOR y no cliente (watchdog) ---------------------------------------
+// Caso real (25-ago): el copiloto llevaba 44 respuestas contestándole a un proveedor. Peor que ruido:
+// el asesor le preguntaba "¿tienes 0692C005AA?" para COMPRARLE, el proveedor contestaba "$46.80,
+// disponible 7", y el bot intervenía con NUESTRO precio de venta ("$54.99 + ITBMS, 5 unidades"). O sea
+// le mostró al proveedor nuestro margen y nuestro inventario. Estuvo así 60 días sin que nadie lo viera.
+//
+// La heurística vive en el RPC `contactos_posibles_proveedores` (ver su migración, que explica la señal
+// y por qué solo reporta). Aquí solo se llama: la lógica en SQL se audita sin desplegar la función.
+export interface PosibleProveedor { wa_id: string; nombre: string | null; respuestas_bot: number; preguntas: number; }
+
+export async function contactosQueParecenProveedor(dias = 30): Promise<PosibleProveedor[]> {
+  try {
+    const res = await fetch(restUrl('/rpc/contactos_posibles_proveedores'), {
+      method: 'POST',
+      headers: { ...serviceHeaders(), 'Content-Type': 'application/json' },
+      body: JSON.stringify({ dias }),
+      signal: AbortSignal.timeout(10000),
+    });
+    if (!res.ok) return [];
+    return await res.json();
+  } catch { return []; }
+}
