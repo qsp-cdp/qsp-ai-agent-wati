@@ -162,7 +162,28 @@ Deno.serve(async (req) => {
     const gratis = esEnvioGratis(shopifyOrder);
     // v32: en retiro no hay dirección de entrega que clasificar — el pedido se registra sin zona ni flag.
     const retiro = esRetiroEnTienda(shopifyOrder);
-    const zona = retiro ? null : await resolverTarifa(String(order.customerAddress ?? ''));
+    // v67 — LA SEGUNDA LÍNEA DE LA DIRECCIÓN TAMBIÉN VA AL RESOLVER. `order.customerAddress` deja fuera
+    // `address2` a propósito, y para Shipday está bien: ahí el consumidor es el GEOCODIFICADOR de Google,
+    // que se confunde con "Apartamento 40A" y por eso el detalle de unidad se manda en las instrucciones.
+    // Pero el resolver de zonas es otro consumidor con otra necesidad: es un diccionario de NOMBRES DE
+    // LUGAR, y cuanto más texto reciba, mejor acierta. Usar la misma cadena para los dos era el error.
+    //
+    // Caso real, pedido 8885 (26-ago, $330.63): el cliente escribió el distrito en la segunda línea —
+    // address1 "MILLA 8", address2 "OFIBODEGAS MILLA 8 BODEGA 03, SAN MIGUELITO". Sin esa línea el
+    // resolver devolvía "Z5 Norte / servientrega" y el pedido NO se despachaba; con ella devuelve
+    // "Z3 San Miguelito / propia", que es flota nuestra y sí se despacha. El cliente estaba en la ciudad.
+    //
+    // Medido sobre los 29 pedidos con dirección de los últimos 30 días antes de cambiar nada: 2 cambian
+    // (8885 y 8850) y los 2 se RESCATAN; ninguno de los que hoy se despachan deja de hacerlo. La dirección
+    // del cambio es la segura: sumar texto solo puede hacer que el diccionario encuentre más.
+    const dirZona = retiro ? '' : [
+      shopifyOrder?.shipping_address?.address1,
+      shopifyOrder?.shipping_address?.address2,
+      shopifyOrder?.shipping_address?.city,
+      shopifyOrder?.shipping_address?.province,
+      shopifyOrder?.shipping_address?.country,
+    ].filter(Boolean).join(', ');
+    const zona = retiro ? null : await resolverTarifa(dirZona || String(order.customerAddress ?? ''));
     const lineasEnvio: string = (shopifyOrder?.shipping_lines || []).map((l: any) => `${l?.title ?? ''} ${l?.code ?? ''}`).join(' ').toLowerCase();
     // La provincia solo rescata cuando la dirección NO nombró un lugar del interior: si el resolver la
     // descartó por eso (`fuera_del_area_metro`), manda ese motivo aunque Shopify diga provincia Panamá.
