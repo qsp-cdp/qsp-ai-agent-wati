@@ -262,7 +262,7 @@
 //   atribución / identidad omnicanal en el CDP. (1) URL APEX (sin www) + UTMs (utm_source=whatsapp…).
 //   (2) ref_code: 8 alfanuméricos opacos (crypto) por producto; se guarda {ref_code→wa_id,handle} en
 //   la tabla ref_codes (best-effort, batch); NUNCA se emite un code que no se haya guardado. (3)
-//   Endpoint de resolución GET ?ref_code=&key=<COPILOT_WEBHOOK_KEY> → {wa_id,producto_handle,ts} (404 si no),
+//   Endpoint de resolución GET ?ref_code=&key=<RESOLVE_SECRET> → {wa_id,producto_handle,ts} (404 si no),
 //   que el CDP lee para resolver ref_code→wa_id (riel wa_ref_codes). Privacidad: nunca wa_id/PII en la
 //   URL, solo el ref_code opaco. El copiloto solo EMITE/GUARDA/EXPONE; el stitch/enriquecimiento vive
 //   en el CDP. Tabla nueva: ref_codes. Secreto nuevo: RESOLVE_SECRET.
