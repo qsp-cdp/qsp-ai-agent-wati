@@ -11,7 +11,13 @@
 //   · CACHÉ: la misma dirección normalizada no se vuelve a pagar nunca (tabla geocache, campo hits).
 //   · TOPE DIARIO: MAX_LLAMADAS_24H consultas nuevas por día; superado, responde sin llamar a Google.
 //   · Se cachean TAMBIÉN los fallos, para no reintentar en bucle una dirección imposible.
-const KEY = 'geofb-7k2m9x4q1w';                               // llave propia (patrón de ph-loader/geo-loader)
+// Llave propia, en un SECRETO y no en el código (estuvo escrita aquí, o sea en git). Quien la tenga
+// gasta la cuota de Google de la cuenta —el único paso PAGO de la cadena— y además siembra el
+// diccionario permanente de direcciones vía el aprendizaje de abajo. FAIL-CLOSED (el `!KEY` del guard):
+// sin el secreto no se atiende ninguna llamada; una función abierta hace más daño que una caída, porque
+// la capa 3 ausente solo degrada la resolución, mientras que la abierta la envenena y la factura.
+// ⚠️ El copiloto llama a esta función con esta misma llave: si se rota, hay que rotarla también allá.
+const KEY = (Deno.env.get('GEO_FALLBACK_KEY') ?? '').trim();
 const GOOGLE = (Deno.env.get('GOOGLE_MAPS_API_KEY') ?? '').trim();
 const MAX_LLAMADAS_24H = Number(Deno.env.get('GEO_MAX_24H') ?? '200');
 const SB_URL = Deno.env.get('SUPABASE_URL')!;

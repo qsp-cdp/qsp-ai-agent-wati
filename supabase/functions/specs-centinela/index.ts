@@ -28,7 +28,14 @@
 import { logJob } from '../_shared/db.ts';
 
 const VERSION = 'v4-specs-centinela-dos-alcances';
-const KEY = 'centinela-8k4p1n6r';
+
+// La llave vive en un SECRETO, no en el código (donde estuvo, o sea en git). No es solo un reporte: cada
+// corrida barre hasta 1.250 productos del Admin API de Shopify y escribe en `job_log`, así que con la
+// llave versionada cualquiera podía dispararla en bucle y gastarnos el rate limit del que también
+// depende el stock que el bot cotiza. FAIL-CLOSED (el `!KEY` del guard): sin el secreto no atiende a
+// nadie. El `!KEY` es la mitad que importa — sin él, un secreto ausente dejaría KEY en '' y un `?key=`
+// vacío pasaría el `!==`: el guard quedaría abierto justo cuando nadie lo configuró.
+const KEY = (Deno.env.get('SPECS_CENTINELA_KEY') ?? '').trim();
 const MESES_PARA_REVISAR_FUENTE = 18;
 
 const SHOPIFY_TOKEN = (Deno.env.get('SHOPIFY_ADMIN_TOKEN') ?? '').trim();
@@ -170,7 +177,7 @@ const num = (s: string | null): number | undefined => {
 
 Deno.serve(async (req) => {
   const params = new URL(req.url).searchParams;
-  if ((params.get('key') ?? '').trim() !== KEY) return json({ error: 'Llave inválida' }, 401);
+  if (!KEY || (params.get('key') ?? '').trim() !== KEY) return json({ error: 'Llave inválida' }, 401);
   if (req.method === 'HEAD') return new Response(null, { status: 200 });
   if (!SHOPIFY_TOKEN || !SHOPIFY_BASE) {
     return json({ error: 'Faltan SHOPIFY_ADMIN_TOKEN / SHOPIFY_ADMIN_API_BASE' }, 500);
