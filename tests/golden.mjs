@@ -1392,6 +1392,41 @@ caso("v73.1: el caso genuino que quedaba sepultado SÍ pasa", [
   "disculpa es el color amarillo me cotizo color magenta",
 ].every((t) => !esAck(t)));
 
+// --- v14 (la lección más cara del proyecto): nada lento ANTES del 200 a WATI -------------------
+// El 15-ago un trabajo lento antes del ACK hizo que WATI marcara el webhook como defectuoso y el bot
+// quedó fuera de servicio 8 horas. El puente `no_es_cliente` volvió a introducir la misma forma: una
+// consulta a la API de WATI de 8 s en el camino del webhook, con el sello del caché DESPUÉS, así que
+// una ráfaga disparaba N consultas concurrentes (4 timeouts reales el 27-ago).
+console.log("v14 nada lento antes del ACK");
+const fnSync = (() => {
+  const i = src.indexOf("async function sincronizarNoEsCliente");
+  return i < 0 ? "" : src.slice(i, src.indexOf("\nasync function", i + 10));
+})();
+caso("sincronizarNoEsCliente existe y es acotable", fnSync.length > 200);
+caso("el sello del caché se escribe ANTES de consultar a WATI (mata la ráfaga)", (() => {
+  const iSello = fnSync.indexOf("no_cliente_revisado_at: new Date().toISOString()");
+  const iFetch = fnSync.indexOf("getContacts");
+  return iSello > -1 && iFetch > -1 && iSello < iFetch;
+})());
+caso("su timeout está acotado (<= 3 s: corre antes del ACK)", (() => {
+  const m = fnSync.match(/AbortSignal\.timeout\((\d+)\)/);
+  return !!m && Number(m[1]) <= 3000;
+})());
+
+caso("STT: NINGUNA llamada al transcriptor corre antes del ACK (ni en shadow)", (() => {
+  // Se verifica por CONTEXTO, no por orden de líneas (que cambia con cada refactor): cada llamada a
+  // transcribirAudio debe estar DENTRO de una tarea de fondo, o sea que entre ella y el inicio del
+  // handler el marcador de background debe ser lo más reciente. Se excluyen la definición de la
+  // función y la ruta de diagnóstico ?selftest=stt, que no está en el camino del webhook.
+  const llamadas = [...src.matchAll(/(?<!function )\btranscribirAudio\(/g)].map((m) => m.index);
+  if (llamadas.length < 2) return false;   // si no hay llamadas, el lock no probaría nada
+  return llamadas.every((i) => {
+    const antes = src.slice(0, i);
+    if (/selftest/.test(src.slice(Math.max(0, i - 900), i))) return true;
+    return antes.lastIndexOf("correrEnSegundoPlano") > antes.lastIndexOf("Deno.serve");
+  });
+})());
+
 // --- seguridad: ninguna llave de guard literal en el código ------------------------------------
 // Hallazgo de la auditoría del 27-ago: cuatro funciones nuevas llevaban su llave de acceso escrita en
 // el fuente (y por tanto en git), y el copiloto llamaba a geo-fallback con la suya inline. Con eso,

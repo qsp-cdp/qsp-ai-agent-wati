@@ -2941,13 +2941,29 @@ async function sincronizarNoEsCliente(conv: any, waId: string): Promise<void> {
   const cerradaPorElPuente = conv.status === "cerrada" && cerradaPor === "wati_atributo";
   // Una conversación cerrada A MANO no se consulta siquiera: no hay nada que el atributo pueda decidir.
   if (conv.status === "cerrada" && !cerradaPorElPuente) return;
+  // La ventana es de 12 h, salvo cuando el puente MISMO tiene la conversación cerrada: ahí se re-consulta
+  // cada 30 min. Quitar el atributo en WATI es la forma natural de deshacer un error, y con 12 h el
+  // cliente seguía sin respuesta media jornada después de haberlo corregido — un silencio que nadie ve.
+  const ventanaMs = cerradaPorElPuente ? 30 * 60 * 1000 : 12 * 60 * 60 * 1000;
   const rev = revisadoAt ? Date.parse(revisadoAt) : 0;
-  if (rev && Number.isFinite(rev) && Date.now() - rev < 12 * 60 * 60 * 1000) return;
+  if (rev && Number.isFinite(rev) && Date.now() - rev < ventanaMs) return;
+
+  // ⚠️ EL SELLO VA ANTES DE LA CONSULTA, no después (lección v14, que este puente había vuelto a romper).
+  // Con el sello al final, una RÁFAGA de mensajes del mismo número entraba entera por el hueco: N
+  // mensajes = N consultas concurrentes de 8 s, cada una bloqueando su propio ACK a WATI. Medido el
+  // 27-ago: tres timeouts simultáneos del mismo contacto a las 18:13 + uno más al minuto siguiente,
+  // respondiendo a WATI en ~8 s cuando su timeout ronda los 5. Ese es el principio de la secuencia que
+  // el 15-ago terminó con WATI marcando el webhook como defectuoso y el bot fuera de servicio 8 horas.
+  // Sellando primero, solo el PRIMER mensaje de la ráfaga consulta; el resto pasa de largo.
+  await sb.from("conversations").update({ no_cliente_revisado_at: new Date().toISOString() }).eq("id", conv.id);
+  conv.no_cliente_revisado_at = new Date().toISOString();
 
   try {
     const r = await fetch(
       `${WATI_API_BASE}/api/v1/getContacts?pageSize=1&pageNumber=0&name=${encodeURIComponent(waId)}`,
-      { headers: { Authorization: `Bearer ${WATI_API_TOKEN}` }, signal: AbortSignal.timeout(8000) },
+      // 2,5 s y no 8: esto corre ANTES del 200 a WATI. Si su API va lenta, es preferible no enterarse
+      // del atributo en este mensaje (lo hará en el próximo) que arriesgar el ACK de todo el webhook.
+      { headers: { Authorization: `Bearer ${WATI_API_TOKEN}` }, signal: AbortSignal.timeout(2500) },
     );
     if (!r.ok) throw new Error(`http_${r.status}`);
     const j = await r.json();
@@ -2958,7 +2974,8 @@ async function sincronizarNoEsCliente(conv: any, waId: string): Promise<void> {
     const par = (c.customParams ?? []).find((x: any) => String(x?.name ?? "").toLowerCase() === "no_es_cliente");
     const marcado = /^(s[ií]|si|yes|true|1|x)$/i.test(String(par?.value ?? "").trim());
 
-    const parche: Record<string, unknown> = { no_cliente_revisado_at: new Date().toISOString() };
+    // El sello ya se escribió arriba; aquí solo va lo que cambie de estado.
+    const parche: Record<string, unknown> = {};
     if (marcado && conv.status !== "cerrada") {
       parche.status = "cerrada"; parche.cerrada_por = "wati_atributo";
       await log("no_es_cliente_sync", true, { waId, accion: "cerrada_por_atributo" });
@@ -2966,12 +2983,13 @@ async function sincronizarNoEsCliente(conv: any, waId: string): Promise<void> {
       parche.status = "bot"; parche.cerrada_por = null;
       await log("no_es_cliente_sync", true, { waId, accion: "reabierta_por_atributo" });
     }
-    await sb.from("conversations").update(parche).eq("id", conv.id);
-    Object.assign(conv, parche); // que quien llama vea el estado nuevo
+    if (Object.keys(parche).length) {
+      await sb.from("conversations").update(parche).eq("id", conv.id);
+      Object.assign(conv, parche); // que quien llama vea el estado nuevo
+    }
   } catch (e) {
-    // Se marca revisado igual: si WATI está caído, no tiene sentido reintentar en cada mensaje.
-    await sb.from("conversations").update({ no_cliente_revisado_at: new Date().toISOString() }).eq("id", conv.id);
-    conv.no_cliente_revisado_at = new Date().toISOString();
+    // No hace falta sellar aquí: ya se hizo antes de consultar. Si WATI está caído, el próximo intento
+    // será cuando venza la ventana, no en cada mensaje.
     await log("no_es_cliente_sync", false, { waId, error: String(e).slice(0, 120) });
   }
 }
@@ -4025,15 +4043,24 @@ Deno.serve(async (req) => {
     esAudioTranscrito = true;          // conserva la URL del audio original en la fila del mensaje
     audioUrlPendiente = String(p.data ?? "");
   } else if (esAudioCliente && STT_MODE === "shadow" && STT_ACTIVO) {
-    // Shadow: se transcribe para MEDIR calidad y el cliente igual recibe el puente. Aquí sí es síncrono,
-    // pero shadow es un modo de evaluación temporal (y el autotest ?selftest=stt lo reemplaza mejor).
-    const tr = await transcribirAudio(String(p.data ?? ""));
-    if (tr) {
+    // Shadow: se transcribe para MEDIR calidad y el cliente igual recibe el puente.
+    //
+    // ⚠️ EN SEGUNDO PLANO, igual que `live`. Antes esta rama hacía `await` aquí, ANTES del 200 a WATI,
+    // con el argumento de que shadow es un modo temporal de evaluación. Pero es exactamente la
+    // secuencia del incidente v68.1: transcribir tarda 4-6 s, WATI da el webhook por fallido a los ~5,
+    // reintenta cada 10 min y cada reintento vuelve a transcribir — hasta que marcó el endpoint como
+    // defectuoso y el bot quedó 8 horas fuera de servicio un sábado. Que la rama estuviera inerte solo
+    // significaba que el incidente estaba a un flip de secreto de distancia, y "shadow primero" es
+    // justamente el procedimiento documentado para evaluar un modelo de transcripción nuevo.
+    const urlShadow = String(p.data ?? "");
+    correrEnSegundoPlano((async () => {
+      const tr = await transcribirAudio(urlShadow);
+      if (!tr) return;
       await log("audio_transcrito", true, {
         waId, modo: STT_MODE, ms: tr.ms, bytes: tr.bytes, chars: tr.texto.length, modelo: STT_MODEL,
         texto: tr.texto.slice(0, 500),
       });
-    }
+    })());
   }
   if (esAudioCliente && esAudioTranscrito) {
     // cae al flujo normal con "[audio]"; la tarea de fondo transcribe y reescribe la fila
