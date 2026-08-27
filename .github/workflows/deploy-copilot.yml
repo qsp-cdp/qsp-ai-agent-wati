@@ -26,13 +26,42 @@ on:
     paths:
       - supabase/functions/**
       - .github/workflows/deploy-copilot.yml
+  # En un PR se corren las PRUEBAS pero NO se despliega (ver el `if` del job deploy). Sin esto, el
+  # candado llegaba tarde: las pruebas solo corrían al hacer push a la rama de despliegue, o sea
+  # DESPUÉS de fusionar, y un PR en rojo se veía igual de verde que uno sano.
+  pull_request:
+    paths:
+      - supabase/functions/**
+      - tests/**
+      - .github/workflows/deploy-copilot.yml
 
 concurrency:
-  group: deploy-copilot
+  # Se serializa por REF: dos push a la rama de despliegue no se pisan, pero la corrida de pruebas de
+  # un PR tampoco hace cola detrás de un deploy en curso (ni al revés).
+  group: deploy-copilot-${{ github.ref }}
   cancel-in-progress: false
 
 jobs:
+  # CANDADO DEL DESPLIEGUE. Corre en los PR y en los push; el job de deploy DEPENDE de él, así que un
+  # lock en rojo detiene la publicación. Hasta el 27-ago este workflow desplegaba a producción sin
+  # ejecutar ninguna prueba, y la única del repo llevaba semanas rota sin que nadie lo notara. En este
+  # sistema una regresión no se ve en un stack trace: se ve cuando el bot le dice algo equivocado a un
+  # cliente.
+  pruebas:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Correr las suites
+        run: |
+          set -e
+          node tests/golden.mjs
+          node tests/test_shipday_campos.mjs
+          node tests/test_semaforo.mjs
+
   deploy:
+    needs: pruebas
+    # Un PR no despliega: solo prueba. La publicación ocurre al hacer push a la rama de despliegue.
+    if: github.event_name != 'pull_request'
     runs-on: ubuntu-latest
     env:
       SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
@@ -46,18 +75,6 @@ jobs:
           # se quedaba sin desplegar y nadie se enteraba. Ese drift silencioso ya costó una vez perder
           # el upsertPedido de wati-order en producción (~06-ago).
           fetch-depth: 0
-
-      # CANDADO DEL DESPLIEGUE: las pruebas corren ANTES de publicar. Hasta el 27-ago este workflow
-      # desplegaba a producción sin ejecutar ninguna, y la única prueba del repo llevaba semanas rota
-      # (importaba un archivo que nunca se commiteó) sin que nadie lo notara. Si un lock se pone rojo,
-      # el deploy se detiene aquí: en este sistema una regresión no se ve en un stack trace, se ve
-      # cuando el bot le dice algo equivocado a un cliente.
-      - name: Pruebas
-        run: |
-          set -e
-          node tests/golden.mjs
-          node tests/test_shipday_campos.mjs
-          node tests/test_semaforo.mjs
 
       - name: Comprobar secreto
         id: guard
