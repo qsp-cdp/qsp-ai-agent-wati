@@ -41,7 +41,22 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
         with:
-          fetch-depth: 2          # necesario para diffear contra el commit anterior
+          # 0 = historia completa. Con fetch-depth 2 solo se podía diffear HEAD^..HEAD, o sea el ÚLTIMO
+          # commit del push: en un push de dos commits que tocaran funciones distintas, la del primero
+          # se quedaba sin desplegar y nadie se enteraba. Ese drift silencioso ya costó una vez perder
+          # el upsertPedido de wati-order en producción (~06-ago).
+          fetch-depth: 0
+
+      # CANDADO DEL DESPLIEGUE: las pruebas corren ANTES de publicar. Hasta el 27-ago este workflow
+      # desplegaba a producción sin ejecutar ninguna, y la única prueba del repo llevaba semanas rota
+      # (importaba un archivo que nunca se commiteó) sin que nadie lo notara. Si un lock se pone rojo,
+      # el deploy se detiene aquí: en este sistema una regresión no se ve en un stack trace, se ve
+      # cuando el bot le dice algo equivocado a un cliente.
+      - name: Pruebas
+        run: |
+          set -e
+          node tests/golden.mjs
+          node tests/test_shipday_campos.mjs
 
       - name: Comprobar secreto
         id: guard
@@ -62,7 +77,14 @@ jobs:
           if [ -n "$MANUAL" ] && [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
             LISTA="$MANUAL"
           else
-            CAMBIOS=$(git diff --name-only HEAD^ HEAD -- supabase/functions/ || true)
+            # Se diffea el RANGO COMPLETO del push (before..sha), no solo el último commit. `before`
+            # viene vacío o en ceros cuando la rama es nueva o el push es forzado: ahí se cae a
+            # HEAD^..HEAD, que es lo mejor disponible.
+            ANTES="${{ github.event.before }}"
+            if [ -z "$ANTES" ] || [ "$ANTES" = "0000000000000000000000000000000000000000" ] || ! git cat-file -e "$ANTES^{commit}" 2>/dev/null; then
+              ANTES="HEAD^"
+            fi
+            CAMBIOS=$(git diff --name-only "$ANTES" HEAD -- supabase/functions/ || true)
             if echo "$CAMBIOS" | grep -q 'supabase/functions/_shared/'; then
               # Un cambio en _shared afecta a todas: cada función empaqueta su propia copia.
               LISTA=$(ls -d supabase/functions/*/ | xargs -n1 basename | grep -v '^_shared$' | tr '\n' ' ')

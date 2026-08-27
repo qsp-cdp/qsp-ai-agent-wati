@@ -262,7 +262,7 @@
 //   atribución / identidad omnicanal en el CDP. (1) URL APEX (sin www) + UTMs (utm_source=whatsapp…).
 //   (2) ref_code: 8 alfanuméricos opacos (crypto) por producto; se guarda {ref_code→wa_id,handle} en
 //   la tabla ref_codes (best-effort, batch); NUNCA se emite un code que no se haya guardado. (3)
-//   Endpoint de resolución GET ?ref_code=&key=RESOLVE_SECRET → {wa_id,producto_handle,ts} (404 si no),
+//   Endpoint de resolución GET ?ref_code=&key=<COPILOT_WEBHOOK_KEY> → {wa_id,producto_handle,ts} (404 si no),
 //   que el CDP lee para resolver ref_code→wa_id (riel wa_ref_codes). Privacidad: nunca wa_id/PII en la
 //   URL, solo el ref_code opaco. El copiloto solo EMITE/GUARDA/EXPONE; el stitch/enriquecimiento vive
 //   en el CDP. Tabla nueva: ref_codes. Secreto nuevo: RESOLVE_SECRET.
@@ -450,6 +450,12 @@ const SHOPIFY_ADMIN_TOKEN = (Deno.env.get("SHOPIFY_ADMIN_TOKEN") ?? "").trim();
 const SHOPIFY_ADMIN_API_BASE = (Deno.env.get("SHOPIFY_ADMIN_API_BASE") ?? "").trim().replace(/\/$/, "");
 // v28 — stitching WhatsApp→web por ref_code (atribución / identidad omnicanal en el CDP).
 const RESOLVE_SECRET = (Deno.env.get("RESOLVE_SECRET") ?? "").trim();   // guard del endpoint GET ?ref_code= (v45: trim)
+// Llave con la que el copiloto llama a geo-fallback (capa 3 del resolvedor de direcciones). Estaba
+// ESCRITA EN EL CÓDIGO junto a la URL, así que vivía en git: quien tuviera el repo podía gastar la
+// cuota de Google Maps y envenenar el caché de coordenadas. Va por secreto, y debe valer lo mismo que
+// GEO_FALLBACK_KEY del otro lado — si se rotan por separado, la capa 3 empieza a recibir 403 y falla
+// EN SILENCIO (el copiloto se queda sin geocodificación y nadie se entera).
+const GEO_FALLBACK_KEY = (Deno.env.get("GEO_FALLBACK_KEY") ?? "").trim();
 const STORE_APEX = "https://quickservicepanama.com";          // apex (sin www; www mete redirect)
 // v59 — SHADOW de búsqueda: compara search_catalog (Storefront/Catalog MCP de Shopify) contra suggest.json
 // SIN afectar la respuesta al cliente. Gateado (default OFF, mismo ADN que COPILOT_MODE). Endpoint
@@ -754,6 +760,7 @@ LOGÍSTICA, PAGOS Y DATOS DE LA TIENDA (envíos, ubicación, horarios, métodos 
 - Si info_tienda no tiene el dato (devuelve "sin datos disponibles"): dilo con honestidad y deriva a un asesor para confirmarlo. No prometas plazos ni costos específicos.
 - DÍA DE LA SEMANA: si el cliente menciona cualquier día (lunes a domingo) al hablar de visitar, pasar, retirar o coordinar algo con la tienda, llama a info_tienda ANTES de confirmar o negar que ese día atienden — confirmar un día por inercia puede mandar a alguien a un viaje en vano (la tienda no atiende sábados ni domingos, pero el horario real siempre sale de info_tienda). Si el día es sábado, domingo o feriado, acláralo con ese horario en vez de seguirle la corriente.
 - TIENDA FÍSICA — COMPRA DIRECTA: QSP tiene una tienda física real (la ubicación y el horario los da info_tienda) donde el cliente puede LLEGAR Y COMPRAR directamente en el momento, sin pedido previo ni compra por la web. Cuando pregunten si pueden pasar, comprar en tienda o retirar, responde que sí pueden venir directo a comprar (con el horario de info_tienda). NUNCA presentes la tienda como "solo un punto de retiro" NI des a entender que primero hay que comprar en línea: la opción "Recoger en tienda" del checkout web es una ALTERNATIVA para quien prefiere dejar pagado en línea y pasar a buscar — menciónala como opcional, no como requisito.
+- DÍA DE LA SEMANA — NUNCA confirmes un día sin consultar: si el cliente dice que va a pasar, ir o llamar un día concreto ("el sábado trataré de ir", "paso el lunes", "los domingos abren?"), consulta info_tienda ANTES de responder y contesta con el horario REAL. Si el día que menciona es sábado, domingo o feriado, DÍSELO con claridad y ofrécele el próximo día hábil; no lo confirmes por inercia conversacional ni por cortesía. Caso real: un cliente escribió "el sábado trataré de ir x allá" y se le confirmó dos veces que podía pasar — QSP atiende Lun-Vie, y esa persona pudo hacer el viaje en vano.
 - AGOTADO NO ES INEXISTENTE, y nunca lo declares desde un resultado parcial. Si buscaste un modelo y solo te volvieron sus CONSUMIBLES (tintas, tóner, caja de mantenimiento), eso NO prueba que no manejemos el equipo: puede estar agotado. NO digas "no lo encontré en catálogo" ni "no lo manejamos" — di que un asesor confirma disponibilidad y reingreso. Caso real: a un cliente se le dijo que no teníamos la Epson L8180 y sí la tenemos, solo estaba sin stock; era una venta por referido. Cuando la tool SÍ devuelve el equipo con "❌ sin stock", esa es la respuesta buena: lo tenemos, está agotado, y aplica el aviso de disponibilidad de arriba.
 - POLÍTICAS COMERCIALES (descuentos, precios especiales, cliente frecuente, mayoreo/revendedor, crédito): si info_tienda NO trae el dato, NO las afirmes NI las niegues — nada de "no manejamos descuentos" ni "el precio es el mismo para todos" (solo un asesor decide precios especiales, y a veces los da). Di que un asesor le confirma si hay alguna opción para su caso.
 - SUCURSALES DEL INTERIOR: QSP NO tiene tiendas propias en el interior — el envío va por la red de Servientrega. Para dónde recoger en una provincia o ciudad del interior usa sucursales_interior (su descripción y su nota dicen cómo presentar cada punto). Deja claro que el pedido SE ENVÍA a ese punto y el cliente lo retira con su cédula — nunca "tenemos sucursal en [ciudad]", que suena a tienda propia de QSP. Ofrece SIEMPRE las dos vías del interior: retiro en el punto (lo más económico) o puerta a puerta, ambas con los costos de info_tienda (tarifa_interior/plazo_interior), tal cual los traiga. Si la ciudad exacta no aparece, deduce la provincia (sabes la geografía de Panamá) y vuelve a consultar.
@@ -2399,7 +2406,7 @@ async function guardarDatosEnvio(waId: string, input: any): Promise<string> {
     // Best-effort y en línea: si falla o tarda, la captura sigue igual que antes (zona sin resolver).
     if (dirFinal && (!zona || ["sin_match", "ambiguo"].includes(String((zona as any).estado)))) {
       try {
-        const rg = await fetch(`${SB_URL}/functions/v1/geo-fallback?key=geofb-7k2m9x4q1w`, {
+        const rg = await fetch(`${SB_URL}/functions/v1/geo-fallback?key=${GEO_FALLBACK_KEY}`, {
           method: "POST", headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ direccion: dirFinal }), signal: AbortSignal.timeout(9000),
         });
