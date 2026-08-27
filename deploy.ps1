@@ -1,64 +1,37 @@
-# deploy.ps1 — despliega las Edge Functions de forma BYTE-EXACTA desde disco (Supabase CLI) y verifica el
-# healthcheck del copiloto. No re-escribe ni pega el contenido: el CLI sube los archivos tal cual y empaqueta
-# los imports de `_shared/` (por eso las funciones de despacho NO se pueden desplegar por el dashboard/Browse).
+# deploy.ps1 — NEUTRALIZADO el 2026-08-27 (hallazgo P0 de la auditoría integral).
 #
-# Uso (PowerShell, en la raíz del repo):
-#   git pull
-#   .\deploy.ps1                      # despliega las 4 funciones de v48
-#   .\deploy.ps1 copilot-webhook      # o solo las que le pases por argumento
+# ⛔ ESTE SCRIPT YA NO DESPLIEGA. Aborta a propósito.
 #
-# Requisitos: estar logueado en el CLI (`npx supabase login`, una sola vez). El --no-verify-jwt es OBLIGATORIO:
-# todas son webhooks públicos (el copiloto se protege por ?key=; las de despacho por HMAC/token propio); si
-# verify_jwt queda en true, Shopify/Shipday/WATI reciben 401.
+# POR QUÉ: producción ya NO corre esta rama. Desde el 19-ago el código vivo está en la rama
+# `claude/supabase-agent-review-tvvg61` (copiloto v119.1+) y se despliega SOLO por GitHub Actions
+# (workflow `deploy-copilot.yml`: cada push a esa rama que toque `supabase/functions/**` sale a prod).
 #
-# Nota: wati-address y contacts-lookup NO cambiaron con v48 (no escriben `pedidos`), así que no hace falta
-# redesplegarlas; agrégalas al comando si alguna vez cambian.
+# Esta rama quedó como archivo histórico (v73.1). Si este script siguiera funcionando, un
+# `git pull` + `.\deploy.ps1` de memoria muscular pisaría 8 funciones de prod con código de hace
+# semanas: el copiloto retrocedería v119→v73, shopify-webhook perdería v63-v68 (HMAC, flags de zona,
+# rescate de envío gratis), RESUCITARÍA wati-address (retirada de prod el 21-ago, hoy responde 410)
+# y pisaría contacts-lookup v2 con una v1 de 22 líneas — rompiendo el flujo de WATI que consume
+# `envio_texto`. Nada más lo impedía: la protección de rama no aplica a `supabase functions deploy`.
+#
+# CÓMO SE DESPLIEGA HOY:
+#   1. Trabajar en la rama `claude/supabase-agent-review-tvvg61`.
+#   2. Commit + push — GitHub Actions despliega lo que cambió (siempre con --no-verify-jwt).
+#
+# EMERGENCIA REAL (CI caído y hay que desplegar a mano): hazlo consciente, función por función,
+# DESDE LA RAMA NUEVA, nunca desde esta:
+#   npx supabase functions deploy <funcion> --project-ref jbigmlcalcwiphqeudxd --no-verify-jwt
 
-$ErrorActionPreference = "Stop"
-$proj = "jbigmlcalcwiphqeudxd"
-$url  = "https://$proj.functions.supabase.co/copilot-webhook"
-
-# Funciones a desplegar: por defecto todas (copiloto + puente); o las que pases como argumentos.
-#   Captura de direcciones (NO necesita Shipday): wati-address, contacts-lookup.
-#   Despacho (necesita Shipday configurado): shopify-webhook, shipday-status, wati-order.
-# Ej. para solo la captura:  .\deploy.ps1 wati-address contacts-lookup
-$funcs = if ($args.Count -gt 0) { $args } else {
-  @("copilot-webhook", "wati-address", "contacts-lookup", "shopify-webhook", "shipday-status", "wati-order", "reengage-expired", "watchdog")
-}
-
-foreach ($fn in $funcs) {
-  Write-Host "`n==> Desplegando $fn a $proj (verify_jwt OFF, byte-exacto desde disco)..." -ForegroundColor Cyan
-  npx supabase functions deploy $fn --project-ref $proj --no-verify-jwt
-  if ($LASTEXITCODE -ne 0) {
-    Write-Host "`n[X] El deploy de $fn FALLO (exit $LASTEXITCODE). Produccion NO cambio si el error fue antes de subir." -ForegroundColor Red
-    exit 1
-  }
-  Write-Host "[OK] $fn desplegada." -ForegroundColor Green
-}
-
-# Healthcheck solo del copiloto (las de despacho son POST y no exponen GET).
-if ($funcs -contains "copilot-webhook") {
-  Write-Host "`n==> Verificando healthcheck de copilot-webhook (GET, sin key)..." -ForegroundColor Cyan
-  Start-Sleep -Seconds 2
-  $r = curl.exe -s --max-time 25 $url
-  Write-Host $r
-
-  if ($r -match "WORKER_ERROR") {
-    Write-Host "`n[X] ALERTA: WORKER_ERROR — el deploy quedo roto (revisa que subio el index.ts real)." -ForegroundColor Red
-    exit 1
-  } elseif ($r -match '(?i)\bjwt\b|unauthorized|"code"\s*:\s*401') {
-    Write-Host "`n[!] ALERTA: parece 401/JWT — verify_jwt quedo ON. Apagalo en el dashboard (Edge Functions ->" -ForegroundColor Yellow
-    Write-Host "    copilot-webhook -> Details -> Enforce JWT verification OFF) o redeploy con --no-verify-jwt." -ForegroundColor Yellow
-    exit 1
-  } elseif ($r -match '"status"\s*:\s*"ok"') {
-    $ver  = if ($r -match '"version"\s*:\s*"([^"]+)"') { $matches[1] } else { "?" }
-    $mode = if ($r -match '"mode"\s*:\s*"([^"]+)"') { $matches[1] } else { "?" }
-    Write-Host "`n[OK] copilot-webhook vivo. version=$ver, mode=$mode, verify_jwt=OFF (respondio sin key)." -ForegroundColor Green
-  } else {
-    Write-Host "`n[?] El healthcheck respondio algo inesperado (revisa el JSON de arriba)." -ForegroundColor Yellow
-    exit 1
-  }
-}
-
-Write-Host "`n==> Listo. Recuerda: la conciencia de pedidos requiere que un pedido REAL entre por Shopify/WATI/Shipday" -ForegroundColor Cyan
-Write-Host "    para poblar `pedidos`; con la tabla vacia el bot responde 'sin_pedidos' y deriva (seguro)." -ForegroundColor Cyan
+Write-Host ""
+Write-Host "==============================================================================" -ForegroundColor Red
+Write-Host "  DEPLOY BLOQUEADO — esta rama (v73.1) ya NO es la que corre en produccion." -ForegroundColor Red
+Write-Host "==============================================================================" -ForegroundColor Red
+Write-Host ""
+Write-Host "  Produccion corre la rama:  claude/supabase-agent-review-tvvg61  (copiloto v119.1+)" -ForegroundColor Yellow
+Write-Host "  Se despliega SOLO por GitHub Actions: push a esa rama => deploy automatico." -ForegroundColor Yellow
+Write-Host ""
+Write-Host "  Si este script hubiera corrido, habria retrocedido el copiloto 46 versiones y" -ForegroundColor Yellow
+Write-Host "  roto la captura de direcciones de WATI. Por eso ahora aborta (auditoria 27-ago)." -ForegroundColor Yellow
+Write-Host ""
+Write-Host "  Detalle: docs/auditoria-2026-08-27/README.md" -ForegroundColor Cyan
+Write-Host ""
+exit 1

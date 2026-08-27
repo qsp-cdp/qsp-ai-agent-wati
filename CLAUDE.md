@@ -19,6 +19,29 @@ equipo humano: contesta preguntas generales, indica disponibilidad/stock y da pr
 con certeza, y calla/deriva cuando es mejor que responda un humano. Tienda:
 **quickservicepanama.com** (suministros de impresión y tecnología en Panamá).
 
+## ⛔ LEE ESTO PRIMERO — Estado actual (2026-08-27): ESTA RAMA YA NO ES LA QUE CORRE EN PROD
+- **El linaje del código se MOVIÓ de rama el 19-ago.** Producción corre el copiloto **v119.1+** desde
+  la rama **`claude/supabase-agent-review-tvvg61`** (árbol nuevo, 135+ commits, historia NO
+  relacionada con esta), desplegado por **GitHub Actions** (`deploy-copilot.yml`: push a esa rama
+  tocando `supabase/functions/**` → deploy automático). Esta rama quedó en v73.1 como ARCHIVO
+  HISTÓRICO. **NO desplegar desde aquí** — `deploy.ps1` fue neutralizado a propósito (aborta con la
+  explicación); un deploy desde esta rama retrocedería prod 46 versiones y rompería la captura de
+  direcciones de WATI. Trabajo nuevo del copiloto/puente → en la rama nueva.
+- **AUDITORÍA INTEGRAL 27-ago (solo lectura, 3 frentes sobre el código real v119.1):** reportes
+  completos en `docs/auditoria-2026-08-27/` (README = consolidado priorizado). Resumen: prod
+  byte-idéntico a la rama nueva (deriva cerrada por CI) · contrato de abstención VIVO y endurecido ·
+  P0-1 de seguridad completo en prod · círculo de pedidos intacto · crons limpios. Riesgos top:
+  (1) v119 hace un fetch a la API de WATI síncrono ANTES del 200 (lección v14; 4 timeouts reales el
+  27-ago), (2) llaves de guard hardcodeadas en git en 4 funciones nuevas, (3) la trampa
+  `hmac_rechazado` no la lee ningún correo, (4) la rama nueva NO tiene los 667 golden y el CI
+  despliega sin pruebas (port listo: `docs/auditoria-2026-08-27/golden-portado-v119.mjs`, 629/667),
+  (5) código productivo sin fuente en git — **rescatado byte-exacto en
+  `docs/rescate-prod-2026-08-27/`** (`contacts-lookup` v2, `cotizador`, `wati-classify`;
+  `reengage-expired` tiene fuente SOLO en esta rama).
+- Lo que esta rama conserva y la nueva NO: este CLAUDE.md, `tests/golden.mjs` (667) + `test/` (29),
+  `src/` (servicio Node del puente), fuentes de `wati-address`/`contacts-lookup` v1/
+  `reengage-expired`, `design/`, `web/`. Por eso NO se borra.
+
 ## Estado actual (2026-08-13)
 ## Estado actual (2026-08-18)
 - **EN EL REPO, APLICAR SQL: v73.1 — los acks se comían los 10 cupos del barrido.** Hallado al correr el
