@@ -123,9 +123,15 @@ function calcularFlag(shopifyOrder: any, zona: ZonaResuelta | null, esLineaCiuda
   return null;
 }
 
-async function verifyShopifyHmac(rawBody: string, hmacHeader: string): Promise<boolean> {
+// v68 — devuelve POR QUÉ falló, no solo que falló. El motivo importa porque los tres casos piden
+// acciones opuestas: sin secreto configurado se rechaza TODO pedido de la tienda (catástrofe silenciosa),
+// sin cabecera es alguien tocando la puerta que no es Shopify (ruido, ignorar), y firma que no cuadra es
+// un secreto desincronizado entre Shopify y Supabase (arreglable en minutos, si uno se entera).
+type MotivoHmac = 'ok' | 'sin_secreto' | 'sin_cabecera' | 'no_cuadra';
+async function verifyShopifyHmac(rawBody: string, hmacHeader: string): Promise<MotivoHmac> {
   const secret = Deno.env.get('SHOPIFY_WEBHOOK_SECRET');
-  if (!secret || !hmacHeader) return false;
+  if (!secret) return 'sin_secreto';
+  if (!hmacHeader) return 'sin_cabecera';
   const key = await crypto.subtle.importKey(
     'raw',
     new TextEncoder().encode(secret),
@@ -135,17 +141,35 @@ async function verifyShopifyHmac(rawBody: string, hmacHeader: string): Promise<b
   );
   const sig = await crypto.subtle.sign('HMAC', key, new TextEncoder().encode(rawBody));
   const digest = btoa(String.fromCharCode(...new Uint8Array(sig)));
-  if (digest.length !== hmacHeader.length) return false;
+  if (digest.length !== hmacHeader.length) return 'no_cuadra';
   let diff = 0;
   for (let i = 0; i < digest.length; i++) diff |= digest.charCodeAt(i) ^ hmacHeader.charCodeAt(i);
-  return diff === 0;
+  return diff === 0 ? 'ok' : 'no_cuadra';
 }
 
 Deno.serve(async (req) => {
   if (req.method !== 'POST') return json({ error: 'Método no permitido' }, 405);
   const rawBody = await req.text();
-  const ok = await verifyShopifyHmac(rawBody, req.headers.get('X-Shopify-Hmac-Sha256') ?? '');
-  if (!ok) return json({ error: 'Firma HMAC inválida' }, 401);
+  const motivo = await verifyShopifyHmac(rawBody, req.headers.get('X-Shopify-Hmac-Sha256') ?? '');
+  if (motivo !== 'ok') {
+    // v68 — UN RECHAZO QUE NO SE REGISTRA ES UN PEDIDO QUE DESAPARECE. Hasta ahora esto devolvía 401 y
+    // no dejaba rastro: si Shopify entregaba un pedido y la firma no cuadraba, no había log, ni fila en
+    // `pedidos`, ni error — el pedido simplemente no existía para nosotros y nadie podía saber por qué.
+    //
+    // Lo destapó el pedido 8888 (26-ago, $68.48, pagado): está en Shopify, sus vecinos 8887 y 8889 se
+    // registraron con normalidad, y de él no hay ni un solo evento nuestro. Con esta traza no se sabe
+    // todavía si fue esto —el rechazo no dejaba huella, justamente— pero de aquí en adelante sí se sabrá.
+    //
+    // Se registra el número de pedido cuando el cuerpo se puede leer, porque sin él la traza dice que
+    // "algo" se rechazó y no cuál, que es la mitad inútil de la información. Nada de cuerpo completo:
+    // trae datos del cliente.
+    let pedido: string | null = null;
+    try { const p = JSON.parse(rawBody); pedido = String(p?.order_number ?? p?.name ?? p?.id ?? '') || null; } catch { /* no era JSON */ }
+    await logJob('shopify-webhook', 'hmac_rechazado', false, {
+      motivo, order: pedido, tema: req.headers.get('X-Shopify-Topic'), bytes: rawBody.length,
+    });
+    return json({ error: 'Firma HMAC inválida' }, 401);
+  }
 
   try {
     const shopifyOrder = JSON.parse(rawBody);
