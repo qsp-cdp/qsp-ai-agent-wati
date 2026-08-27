@@ -13,7 +13,12 @@
 //   · Las anotaciones de tipo se quitan por separado en la FIRMA y en el CUERPO: aplicar el strip de
 //     parámetros al cuerpo rompe los object literals ({ metodo: met } -> { metodo }).
 
-export function crearExtractor(src) {
+export function crearExtractor(src, env = {}) {
+  // Shim de Deno: el código extraído lee su configuración con Deno.env.get. Devolviendo undefined, las
+  // funciones caen a sus DEFAULTS — que es justamente el comportamiento que hay que fijar en una prueba
+  // (lo que corre cuando nadie tocó un secreto). `env` permite forzar un valor cuando la prueba quiere
+  // verificar el otro camino.
+  const _deno = { env: { get: (k) => (k in env ? env[k] : undefined) } };
 // Quita las anotaciones de TS. La FIRMA de una función se limpia aparte del CUERPO: aplicar el
 // strip de parámetros al cuerpo rompería los object literals ({ metodo: met } -> { metodo }).
   function sinTiposCuerpo(s) {
@@ -116,7 +121,7 @@ continue;
   nombres.forEach((n) => { if (!añadir(n)) throw new Error(`no encontré ${n} en index.ts`); });
   const construir = () => {
     for (let intento = 0; intento < 60; intento++) {
-      try { return eval(`${[...puestos.values()].join("\n")}\n({${[...puestos.keys()].join(",")}})`); }
+      try { return eval(`const Deno = _deno;\n${[...puestos.values()].join("\n")}\n({${[...puestos.keys()].join(",")}})`); }
       catch (e) {
         const m = String(e.message).match(/(\w+) is not defined/);
         if (!m || !añadir(m[1])) throw e;

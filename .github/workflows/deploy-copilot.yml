@@ -57,6 +57,7 @@ jobs:
           set -e
           node tests/golden.mjs
           node tests/test_shipday_campos.mjs
+          node tests/test_semaforo.mjs
 
       - name: Comprobar secreto
         id: guard
