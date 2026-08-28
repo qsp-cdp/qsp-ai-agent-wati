@@ -8,7 +8,13 @@
 // net.http_post para caber en el tiempo de ejecución; ~400ms de pausa entre páginas para no
 // castigar al sitio. Upsert por slug: re-correr un rango es idempotente. Borrar (o dejar para
 // re-cargas periódicas) una vez cargado.
-const KEY = 'phloader-x9t4k2w7q1';
+// La llave va en un SECRETO de la función, no en el código (donde estuvo, y por tanto en git): este
+// cargador ESCRIBE en `ph_directorio` —el directorio geográfico del que sale la resolución de
+// direcciones— y de paso golpea un sitio de terceros 207 veces por corrida, desde nuestra IP.
+// FAIL-CLOSED (el `!KEY` del guard): sin el secreto rechaza todo. Ese chequeo no es adorno — con la
+// llave leída del entorno, un secreto ausente dejaría KEY en '' y un `?key=` vacío entraría como
+// válido: el guard se abriría solo, en silencio, exactamente cuando nadie lo configuró.
+const KEY = (Deno.env.get('PH_LOADER_KEY') ?? '').trim();
 const BASE = 'https://eldeph.com/ph/tipo/propiedad-horizontal';
 
 function json(body: unknown, status = 200): Response {
@@ -49,7 +55,7 @@ function parsearPagina(html: string, pagina: number): FilaPH[] {
 
 Deno.serve(async (req) => {
   const url = new URL(req.url);
-  if (url.searchParams.get('key') !== KEY) return json({ error: 'Token inválido' }, 401);
+  if (!KEY || url.searchParams.get('key') !== KEY) return json({ error: 'Token inválido' }, 401);
   const desde = Math.max(1, Number(url.searchParams.get('desde')) || 1);
   const hasta = Math.min(207, Number(url.searchParams.get('hasta')) || desde + 29);
 

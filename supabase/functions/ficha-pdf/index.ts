@@ -15,7 +15,15 @@
 import { extractText, getDocumentProxy } from 'npm:unpdf@0.12.1';
 
 const VERSION = 'v2-ficha-pdf-texto-legible';
-const KEY = 'fichapdf-3n7q2x8m';
+
+// La llave vive en un SECRETO de la función, nunca en el código: estuvo escrita aquí (y por tanto en
+// git), y este endpoint ESCRIBE en `fichas_pdf` — la base de conocimiento de specs que el bot cita como
+// fuente auditable. Con la llave versionada, cualquiera con acceso al repo podía sembrarle una ficha
+// falsa a un modelo real, y toda la trazabilidad que esta tabla existe para dar valía cero.
+// FAIL-CLOSED a propósito (el `!KEY` del guard): si el secreto falta, la función rechaza TODO en vez de
+// quedar abierta. Sin ese chequeo, un secreto ausente dejaría KEY en '' y un `?key=` vacío pasaría —
+// el guard se convertiría en puerta justo cuando peor está configurada la función.
+const KEY = (Deno.env.get('FICHA_PDF_KEY') ?? '').trim();
 
 // Solo fabricantes y el CDN de la propia tienda. Sin esto, cualquiera con la llave podría usar la
 // función como proxy hacia adentro de la red (SSRF); el allowlist la deja siendo lo que dice ser.
@@ -41,7 +49,7 @@ function dominioPermitido(u: URL): boolean {
 
 Deno.serve(async (req) => {
   const params = new URL(req.url).searchParams;
-  if ((params.get('key') ?? '').trim() !== KEY) return json({ error: 'Llave inválida' }, 401);
+  if (!KEY || (params.get('key') ?? '').trim() !== KEY) return json({ error: 'Llave inválida' }, 401);
   if (req.method === 'GET') return json({ ok: true, version: VERSION });
   if (req.method !== 'POST') return json({ error: 'Método no permitido' }, 405);
 

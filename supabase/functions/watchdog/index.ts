@@ -199,6 +199,10 @@ function semaforo(r: ResumenDiario, minutosSinMensajes: number, saludOk: boolean
   if (!saludOk) return { icono: "🔴", estado: "copiloto caído", motivo: "healthcheck" };
   if (minutosSinMensajes >= UMBRAL_MIN) return { icono: "🔴", estado: "sin mensajes", motivo: "silencio" };
   if (n("envio_fallido") > 0) return { icono: "🔴", estado: "envíos fallidos", motivo: "envio_fallido" };
+  // Un pedido de la web rechazado por firma NO entró al despacho: el cliente pagó y no va a recibir
+  // nada, y nadie se entera porque el copiloto sigue sano y WhatsApp sigue atendido. Si el secreto HMAC
+  // se desincroniza, rebotan TODOS — por eso alcanza con uno para pintar de rojo.
+  if (n("hmac_rechazado") > 0) return { icono: "🔴", estado: "pedidos web rechazados", motivo: "hmac_rechazado" };
   if (n("errores") >= 5) return { icono: "🔴", estado: "errores repetidos", motivo: "errores" };
   // 🟡 = hay trabajo pendiente o algo que vigilar, pero nada roto.
   if ((r.sin_responder_n ?? 0) > 0) return { icono: "🟡", estado: `${r.sin_responder_n} esperando`, motivo: "sin_responder" };
