@@ -176,7 +176,25 @@ export async function upsertPedido(p: PedidoUpsert): Promise<void> {
     // Canónico: "#1001" y "1001" deben CONVERGER (la app nativa de Shipday devolvería "#1001" mientras
     // shopify-webhook graba "1001"). Se quita el '#' inicial para que la fila shopify y la shipday agrupen.
     const ref = String(p.pedido_ref ?? '').trim().replace(/^#+/, '');
-    if (wa.length < 6 || !ref) return; // sin llave útil (teléfono/número) no escribimos
+    // Sin teléfono no se puede escribir: `wa_id` es NOT NULL y es la llave con la que esta tabla enlaza
+    // con WhatsApp y con la pierna de vuelta de Shipday. El descarte en sí probablemente esté BIEN —un
+    // retiro en tienda sin teléfono no necesita ni despacho ni seguimiento— pero hasta ahora era MUDO, y
+    // eso no está bien: el pedido desaparecía de nuestra base sin que nadie pudiera contarlo ni explicarlo.
+    //
+    // Salió a la luz el 28-ago comparando la numeración de Shopify contra la nuestra: faltaban el 8888,
+    // el 8893 y el 8894. La correlación es perfecta — de los 9 pedidos del 8890 al 8898, los únicos dos
+    // sin teléfono en NINGÚN campo (ni cliente, ni facturación, ni envío) son exactamente los dos que
+    // faltaban. Los otros siete traen teléfono y están todos.
+    //
+    // Se registra, no se arregla: convertir `wa_id` en nullable toca una llave que usan varias funciones
+    // y no se hace por tres pedidos de retiro. Con la traza se puede medir cuánto pasa y decidir con datos.
+    if (wa.length < 6 || !ref) {
+      await logJob('upsert-pedido', 'pedido_sin_llave', false, {
+        motivo: !ref ? 'sin_numero_de_pedido' : 'sin_telefono',
+        fuente: p.fuente, order: ref || null, total: p.total_usd ?? null,
+      });
+      return;
+    }
     const row: Record<string, unknown> = {
       wa_id: wa, fuente: p.fuente, pedido_ref: ref, updated_at: new Date().toISOString(),
     };
