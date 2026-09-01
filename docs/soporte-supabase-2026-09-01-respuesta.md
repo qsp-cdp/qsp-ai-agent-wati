@@ -1,12 +1,51 @@
-# Respuesta a soporte de Supabase (Rodrigo) — 01-sep-2026
+# Intercambio con soporte de Supabase (Rodrigo) — 01-sep-2026
 
-> Contexto: `docs/seguridad-2026-09-01.md`. Rodrigo ofreció mover PostGIS de `public` a `extensions`
-> como remediación de raíz del advisor `rls_disabled_in_public` sobre `spatial_ref_sys`.
+> Contexto y análisis completo: `docs/seguridad-2026-09-01.md`.
 >
-> Lo que pedimos: que hagan el **revoke** a secas. El pedido de reubicación queda como plan B, con la
-> condición de que confirmen el procedimiento (PostGIS no es reubicable — el detalle está abajo).
+> **Resultado: la reubicación se ACEPTA.** Rodrigo aclaró que no usan drop-and-recreate sino el cambio
+> de `extrelocatable` en el catálogo + `ALTER EXTENSION ... SET SCHEMA`, que preserva los datos. La
+> objeción del `CASCADE` sobre los 724 polígonos no aplica a ese método.
 
 ---
+
+## 2. Respuesta final — luz verde (para enviar)
+
+Hi Rodrigo,
+
+That clears it up — thank you for the precision. Flipping `extrelocatable` and then relocating with
+`ALTER EXTENSION ... SET SCHEMA` is a different animal from the standard drop-and-recreate path, and
+you're right that it preserves everything: the `geometry` type keeps its OID, so our
+`limites_admin.geom` column and its GIST index are untouched. Our concern doesn't apply to your
+method. **Please go ahead.**
+
+We also double-checked the one runtime dependency that survives a relocation — `ST_Transform` looks up
+`spatial_ref_sys` via an unqualified SPI query, so it depends on `search_path` at execution time. We
+don't use it anywhere: our geographic functions only call `ST_Contains`, `ST_MakePoint`, `ST_SetSRID`,
+`ST_GeomFromGeoJSON` and `ST_Multi`, none of which read `spatial_ref_sys` at runtime. Combined with
+the `search_path = public, extensions` change we already made, we don't expect anything to break.
+
+No maintenance window needed from our side, and no preparation left to do. Two small asks:
+
+1. **A heads-up when it's done**, so we can immediately re-verify the delivery-zone resolution
+   (`select zona_por_coordenadas(9.01262, -79.529077872284);` should return zone *Z1 Centro*). Any
+   time is fine — our business hours are Mon–Fri 9:00–17:00 Panama time (UTC-5) if you'd prefer to
+   avoid them, but we're not asking you to schedule around it.
+2. **A note on future upgrades.** Since PostGIS is normally non-relocatable, we assume its upgrade
+   scripts may make assumptions about their own schema. Should we expect `ALTER EXTENSION postgis
+   UPDATE` (or the dashboard upgrade button) to work normally afterwards, or is there anything we
+   should come back to you for when it's time to move to a newer PostGIS version?
+
+Thanks for handling this properly rather than just waving the advisor away.
+
+Isaac — Quick Service Panamá
+Project `jbigmlcalcwiphqeudxd` (qsp-wati-copilot)
+
+---
+
+## 1. Primer mensaje (histórico — ya enviado)
+
+> Planteaba el riesgo del `CASCADE` y pedía el `revoke` a secas como alternativa. Rodrigo respondió
+> aclarando el método. Se conserva por trazabilidad del ticket.
 
 Hi Rodrigo,
 

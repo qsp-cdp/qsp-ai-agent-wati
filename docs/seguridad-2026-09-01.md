@@ -57,15 +57,16 @@ las tarifas por coordenadas. Requiere además que alguien tenga la clave `anon` 
 1. **Pedirle a soporte de Supabase** que revoque `anon`/`authenticated` sobre `public.spatial_ref_sys`.
    Es la vía limpia y sin riesgo. Es un pedido común: casi todo proyecto con PostGIS en `public`
    recibe este mismo advisor.
-2. **Mover PostGIS al schema `extensions`.** Resuelve la causa raíz. Soporte la ofreció; **medida y
-   desaconsejada** — ver la sección siguiente.
+2. **Mover PostGIS al schema `extensions`.** Resuelve la causa raíz. Es lo que ofreció soporte y lo
+   que se ACEPTÓ — ver la sección siguiente.
 3. **Aceptar y documentar** (lo que este archivo hace), sabiendo que el advisor va a seguir marcándolo.
 
-Recomendación: **la opción 1.** Un ticket a soporte, cero riesgo operativo.
+Se pidió la opción 1 y soporte contraofreció la 2, que es mejor: cierra la causa raíz.
 
-## La respuesta de soporte (Rodrigo, 01-sep): mover PostGIS a `extensions`
+## La respuesta de soporte (Rodrigo, 01-sep): mover PostGIS a `extensions` — ACEPTADA
 
-Se midió antes de contestar. Dos hallazgos, uno cerrado y uno que cambia la recomendación.
+Se midió antes de contestar, y de la medición salió trabajo real (un riesgo que sí existía y ya está
+cerrado) más un susto que resultó no aplicar.
 
 ### ✅ Cerrado: el `search_path` fijo (era el riesgo obvio)
 
@@ -96,25 +97,74 @@ No hizo falta tocar nada más: los índices (`limites_admin_geom_gix` GIST, `cat
 `gin_trgm_ops`) guardan la operator class **por OID** y viajan con la extensión; las columnas
 generadas no usan extensiones; no hay vistas, defaults ni constraints nuestras que las llamen.
 
-### 🔴 El que cambia la recomendación: PostGIS **no es reubicable**
+### ⚠️ El susto: PostGIS **no es reubicable** (y por qué no aplicaba)
 
 ```
 select extname, extrelocatable from pg_extension where extname = 'postgis';
 → postgis | false
 ```
 
-`ALTER EXTENSION postgis SET SCHEMA extensions` **falla**, y no por permisos: la extensión está
-marcada `relocatable = false` en su control file (PostGIS hardcodea el schema en varios cuerpos de
-función). **Ni un superusuario lo puede forzar.** Así que "mover PostGIS" no es el ALTER limpio que la
-frase sugiere — es `DROP EXTENSION postgis CASCADE` + `CREATE EXTENSION postgis SCHEMA extensions`.
+Un `ALTER EXTENSION postgis SET SCHEMA extensions` a secas **falla**, y no por permisos: la extensión
+está marcada `relocatable = false` en su control file (PostGIS hardcodea el schema en varias
+rutinas). Ni un superusuario lo fuerza *tal cual*.
 
-Y ese `CASCADE` se lleva **`limites_admin.geom`**: el mapa administrativo completo de Panamá,
-**724 polígonos** (13 provincias + 76 distritos + 635 corregimientos, ~4,5 MB) y su índice GIST.
-Verificado que **su fuente NO está versionada en ninguna rama del repo** — esos polígonos existen
-únicamente dentro de la base. Sin ellos, la resolución de zona por coordenadas queda muerta.
+De ahí salió la preocupación: si el único camino fuera el estándar —`DROP EXTENSION postgis CASCADE`
++ `CREATE EXTENSION postgis SCHEMA extensions`—, ese `CASCADE` se llevaría **`limites_admin.geom`**:
+el mapa administrativo completo de Panamá, **724 polígonos** (13 provincias + 76 distritos + 635
+corregimientos, ~4,5 MB) y su índice GIST. Y **su fuente NO está versionada en ninguna rama del
+repo**: esos polígonos existen únicamente dentro de la base. Sin ellos, la resolución de zona por
+coordenadas queda muerta.
 
-**Si aun así se decide mover** (o si soporte lo hace de todos modos), el respaldo es simple y hay que
-tomarlo ANTES — una columna de TEXTO sobrevive al `CASCADE` porque no depende de la extensión:
+Se le preguntó a soporte cuál de los dos caminos estaba proponiendo. **No era ése** — ver abajo. Pero
+valía la pena preguntarlo antes que después.
+
+### ✅ Aclaración de soporte: no es drop-recreate — objeción retirada
+
+Rodrigo respondió que **no** usan drop-and-recreate. Su método es cambiar el valor `relocatable` de la
+extensión en el catálogo y luego migrarla entre schemas:
+
+```sql
+update pg_extension set extrelocatable = true  where extname = 'postgis';
+alter  extension postgis set schema extensions;
+update pg_extension set extrelocatable = false where extname = 'postgis';
+```
+
+Es una técnica conocida y requiere superusuario (un UPDATE directo al catálogo), que ellos tienen y
+nosotros no. **Preserva los datos**: `ALTER EXTENSION ... SET SCHEMA` reubica los objetos de la
+extensión cambiándoles el `pg_namespace`; el tipo `geometry` se muda pero conserva su OID, así que
+`limites_admin.geom` sigue apuntando al mismo tipo y los 724 polígonos ni se tocan. El índice GIST
+tampoco: guarda la operator class por OID. **La objeción del `CASCADE` no aplica a este método.**
+
+**Riesgo residual, medido y descartado para nuestro caso.** La razón por la que PostGIS se marca
+`relocatable = false` es que algunas de sus rutinas resuelven objetos por nombre en tiempo de
+ejecución. La trampa clásica es que `ST_Transform` consulta `spatial_ref_sys` con SPI **sin
+calificar** el schema: si la tabla se muda y el `search_path` de la sesión no incluye `extensions`,
+falla. Se verificó qué usamos realmente:
+
+| Función | PostGIS que invoca |
+|---|---|
+| `zona_por_coordenadas`, `ubicacion_por_coordenadas`, `resolver_ubicacion` | `ST_Contains`, `ST_MakePoint`, `ST_SetSRID` |
+| `cargar_limites_admin`, `cargar_limites_cod` | `ST_GeomFromGeoJSON`, `ST_Multi`, `ST_SetSRID` |
+
+**`ST_Transform` no aparece en ninguna parte**, y ninguna de las cinco que sí usamos consulta
+`spatial_ref_sys` en ejecución (`ST_SetSRID` solo estampa el entero del SRID en la cabecera de la
+geometría, sin validarlo contra la tabla). Sumado a que las siete funciones ya llevan `extensions` en
+su `search_path`, la exposición queda en cero.
+
+**Costo real a futuro, que sí conviene tener anotado:** con la extensión fuera de su schema de
+instalación, las ACTUALIZACIONES de PostGIS (`ALTER EXTENSION postgis UPDATE`, o el botón del
+dashboard) pueden ser más frágiles — los scripts de upgrade de PostGIS asumen su propio schema. No es
+bloqueante, pero es la deuda que se acepta al mudarla, y hay que recordarla el día que toque subir de
+versión.
+
+**Decisión: se acepta la reubicación.** Nada que preparar de nuestro lado — el trabajo de
+`search_path` ya está hecho.
+
+### Plan B: si alguna vez hay que hacerlo por drop-recreate
+
+No es el camino de soporte, pero queda escrito por si el método del catálogo falla a mitad. El
+respaldo hay que tomarlo ANTES — una columna de TEXTO sobrevive al `CASCADE` porque no depende de la
+extensión:
 
 ```sql
 -- ANTES del drop
@@ -132,10 +182,14 @@ create index limites_admin_geom_gix on public.limites_admin using gist (geom);
 select zona_por_coordenadas(9.01262, -79.529077872284);   -- → Z1 Centro, $6, propia, Alta
 ```
 
-**Recomendación firme: seguir con la opción 1** (el revoke a secas). El agujero real que la alerta
-nombra es que `anon` puede escribir en `spatial_ref_sys`; el revoke lo cierra por completo, en
-segundos y sin tocar datos. La reubicación paga el mismo beneficio con un drop-cascade sobre 724
-polígonos irrecuperables desde el repo — es cambiar un riesgo teórico por uno operativo real.
+Después de verificar (`select zona_por_coordenadas(...)` → *Z1 Centro, $6*), confirmar con soporte
+para cerrar el ticket.
+
+### Qué queda cerrado con la mudanza
+
+`spatial_ref_sys` sale de `public`, y PostgREST solo expone `public` (más los schemas configurados) →
+**la tabla deja de ser alcanzable por la Data API**, que era exactamente el agujero. El advisor deja
+de dispararse por la causa raíz y no por una excepción.
 
 ## Lo que quedó verificado tras el arreglo
 
