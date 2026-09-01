@@ -23,6 +23,11 @@ export function crearExtractor(src, env = {}) {
 // strip de parámetros al cuerpo rompería los object literals ({ metodo: met } -> { metodo }).
   function sinTiposCuerpo(s) {
   return s
+    // Tipo con LLAVES:  const fuera: { handle: string; ref: string | null }[] = [];
+    // Va primero: los patrones de abajo cortan en el primer ";" o "=", y dentro de un tipo así hay
+    // ambos → dejaban un `const fuera;` seguido de la mitad del tipo suelta.
+    .replace(/\b(const|let|var)\s+([A-Za-z_$][\w$]*)\s*:\s*\{[^{}]*\}(?:\s*\[\s*\])*\s*=/g, "$1 $2 =")
+    .replace(/\b(const|let|var)\s+([A-Za-z_$][\w$]*)\s*:\s*\{[^{}]*\}(?:\s*\[\s*\])*\s*;/g, "$1 $2;")
     .replace(/\b(const|let|var)\s+([A-Za-z_$][\w$]*)\s*:\s*[^=;\n]+=/g, "$1 $2 =")
     // declaración tipada SIN inicializador:  let parsed: any;
     .replace(/\b(const|let|var)\s+([A-Za-z_$][\w$]*)\s*:\s*[^=;\n]+;/g, "$1 $2;")
@@ -36,17 +41,38 @@ export function crearExtractor(src, env = {}) {
     .replace(/\(([^()\n]*:[^()\n]*)\)\s*=>/g, (m, p) =>
       "(" + p.split(",").map((x) => x.split(":")[0].trim()).filter(Boolean).join(", ") + ") =>");
 }
+// Corta por `sep` solo al NIVEL SUPERIOR, respetando <>, (), [] y {}. Un `split(",")` pelado parte
+// `Record<string, string>` por la coma de adentro y deja un parámetro fantasma llamado `string>`, que
+// revienta al evaluar. El `>` de una arrow (`=>`) no cuenta como cierre.
+function partirNivelCero(s, sep) {
+  const salida = []; let prof = 0, actual = "";
+  for (let i = 0; i < s.length; i++) {
+    const c = s[i];
+    if (c === "<" || c === "(" || c === "[" || c === "{") prof++;
+    else if (c === ")" || c === "]" || c === "}") prof--;
+    else if (c === ">" && s[i - 1] !== "=") prof--;
+    if (c === sep && prof === 0) { salida.push(actual); actual = ""; continue; }
+    actual += c;
+  }
+  salida.push(actual);
+  return salida;
+}
+
   function sinTipos(d) {
   if (!/^(async )?function/.test(d)) return sinTiposCuerpo(d);
   // OJO: la firma ya viene normalizada por decl() con un regex ANCLADO al inicio. Repetir aquí esa
   // limpieza sin anclar era destructivo: `[^{;]+` cruza líneas y el primer "):" de un COMENTARIO se
   // enganchaba con la "{" de una arrow varias líneas abajo, borrando el código de en medio.
-  const ib = d.indexOf("{", d.indexOf(")"));
+  //
+  // La "{" del CUERPO no es la primera que aparece tras el ")": un tipo de retorno puede traer llaves
+  // propias —`): { handle: string; ref: string | null }[] {`— y quedarse con esa dejaba la firma
+  // cortada a la mitad. La del cuerpo es la única cuyo bloque termina donde termina la declaración.
+  const ib = inicioDelCuerpo(d, finDeParams(d));
   let sig = d.slice(0, ib), cuerpo = d.slice(ib);
-  sig = sig.replace(/\)\s*:\s*[^{]+$/, ")");                      // tipo de retorno
+  sig = sig.replace(/\)\s*:\s*[\s\S]+$/, ")");                    // tipo de retorno
   const ip = sig.indexOf("(");
-  const params = sig.slice(ip + 1, sig.lastIndexOf(")"))
-    .split(",").map((p) => p.split(":")[0].trim()).filter(Boolean).join(", ");
+  const params = partirNivelCero(sig.slice(ip + 1, sig.lastIndexOf(")")), ",")
+    .map((p) => partirNivelCero(p, ":")[0].trim()).filter(Boolean).join(", ");
   return `${sig.slice(0, ip)}(${params}) ${sinTiposCuerpo(cuerpo)}`;
 }
 
@@ -87,6 +113,33 @@ continue;
   return s.length - 1;
 }
 
+// Índice del ")" que cierra la lista de parámetros (puede haber paréntesis anidados en un tipo
+// función). `finDeBloque` NO sirve para esto: balancea llaves, no paréntesis.
+function finDeParams(s) {
+  const ini = s.indexOf("(");
+  for (let i = ini, prof = 0; i < s.length; i++) {
+    if (s[i] === "(") prof++;
+    else if (s[i] === ")" && !--prof) return i;
+  }
+  return ini;
+}
+
+// Índice de la "{" que abre el CUERPO, saltándose las que pertenezcan al tipo de RETORNO.
+//   function f(x: string): { handle: string; ref: string | null }[] {   ← la 2ª es la del cuerpo
+// El truco: tras balancear una llave, se mira qué sigue. Si tras saltar lo que puede formar parte de
+// un tipo (espacios, [], |, &, <>, identificadores) aparece OTRA "{", la anterior era del tipo. Los
+// paréntesis quedan FUERA de ese conjunto a propósito: con ellos dentro, el "function g() {" que viene
+// después en el archivo se leería como continuación del tipo y se saltaría el cuerpo de verdad.
+function inicioDelCuerpo(s, desde) {
+  for (let i = s.indexOf("{", desde); i > -1; i = s.indexOf("{", i + 1)) {
+    let k = finDeBloque(s, i) + 1;
+    while (k < s.length && /[\s\[\]|&<>,.\w]/.test(s[k])) k++;
+    if (s[k] !== "{") return i;
+    i = s.indexOf("{", k) - 1;   // era el tipo: seguimos desde la siguiente llave
+  }
+  return -1;
+}
+
   function decl(n) {
   let i = src.indexOf(`function ${n}(`);
   if (i < 0) i = src.search(new RegExp(`const ${n}\\s*[:=]`));
@@ -97,9 +150,14 @@ continue;
     // El tipo de RETORNO puede llevar llaves —  function leerStock(t: unknown): { nivel: string } {  —
     // y entonces el balanceo tomaría el "{" del TIPO por el del cuerpo y devolvería una función
     // truncada que evalúa pero revienta al llamarla. Se normaliza la firma ANTES de balancear.
+    // (Antes esto era un regex que exigía la "{" del cuerpo PEGADA al tipo, así que un retorno como
+    //  `: {…}[] {` no matcheaba y se colaba la función truncada.)
     const bruto = src.slice(i);
-    const norm = bruto.replace(/^((async )?function[^(]*\([^)]*\))\s*:\s*(\{[^{}]*\}|[^{;]+?)\s*\{/, "$1 {");
-    return norm.slice(0, finDeBloque(norm, norm.indexOf("{")) + 1);
+    const ini = inicioDelCuerpo(bruto, finDeParams(bruto));
+    if (ini < 0) return null;
+    const firma = bruto.slice(0, ini).replace(/\)\s*:\s*[\s\S]+$/, ") ");
+    const norm = firma + bruto.slice(ini);
+    return norm.slice(0, finDeBloque(norm, firma.length) + 1);
   }
   let j = i, d = 0, s = false;
   for (; j < src.length; j++) {

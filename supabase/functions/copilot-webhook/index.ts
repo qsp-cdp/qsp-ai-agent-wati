@@ -2910,6 +2910,63 @@ function reaplicarTracking(texto: string, links: Record<string, string>): string
     (m, handle) => links[String(handle).toLowerCase()] ?? m);
 }
 
+// v120 — PRODUCTO INVENTADO. Caso real (conv 50760016863, 01-sep): el cliente pidió tinta para una HP
+// OfficeJet 5255. El bot buscó TRES veces y las dos primeras respondió con honestidad ("no encontré
+// una tinta HP 63XL entre los resultados"). En la tercera, `buscar_producto` devolvió cinco productos
+// REALES —664XL, 60XL, 964XL, un cabezal y una Smart Tank, ninguno un 63XL— y el modelo, en vez de
+// repetir que no lo tenía, INVENTÓ un sexto que no estaba en la lista: título, handle, URL, precio
+// ($32.50 + ITBMS) y stock ("✅ 8 unidades disponibles"). El cliente salió para la tienda. Un asesor
+// tuvo que decirle "fue un error del bot, disculpe la molestia" cuando ya iba en camino.
+//
+// El delator es determinista y no depende del modelo: la URL salió con `ref_code=qsp01`, y por el
+// invariante de v28 **NUNCA se emite un ref_code que no se haya guardado antes** en `ref_codes`. Un
+// code que no existe en esa tabla no lo generó este sistema: lo escribió el modelo. (Verificado: los
+// 8 alfanuméricos crypto reales de esa misma conversación sí estaban; `qsp01` no existía, y en 30
+// días de tráfico es el ÚNICO caso.)
+//
+// Por qué NO alcanza con "el handle no salió de la búsqueda de este turno": medido sobre 30 días, hay
+// ~15 turnos legítimos donde el cliente dice "sí, ese" y el bot RE-CONFIRMA un link ya compartido
+// antes en la misma conversación ("Perfecto, entonces le confirmo: *Cabezal HP M0H50AL*…"). Bloquear
+// eso sería una regresión real. Por eso la regla mira el ref_code, que es nuestro propio libro de
+// emisiones y no envejece: si el code existe, el link lo emitimos nosotros, sin importar en qué turno.
+//
+// Tampoco se valida contra la réplica del catálogo: un handle ausente de `catalogo` puede significar
+// "producto borrado en Shopify" o "réplica desactualizada", y no queremos que una sincronía atrasada
+// haga callar al bot. El libro de ref_codes es la fuente correcta para esta pregunta.
+//
+// Devuelve las URLs de producto que NO están respaldadas por la búsqueda de este turno — el dispatch
+// las contrasta contra `ref_codes` antes de decidir. Pura y sin efectos: lo caro (la consulta) queda
+// afuera, y solo corre cuando esta función devuelve algo (~1 vez al día).
+function productosNoDelTurno(texto: string, links: Record<string, string>): { handle: string; ref: string | null }[] {
+  if (!texto) return [];
+  const fuera: { handle: string; ref: string | null }[] = [];
+  const re = /https?:\/\/(?:www\.)?quickservicepanama\.com\/products\/([a-z0-9-]+)((?:[?#][^\s)]*)?)/gi;
+  for (const m of texto.matchAll(re)) {
+    const handle = String(m[1]).toLowerCase();
+    if (links && links[handle]) continue;                     // salió de buscar_producto ESTE turno
+    const ref = /[?&]ref_code=([A-Za-z0-9]+)/.exec(m[2] ?? "")?.[1] ?? null;
+    if (!fuera.some((f) => f.handle === handle && f.ref === ref)) fuera.push({ handle, ref });
+  }
+  return fuera;
+}
+
+// v120 — contrasta contra el libro de emisiones (`ref_codes`) los links que `productosNoDelTurno`
+// marcó. Sobrevive el que NO tiene code (URL escrita de memoria: v63.2 lo prohíbe expresamente) y el
+// que trae un code inexistente (inventado). FAIL-OPEN a propósito: si la consulta falla no podemos
+// verificar, y dejar mudo al bot ante cada link por un hipo de la base sería peor que el riesgo que
+// cubrimos — el fallo queda en job_log para que se vea.
+async function linksInventados(fuera: { handle: string; ref: string | null }[]) {
+  if (!fuera.length) return [];
+  const refs = fuera.map((f) => f.ref).filter((r): r is string => !!r);
+  let emitidos = new Set<string>();
+  if (refs.length) {
+    const { data, error } = await sb.from("ref_codes").select("ref_code").in("ref_code", refs);
+    if (error) { await log("ref_code_verif_fallo", false, { error: String(error.message ?? "").slice(0, 150) }); return []; }
+    emitidos = new Set((data ?? []).map((d: any) => String(d.ref_code)));
+  }
+  return fuera.filter((f) => !f.ref || !emitidos.has(f.ref));
+}
+
 // v119 — El atributo `no_es_cliente` del contacto en WATI decide si el copiloto atiende. Lee la ficha
 // por `/api/v1/getContacts`, que es la única puerta que abre el token del copiloto (probado: la v2,
 // `getTeams`, `getContact/<num>` y `getContactAttributes/<num>` dan 404, y `teamIds` vuelve en null
@@ -3363,6 +3420,12 @@ async function ejecutarAsistencia(
           // v44 guard anti-fuga: si la tool-call se filtró como texto, no la enviamos (aquí un humano ya
           // tiene el caso → basta con no responder). Loggea para telemetría.
           if (salida && pareceFuncionEnTexto(salida)) { await log("fuga_tool_texto", false, { waId, fase: "asistencia", muestra: (r.text ?? "").slice(0, 200) }); salida = null; }
+          // v120 — mismo guard anti-producto inventado que el flujo normal. Aquí NO va disculpa: un
+          // asesor ya tiene la conversación, así que basta con no adelantar nada (patrón v44).
+          if (salida) {
+            const invAsist = await linksInventados(productosNoDelTurno(salida, linksTracked));
+            if (invAsist.length) { await log("producto_inventado", false, { waId, fase: "asistencia", origen, links: invAsist, muestra: (r.text ?? "").slice(0, 400) }); salida = null; }
+          }
           // v87 — el modelo escribió su abstención en vez de callar → cuenta como respuesta vacía.
           if (salida && esMetaAbstencion(salida)) { await log("abstencion_meta", true, { waId, origen, muestra: salida.slice(0, 160) }); salida = null; }
           // v110 — SIN HERRAMIENTA Y CON EL ASESOR ACTIVO: no se interrumpe. Caso real (24-ago 21:21,
@@ -3751,7 +3814,7 @@ Deno.serve(async (req) => {
         texto: tr?.texto ?? null, ts: new Date().toISOString(),
       });
     }
-    return Response.json({ status: "ok", function: "copilot-webhook", version: "v119.1-probar-el-puente-a-pedido", mode: MODE, mode_raw: MODE_RAW, model: MODEL, llm_configured: !!anthropic, wati_send_configured: !!(WATI_API_TOKEN && WATI_API_BASE), inventario_configurado: !!(SHOPIFY_ADMIN_TOKEN && SHOPIFY_ADMIN_API_BASE), resolve_configured: !!RESOLVE_SECRET, webhook_key_es_default: WEBHOOK_KEY_ES_DEFAULT, handoff_assist_min: HANDOFF_ASSIST_MIN, handoff_cold_hours: HANDOFF_COLD_HOURS, debounce_ms: DEBOUNCE_MS, sesion_gap_dias: SESION_GAP_DIAS, burbujas: BURBUJAS, burbuja_ms: BURBUJA_MS, audio_puente: AUDIO_PUENTE, sweep: SWEEP_MODE, sweep_espera_min: SWEEP_ESPERA_MIN, stt: STT_MODE, stt_raw: STT_RAW, stt_configurado: !!OPENAI_API_KEY, stt_model: STT_MODEL, busqueda_shadow: BUSQUEDA_SHADOW, busqueda_mcp: BUSQUEDA_MCP, busqueda_mcp_limit: BUSQUEDA_MCP_LIMIT, catalog_mcp_url: CATALOG_MCP_URL, ucp_profile_url: UCP_PROFILE_URL, live_targets: MODE === "live" ? (LIVE_ALL ? "all" : LIVE_ALLOWLIST.length) : 0, wa_ignorar: WA_IGNORAR.size, ts: new Date().toISOString() });
+    return Response.json({ status: "ok", function: "copilot-webhook", version: "v120-producto-inventado", mode: MODE, mode_raw: MODE_RAW, model: MODEL, llm_configured: !!anthropic, wati_send_configured: !!(WATI_API_TOKEN && WATI_API_BASE), inventario_configurado: !!(SHOPIFY_ADMIN_TOKEN && SHOPIFY_ADMIN_API_BASE), resolve_configured: !!RESOLVE_SECRET, webhook_key_es_default: WEBHOOK_KEY_ES_DEFAULT, handoff_assist_min: HANDOFF_ASSIST_MIN, handoff_cold_hours: HANDOFF_COLD_HOURS, debounce_ms: DEBOUNCE_MS, sesion_gap_dias: SESION_GAP_DIAS, burbujas: BURBUJAS, burbuja_ms: BURBUJA_MS, audio_puente: AUDIO_PUENTE, sweep: SWEEP_MODE, sweep_espera_min: SWEEP_ESPERA_MIN, stt: STT_MODE, stt_raw: STT_RAW, stt_configurado: !!OPENAI_API_KEY, stt_model: STT_MODEL, busqueda_shadow: BUSQUEDA_SHADOW, busqueda_mcp: BUSQUEDA_MCP, busqueda_mcp_limit: BUSQUEDA_MCP_LIMIT, catalog_mcp_url: CATALOG_MCP_URL, ucp_profile_url: UCP_PROFILE_URL, live_targets: MODE === "live" ? (LIVE_ALL ? "all" : LIVE_ALLOWLIST.length) : 0, wa_ignorar: WA_IGNORAR.size, ts: new Date().toISOString() });
   }
   if (req.method !== "POST") return Response.json({ error: "method_not_allowed" }, { status: 405 });
   if (url.searchParams.get("key") !== WEBHOOK_KEY) return Response.json({ error: "forbidden" }, { status: 403 });
@@ -4620,6 +4683,19 @@ Deno.serve(async (req) => {
             ? "Disculpe, tuve un inconveniente procesando su consulta 🙏. Un asesor le ayuda en breve."
             : "Disculpe, tuve un inconveniente procesando su consulta 🙏. Un asesor le ayuda apenas estemos en horario (Lun-Vie 9:00am–5:00pm).";
         }
+        // v120 (guard anti-producto inventado): si el bot citó un link de producto que no salió de la
+        // búsqueda de este turno NI de un ref_code que nosotros hayamos emitido, se lo inventó — y con
+        // él, el precio y el stock que lo acompañan. No se envía nada de eso: mejor una deferencia que
+        // mandar a un cliente a la tienda por un producto que no existe (conv 50760016863, 01-sep).
+        let inventado: { handle: string; ref: string | null }[] = [];
+        if (salida && !fugaTool) {
+          inventado = await linksInventados(productosNoDelTurno(salida, linksTracked));
+          if (inventado.length) {
+            salida = horarioPanama().dentro
+              ? "Disculpe, déjeme verificar bien esa información antes de confirmarle 🙏. Un asesor le responde en breve."
+              : "Disculpe, déjeme verificar bien esa información antes de confirmarle 🙏. Un asesor le responde apenas estemos en horario (Lun-Vie 9:00am–5:00pm).";
+          }
+        }
         // v65 — loop de tools AGOTADO sin texto: antes se insertaba una fila con content NULL y el cliente
         // quedaba MUDO sin respaldo ni telemetría. Ahora va la respuesta de respaldo (como v23/v44). El
         // silencio DELIBERADO (ack → text null SIN agotado) se respeta y sigue callando.
@@ -4698,6 +4774,9 @@ Deno.serve(async (req) => {
         }
         if (urlsRafaga.length) await log("imagen_procesada", true, { waId, en_rafaga: urlsRafaga.length, descargadas: imagenes.length, enviado });
         if (fugaTool) await log("fuga_tool_texto", false, { waId, enviado, muestra: (r.text ?? "").slice(0, 200) });
+        // v120 — telemetría del producto inventado. `muestra` guarda la respuesta ORIGINAL (la que no se
+        // envió) para poder auditar qué se inventó y con qué precio/stock lo vistió.
+        if (inventado.length) await log("producto_inventado", false, { waId, links: inventado, consultas: r.toolCalls.map((t: any) => t?.input?.consulta).filter(Boolean), muestra: (r.text ?? "").slice(0, 400) });
         if (!anthropic) await log("llm_no_configurado", true, { waId });
       } catch (e) {
         await log("error", false, { waId, fase: "async", error: String(e).slice(0, 400) });
