@@ -180,3 +180,65 @@ select count(*) from messages where role='assistant' and model in ('claude-sonne
   and created_at > now() - interval '7 days'
   and content ~* '\m(que|como|ya) le (pas[eé]|envi[eé]|cotic[eé]|compart[ií]|confirm[eé])\M';
 ```
+
+## Tercera vuelta (02-sep): ¿el bot lee la SECUENCIA de los tres? (v121.1)
+
+Isaac planteó el rol del copiloto en una frase que sirve de especificación:
+
+> *"Los asesores pueden continuar contestando o resolviendo las consultas de los usuarios. Para eso
+> deben leer toda la conversación… El bot debe leer qué escribe el usuario, qué escribe el asesor
+> humano y qué escribe el propio bot **en secuencia**, para entonces saber si tiene las herramientas
+> para contestar."*
+
+Contra esa especificación, lo que había:
+
+| Requisito | Estado |
+|---|---|
+| Los tres interlocutores llegan al modelo | ✅ el historial trae `role in (user, assistant)`; el asesor es `model='human-agent'`, el bot `claude-*`/`assist-handoff` |
+| En orden cronológico | ✅ se pide desc y se invierte (`.reverse()`) |
+| Distinguibles entre sí | ✅ el asesor va prefijado `[Asesor del equipo]:`; v121 además explica en el prompt que es una PERSONA |
+| Con marca de tiempo | ✅ v32 prefija `[hoy/ayer/fecha]` a cada mensaje anterior |
+| **Toda la conversación** | ❌ **la ventana truncaba** |
+
+### La medida que faltaba
+
+Sobre **598 asistencias de 14 días**, tamaño de la sesión activa (hueco > 6 h = sesión nueva):
+
+```
+mediana ......... 14 mensajes
+promedio ........ 16.6
+p90 ............. 35
+máximo .......... 72
+> 10 mensajes ... 380 (64%)   ← lo que truncaba la ventana original
+> 20 mensajes ... 169 (28%)   ← lo que seguía truncando v121
+```
+
+O sea: v121 mejoró de 64% a 28% de sesiones truncadas, pero no cerró el punto. **v121.1 lleva la
+ventana a 40** (`COPILOT_HIST_ASISTENCIA`, tope 100), que cubre hasta el p90.
+
+**Por qué 40 es seguro y no arrastra lo de otro día:** `cortarSesionVieja` (v61.5) vive DENTRO de
+`responderLLM`, así que corta por hueco de 7 días antes de armar el contexto. Sin esa pieza, una
+ventana grande sí sería un riesgo.
+
+**El flujo normal se queda en 10, con evidencia:** de 3.210 respuestas del flujo normal en 14 días,
+solo **7** ocurrieron en conversaciones con mensajes de asesor y **ninguna** perdió uno. Ahí no hay
+asesor que leer; ampliar sería pagar tokens sin ganar contexto.
+
+De paso, la asistencia ahora pide los **mismos campos** que el flujo normal (`media_url` incluido):
+las dos rutas ven el hilo igual.
+
+### Con qué herramientas cuenta al decidir
+
+En asistencia el modelo tiene 9 de las herramientas: `buscar_producto`, `info_tienda`,
+`sucursales_interior`, `estado_pedido`, `calcular_cotizacion`, `consultar_folleto`,
+`guardar_datos_envio`, `tarifa_entrega`, `asesorar_impresora`. Queda fuera `guardar_lead` (no captura
+datos con el humano a cargo). Y `forceTool=false` a propósito: en asistencia la respuesta correcta
+suele ser **callarse**, así que no se lo empuja a usar una herramienta.
+
+### Un borde medido y NO corregido (0.8%)
+
+El guard anti-prefill descarta los mensajes `assistant` finales del historial (la API no acepta
+terminar en assistant con herramientas). Si lo último del hilo lo escribió el **asesor**, se cae del
+contexto. Medido: pasa en **5 de 598** asistencias (0.8%) — el 98.5% de las veces el último mensaje es
+del cliente, que es la condición que dispara la asistencia. No se construyó maquinaria para eso; queda
+anotado por si la proporción cambia.

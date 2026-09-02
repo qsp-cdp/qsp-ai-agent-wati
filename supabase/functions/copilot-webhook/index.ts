@@ -436,6 +436,17 @@ const MAX_TURNS_DIA = 40;
 // intervenir en una conversación que ese asesor lleva. El mismo número gobierna el barrido (p_asesor_min).
 const HANDOFF_ASSIST_MIN = parseInt(Deno.env.get("COPILOT_HANDOFF_ASSIST_MIN") ?? "10", 10) || 10;
 const HANDOFF_COLD_HOURS = parseInt(Deno.env.get("COPILOT_HANDOFF_COLD_HOURS") ?? "24", 10) || 24;
+// v121.1 — CUÁNTO DEL HILO LEE EL BOT EN ASISTENCIA. Aquí la conversación la lleva un asesor y el bot
+// solo puede decidir si tiene con qué aportar leyendo la SECUENCIA completa de los tres: cliente,
+// asesor y él mismo. Medido sobre 598 asistencias (14 días), el tamaño de la sesión activa (hueco > 6 h
+// = sesión nueva): mediana 14, promedio 16.6, p90 35, máximo 72. Con 10 se truncaba el 64% de las
+// sesiones; con 20, el 28%. Con 40 se cubre hasta el p90 — el resto son hilos largos donde lo viejo
+// pesa poco. Ajustable por secreto sin redeploy (tope 100: más allá el costo por turno deja de ser
+// despreciable y el corte de sesión de v61.5 ya es quien protege de arrastrar lo de otro día).
+const HIST_ASISTENCIA = (() => {
+  const n = parseInt((Deno.env.get("COPILOT_HIST_ASISTENCIA") ?? "").trim(), 10);
+  return Number.isFinite(n) && n >= 4 ? Math.min(n, 100) : 40;
+})();
 // v49 — DEBOUNCE de ráfagas (ms): el bot espera a que el cliente TERMINE de escribir antes de responder
 // (2-3 líneas y/o imágenes llegan como mensajes separados con segundos de diferencia). Cada mensaje nuevo
 // "reinicia" el ciclo: las invocaciones superadas mueren baratas en el chequeo pre-LLM y SOLO la del último
@@ -3410,12 +3421,15 @@ async function ejecutarAsistencia(
   try {
     if (conDebounce && DEBOUNCE_MS > 0) await new Promise((res) => setTimeout(res, DEBOUNCE_MS)); // v49: misma espera de ráfaga
                     if (await hayMensajeClienteMasNuevo(conv.id, userCreatedAt)) { await log("descartado_superado", true, { waId, fase: "asist-pre" }); return; }
-          // v121 — 10 → 20 filas. En asistencia el hilo lo lleva un asesor, y sus mensajes son los que
-          // más importan para no contradecirlo ni repetirlo. Medido del 31-ago al 02-sep: en el 28% de las
-          // asistencias (36 de 128) la ventana de 10 dejaba fuera mensajes del asesor de la misma sesión
-          // (hasta 21 en un caso). El costo es marginal: los mensajes del asesor son cortos y la asistencia
-          // corre ~40 veces al día. El flujo normal (status='bot') no cambia: ahí no hay asesor que leer.
-          const { data: hist } = await sb.from("messages").select("role,content,model,created_at").eq("conversation_id", conv.id).in("role", ["user", "assistant"]).order("created_at", { ascending: false }).limit(20);
+          // v121 — la ventana de 10 dejaba fuera mensajes del ASESOR de la misma sesión en el 28% de las
+          // asistencias. v121.1 la lleva a HIST_ASISTENCIA (40): el bot solo puede decidir si tiene con
+          // qué aportar leyendo la secuencia completa de los tres —cliente, asesor y él mismo— y con 20
+          // seguía truncándose el 28% de las sesiones (mediana 14, p90 35). El flujo normal (status='bot')
+          // se queda en 10 a propósito: medido sobre 3.210 respuestas, solo 7 ocurrieron en conversaciones
+          // con asesor y NINGUNA perdió un mensaje suyo — ahí no hay asesor que leer y ampliar sería pagar
+          // tokens por nada. Se traen los MISMOS campos que el flujo normal (media_url incluido) para que
+          // las dos rutas vean el hilo igual.
+          const { data: hist } = await sb.from("messages").select("role,content,model,created_at,media_url").eq("conversation_id", conv.id).in("role", ["user", "assistant"]).order("created_at", { ascending: false }).limit(HIST_ASISTENCIA);
           const history = (hist ?? []).reverse();
           // v50 — asistencia hace preventa grounded. forceTool=FALSE a propósito (revisión adversarial):
           // aquí la respuesta correcta suele ser CALLARSE (el humano lleva el caso), así que NO forzamos una
@@ -3828,7 +3842,7 @@ Deno.serve(async (req) => {
         texto: tr?.texto ?? null, ts: new Date().toISOString(),
       });
     }
-    return Response.json({ status: "ok", function: "copilot-webhook", version: "v121-asesor-activo-espera", mode: MODE, mode_raw: MODE_RAW, model: MODEL, llm_configured: !!anthropic, wati_send_configured: !!(WATI_API_TOKEN && WATI_API_BASE), inventario_configurado: !!(SHOPIFY_ADMIN_TOKEN && SHOPIFY_ADMIN_API_BASE), resolve_configured: !!RESOLVE_SECRET, webhook_key_es_default: WEBHOOK_KEY_ES_DEFAULT, handoff_assist_min: HANDOFF_ASSIST_MIN, handoff_cold_hours: HANDOFF_COLD_HOURS, debounce_ms: DEBOUNCE_MS, sesion_gap_dias: SESION_GAP_DIAS, burbujas: BURBUJAS, burbuja_ms: BURBUJA_MS, audio_puente: AUDIO_PUENTE, sweep: SWEEP_MODE, sweep_espera_min: SWEEP_ESPERA_MIN, stt: STT_MODE, stt_raw: STT_RAW, stt_configurado: !!OPENAI_API_KEY, stt_model: STT_MODEL, busqueda_shadow: BUSQUEDA_SHADOW, busqueda_mcp: BUSQUEDA_MCP, busqueda_mcp_limit: BUSQUEDA_MCP_LIMIT, catalog_mcp_url: CATALOG_MCP_URL, ucp_profile_url: UCP_PROFILE_URL, live_targets: MODE === "live" ? (LIVE_ALL ? "all" : LIVE_ALLOWLIST.length) : 0, wa_ignorar: WA_IGNORAR.size, ts: new Date().toISOString() });
+    return Response.json({ status: "ok", function: "copilot-webhook", version: "v121.1-secuencia-completa", mode: MODE, mode_raw: MODE_RAW, model: MODEL, llm_configured: !!anthropic, wati_send_configured: !!(WATI_API_TOKEN && WATI_API_BASE), inventario_configurado: !!(SHOPIFY_ADMIN_TOKEN && SHOPIFY_ADMIN_API_BASE), resolve_configured: !!RESOLVE_SECRET, webhook_key_es_default: WEBHOOK_KEY_ES_DEFAULT, handoff_assist_min: HANDOFF_ASSIST_MIN, hist_asistencia: HIST_ASISTENCIA, handoff_cold_hours: HANDOFF_COLD_HOURS, debounce_ms: DEBOUNCE_MS, sesion_gap_dias: SESION_GAP_DIAS, burbujas: BURBUJAS, burbuja_ms: BURBUJA_MS, audio_puente: AUDIO_PUENTE, sweep: SWEEP_MODE, sweep_espera_min: SWEEP_ESPERA_MIN, stt: STT_MODE, stt_raw: STT_RAW, stt_configurado: !!OPENAI_API_KEY, stt_model: STT_MODEL, busqueda_shadow: BUSQUEDA_SHADOW, busqueda_mcp: BUSQUEDA_MCP, busqueda_mcp_limit: BUSQUEDA_MCP_LIMIT, catalog_mcp_url: CATALOG_MCP_URL, ucp_profile_url: UCP_PROFILE_URL, live_targets: MODE === "live" ? (LIVE_ALL ? "all" : LIVE_ALLOWLIST.length) : 0, wa_ignorar: WA_IGNORAR.size, ts: new Date().toISOString() });
   }
   if (req.method !== "POST") return Response.json({ error: "method_not_allowed" }, { status: 405 });
   if (url.searchParams.get("key") !== WEBHOOK_KEY) return Response.json({ error: "forbidden" }, { status: 403 });

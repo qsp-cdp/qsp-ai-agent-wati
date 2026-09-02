@@ -1536,8 +1536,28 @@ caso("v121: la captura invitada por el asesor sigue sin reloj (se decide antes d
 caso("v121: el camino de audio en handoff usa el mismo umbral", /if \(!ultHumano \|\| minsSinHumano < HANDOFF_ASSIST_MIN\) return;/.test(src));
 // "Le falta leer lo que el asesor escribe": ventana de 20 en asistencia (28% de las asistencias perdían
 // mensajes del asesor con 10), y el archivo del asesor etiquetado como NO visible.
-caso("v121: la asistencia lee 20 filas de historial", /\.limit\(20\);\s*\n\s*const history = \(hist \?\? \[\]\)\.reverse\(\);/.test(src));
-caso("v121: el flujo normal (status=bot) sigue en 10 filas", /select\("role,content,model,created_at,media_url"\)[^\n]*\.limit\(10\);/.test(src));
+// v121.1 — LA SECUENCIA COMPLETA. El copiloto solo puede decidir si tiene con qué aportar leyendo el
+// hilo de los TRES en orden: cliente, asesor y él mismo. Medido sobre 598 asistencias (14 días), el
+// tamaño de la sesión activa: mediana 14, p90 35, máx 72 → con 10 se truncaba el 64%, con 20 el 28%.
+caso("v121.1: la ventana de asistencia es configurable y por defecto 40", /const HIST_ASISTENCIA = \(\(\) => \{[\s\S]{0,260}COPILOT_HIST_ASISTENCIA[\s\S]{0,200}: 40;/.test(src));
+caso("v121.1: la asistencia lee HIST_ASISTENCIA filas", /\.limit\(HIST_ASISTENCIA\);\s*\n\s*const history = \(hist \?\? \[\]\)\.reverse\(\);/.test(src));
+caso("v121.1: la asistencia trae los mismos campos que el flujo normal (media_url incluido)", (() => {
+  const m = src.match(/select\("role,content,model,created_at,media_url"\)[^\n]*\.limit\((?:HIST_ASISTENCIA|10)\)/g) || [];
+  return m.length === 2;   // asistencia (HIST_ASISTENCIA) + flujo normal (10)
+})());
+// El flujo normal se queda en 10 con evidencia: de 3.210 respuestas, solo 7 en conversaciones con
+// asesor y NINGUNA perdía un mensaje suyo. Ampliarlo sería pagar tokens por nada.
+caso("v121.1: el flujo normal (status=bot) sigue en 10 filas", /select\("role,content,model,created_at,media_url"\)[^\n]*\.limit\(10\);/.test(src));
+caso("v121.1: el healthcheck expone la ventana", /hist_asistencia: HIST_ASISTENCIA/.test(src));
+// Una ventana grande es segura SOLO porque el corte de sesión de v61.5 vive dentro de responderLLM:
+// sin él, 40 filas podrían arrastrar la conversación de otro día.
+caso("v121.1: el corte de sesión vieja protege la ventana (vive en responderLLM)", (() => {
+  const i = src.indexOf("const corte = cortarSesionVieja(hist, ahoraMs, SESION_GAP_DIAS);");
+  const j = src.indexOf("async function responderLLM");
+  return i > -1 && j > -1 && i > j;
+})());
+// Los TRES interlocutores llegan al modelo en orden cronológico y distinguibles entre sí.
+caso("v121.1: el historial trae cliente, asesor y bot (role user+assistant, orden cronológico)", /\.in\("role", \["user", "assistant"\]\)\.order\("created_at", \{ ascending: false \}\)/.test(src) && /const history = \(hist \?\? \[\]\)\.reverse\(\);/.test(src));
 caso("v121: el archivo del asesor va etiquetado como contenido no visible", /const esMediaAsesor = m\.model === "human-agent" && \//.test(src) && /Asesor del equipo — envió un archivo cuyo contenido NO puedes ver; no supongas qué dice/.test(src));
 caso("v121: el texto del asesor conserva su etiqueta de siempre", /"\[Asesor del equipo\]: "/.test(src));
 // LA PLANTILLA SIN OWNER: el evento templateMessageSent de WATI no trae owner=true → el guard de v51
