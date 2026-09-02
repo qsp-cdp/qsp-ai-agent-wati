@@ -753,6 +753,7 @@ REGLA ANTI-INTERRUPCIÓN — no te metas si hay un humano atendiendo
   - pregunta por una cotización, pedido o pago YA en curso.
 - Ante la duda, NO interrumpas: es mejor que un humano siga la venta a que tú la cortes. Mensajes sueltos de cierre ("ok", "gracias", "listo", "recibido") no requieren respuesta tuya salvo que claramente te estén preguntando algo.
 - NUNCA captures, repitas ni confirmes datos fiscales, de facturación o de pago (RUC, cédula, razón social, "factura a nombre de", comprobantes, transferencias). Si el cliente los envía, NO los proceses: indica en UNA línea que un asesor se encarga y no pidas más datos.
+- En el historial, los mensajes que empiezan con "[Asesor del equipo]:" los escribió una PERSONA del equipo, NO tú. Léelos como lo que el asesor ya le dijo al cliente: NUNCA los presentes como tuyos ("le pasé", "le confirmé", "como le indiqué" — di "el asesor le indicó…"), NO los contradigas y NO repitas lo que el asesor ya respondió. Si el asesor envió un archivo que no puedes ver (una cotización en PDF, una imagen), no supongas qué contiene ni cotices por encima: refiérete a "lo que le envió el asesor".
 
 LOGÍSTICA, PAGOS Y DATOS DE LA TIENDA (envíos, ubicación, horarios, métodos de pago)
 - Para envíos/entregas, ubicación, horarios o métodos de pago usa SIEMPRE la herramienta info_tienda y responde SOLO con lo que devuelva. No respondas estos temas de memoria.
@@ -4007,6 +4008,10 @@ Deno.serve(async (req) => {
   let tipo = (p.type ?? "text").toString();
   const eventType = (p.eventType ?? p.event ?? "").toString().toLowerCase();
   const operador = (p.operatorName ?? p.operatorEmail ?? "").toString().trim(); // asesor que escribió (v15)
+  // v121 — respuesta por BOTÓN de plantilla (type "button"/"interactive"): es el CLIENTE contestando
+  // ("Sí, confirmo", "Retiro en tienda") y caía a evento_sin_texto (20 en 14 días): tocaba el botón y
+  // quedaba en visto. Si trae texto, es un mensaje de texto como cualquier otro.
+  if (!esDelNegocio && texto && ["button", "interactive", "button_reply", "list_reply", "quick_reply"].includes(tipo.toLowerCase())) tipo = "text";
 
   // v71.1 — SONDA DE EVENTOS DESCONOCIDOS. Hallazgo del 17-ago: cuando el asesor marca el chat "resuelto"
   // y el cliente vuelve a escribir, WATI devuelve la conversación A SU PROPIO BOT — o sea, para WATI ya no
@@ -4044,8 +4049,39 @@ Deno.serve(async (req) => {
   // Exige esDelNegocio (owner=true): una plantilla saliente SIEMPRE es del negocio. Así, si algún día WATI
   // mandara un evento ENTRANTE cuyo tipo contenga "template" (p.ej. la respuesta a un botón de plantilla),
   // NO se descarta por error (owner=false → no entra aquí → lo atiende el flujo normal del cliente).
-  if (esDelNegocio && (eventType.includes("template") || eventType.includes("plantilla"))) {
-    await log("evento_plantilla_saliente", true, { waId: waId || null, eventType });
+  //
+  // v121 — LA PLANTILLA NO TRAE `owner`. Hallazgo del 02-sep: el evento "templateMessageSent" de WATI
+  // llega SIN owner=true, así que el guard de arriba (que exigía esDelNegocio) nunca lo vio: el evento
+  // caía a evento_sin_texto — 351 plantillas en 14 días (~25/día) DESCARTADAS sin guardar nada. Y una
+  // plantilla es la ÚNICA forma que tiene un asesor de escribirle a un cliente cuya ventana de 24 h
+  // venció: justo el mensaje con el que RETOMA la conversación era invisible para el bot. Ni quedaba
+  // como contexto, ni pasaba la conversación a handoff. El cliente respondía y el bot lo atendía como si
+  // nadie le hubiera escrito (50769038791, 02-sep: plantilla 15:22 → "¿cuánto tarda el envío?" 15:23 →
+  // dos respuestas del bot, cero del asesor en el hilo). "No lee lo que escribe el asesor" — literal.
+  //
+  // Ahora el texto de la plantilla SIEMPRE se guarda (el bot lo lee). Si la mandó una PERSONA (hay
+  // operador) y no es la de re-enganche del cron, cuenta como asesor escribiendo: human-agent + handoff,
+  // igual que un mensaje tecleado. Si la mandó el sistema (sin operador, o es el re-enganche) se guarda
+  // como 'plantilla-saliente' y NO toca el status — lo que v51 protegía: el cliente que responde al
+  // re-enganche lo atiende el bot, no la asistencia. templateName/sourceType quedan en el log para
+  // calibrar la regla con valores reales (hoy solo conocemos las CLAVES del payload, no los valores).
+  if (eventType.includes("template") || eventType.includes("plantilla")) {
+    const nombrePl = String(p.templateName ?? "").trim();
+    const textoPl = (texto || (typeof p.templateContent === "string" ? p.templateContent : "")).trim().slice(0, 3900);
+    const esReenganche = /reengan/i.test(nombrePl);
+    const esHumano = !!operador && !esReenganche;
+    let guardada = false;
+    if (waId && textoPl) {
+      const { data: convP } = await sb.from("conversations").select("id,status").eq("wa_id", waId).maybeSingle();
+      if (convP?.id) {
+        const marca = `${textoPl} [plantilla${nombrePl ? ": " + nombrePl : ""}]`;
+        const insP = await sb.from("messages").insert({ conversation_id: convP.id, role: "assistant", content: marca, mode: "live", model: esHumano ? "human-agent" : "plantilla-saliente" });
+        if (insP.error) await log("error", false, { fase: "plantilla_insert", waId, error: String(insP.error.message ?? "").slice(0, 120) });
+        else guardada = true;
+        if (esHumano && convP.status !== "handoff" && convP.status !== "cerrada") await sb.from("conversations").update({ status: "handoff" }).eq("id", convP.id);
+      }
+    }
+    await log("evento_plantilla_saliente", true, { waId: waId || null, eventType, plantilla: nombrePl || null, sourceType: p.sourceType ?? null, con_operador: !!operador, como_asesor: esHumano, guardada });
     return Response.json({ ok: true, skipped: "template_message_sent" });
   }
 

@@ -122,3 +122,61 @@ select count(*) from job_log where action = 'asistencia_handoff'
   pisar: es el diseño — el bot responde primero a un contacto nuevo y el asesor sigue. Si lo que se
   quiere es que el bot espere también ahí, es otra decisión (bot como red de seguridad, no como primera
   respuesta) y cambia el modelo entero. No se tocó.
+
+## Segunda vuelta (02-sep, tarde): "me parece que el bot no lee lo que escribe el asesor"
+
+Isaac insistió, con razón. Al buscar evidencia en vez de repetir que "el mecanismo existe" aparecieron
+**tres huecos más**, y uno de ellos es literal:
+
+### 1. La plantilla del asesor era invisible (351 en 14 días)
+
+El evento `templateMessageSent` de WATI **no trae `owner=true`**. El guard de v51 lo exigía, así que
+nunca lo veía, y el evento caía a `evento_sin_texto` — descartado sin guardar. **~25 plantillas por
+día.** Y una plantilla es la *única* forma de escribirle a un cliente cuya ventana de 24 h venció: justo
+el mensaje con el que el asesor **retoma** la conversación. Ni quedaba como contexto ni pasaba la
+conversación a handoff. Caso del 02-sep: plantilla 15:22 → el cliente `50769038791` responde 15:23
+*"¿cuánto tiempo toma que lo envíen?"* → cero mensajes del asesor en el hilo → el bot contesta dos veces
+como si nadie le hubiera escrito.
+
+**Fix:** el texto de la plantilla siempre se guarda. Si la mandó una persona (hay operador) y no es el
+re-enganche del cron → `human-agent` + handoff, como un mensaje tecleado. Si la mandó el sistema →
+`plantilla-saliente`, sin tocar el status (lo que v51 protegía). `templateName`/`sourceType` quedan en
+`evento_plantilla_saliente` para calibrar la regla: hoy solo conocemos las claves del payload, no los
+valores.
+
+### 2. El modelo leía las frases del asesor como propias
+
+Los mensajes del asesor entran al modelo con rol `assistant` y la etiqueta `[Asesor del equipo]:` —
+pero **el prompt nunca explicaba qué significa esa etiqueta**. Resultado, en 14 días: *"la cotización
+que le pasé"* (la pasó el asesor), *"ya le confirmé la llegada del tóner"* (lo confirmó el asesor:
+"Puede pasar a comprar directamente"), *"esa es la que le confirmé"*. El bot leía al asesor, pero se
+lo atribuía a sí mismo — y desde ahí es fácil contradecirlo o repetirlo.
+
+**Fix:** regla en el prompt (REGLA ANTI-INTERRUPCIÓN): esa etiqueta es una PERSONA del equipo, nunca
+presentarlo como propio, no contradecirlo, no repetir lo que ya respondió, y no suponer el contenido de
+un archivo suyo. Reescribe el caché de v35 (re-warm puntual).
+
+### 3. El botón de plantilla del cliente quedaba en visto
+
+`type: button` (20 en 14 días) — el cliente toca "Sí, confirmo" y caía a `evento_sin_texto`. Ahora, si
+trae texto, es un mensaje de texto.
+
+### Cómo verificar (una semana después)
+
+```sql
+-- ¿Qué plantillas manda el equipo y cómo las atribuye WATI? (calibrar esHumano)
+select detail->>'plantilla' as plantilla, detail->>'sourceType' as source,
+       (detail->>'con_operador')::boolean as con_operador, (detail->>'como_asesor')::boolean as como_asesor,
+       count(*)
+from job_log where action = 'evento_plantilla_saliente' and created_at > now() - interval '7 days'
+group by 1,2,3,4 order by 5 desc;
+
+-- ¿Sigue cayendo algo del negocio a evento_sin_texto? (debe ser ~0 de tipo template/button)
+select detail->>'tipo', count(*) from job_log
+where action = 'evento_sin_texto' and created_at > now() - interval '7 days' group by 1;
+
+-- ¿Bajó la atribución en primera persona? (misma regex de la revisión)
+select count(*) from messages where role='assistant' and model in ('claude-sonnet-5','assist-handoff')
+  and created_at > now() - interval '7 days'
+  and content ~* '\m(que|como|ya) le (pas[eé]|envi[eé]|cotic[eé]|compart[ií]|confirm[eé])\M';
+```
