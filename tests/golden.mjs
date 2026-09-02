@@ -414,8 +414,13 @@ console.log("v51 guard plantilla saliente");
 // El cron reengage-expired envía plantillas HSM; WATI eco-notifica "Template Message Sent". El copiloto
 // debe SALTARLO (no tratarlo como asesor humano → falso handoff). Lock sobre el source real.
 caso("v51: copilot salta eventos de plantilla saliente", /eventType\.includes\("template"\)/.test(src) && /evento_plantilla_saliente/.test(src));
-// v51 (revisión adversarial): el guard exige esDelNegocio → un ENTRANTE con "template" en el tipo NO se descarta.
-caso("v51: el guard de plantilla exige esDelNegocio (owner=true)", /esDelNegocio && \(eventType\.includes\("template"\)/.test(src));
+// v51 → v121: la revisión adversarial de v51 hizo que el guard exigiera esDelNegocio para no descartar
+// un ENTRANTE. Pero el evento templateMessageSent de WATI NO trae owner=true (351 plantillas en 14 días
+// caían a evento_sin_texto), así que ese candado dejaba pasar de largo justo lo que debía atrapar. Lo que
+// protege al entrante ahora: (a) se intercepta por el TIPO DE EVENTO saliente, no por el `type` del
+// mensaje (la respuesta por botón del cliente llega como eventType "message" y se normaliza a texto);
+// (b) solo cuenta como asesor si hay OPERADOR — un mensaje de cliente jamás lo trae.
+caso("v121: el guard de plantilla intercepta por eventType y solo cuenta como asesor con operador", /if \(eventType\.includes\("template"\) \|\| eventType\.includes\("plantilla"\)\) \{/.test(src) && /const esHumano = !!operador && !esReenganche;/.test(src));
 caso("v51: el guard de plantilla va ANTES del path owner=true (human-agent)", (() => {
   const iGuard = src.indexOf('skipped: "template_message_sent"');
   const iOwner = src.indexOf("Mensaje del NEGOCIO (owner=true)");
@@ -1508,6 +1513,49 @@ caso("v120: el guard corre ANTES de partir en burbujas", (() => {
 // FAIL-OPEN: si la consulta a ref_codes falla no podemos verificar; dejar mudo al bot ante cada link
 // por un hipo de la base sería peor que el riesgo cubierto. El fallo queda en job_log.
 caso("v120: si no se puede verificar, se deja pasar (fail-open) y se loggea", /ref_code_verif_fallo/.test(src) && /if \(error\) \{ await log\("ref_code_verif_fallo"[\s\S]{0,120}return \[\]; \}/.test(src));
+
+// --- v121: el asesor activo tiene la palabra (10 min de silencio antes de intervenir) ----------
+console.log("v121 asesor activo espera");
+// Decisión de Isaac (02-sep): "está pisando a los asesores". v79 había quitado el reloj; medido del
+// 31-ago al 02-sep, 47 respuestas del bot con el asesor activo <10 min (27 a menos de 2 minutos).
+caso("v121: el reloj vuelve — asesorActivo = el asesor escribió hace < HANDOFF_ASSIST_MIN", /const asesorActivo = !!ultHumano && minsSinHumano < HANDOFF_ASSIST_MIN;/.test(src));
+caso("v121: puedeAsistir exige asesor callado, salvo modo invitado y continuidad estricta", /const puedeAsistir = habriaAsistido && \(!asesorActivo \|\| pidioEnvioElAsesor \|\| continuaAsistencia\);/.test(src));
+caso("v121: la continuidad estricta solo cuenta asistencias del bot (no avisos fijos ni puentes)", /continuaAsistencia = !!u && reciente && u\.model === "assist-handoff" && u\.mode === "live";/.test(src));
+caso("v121: el default del umbral pasa a 10", /HANDOFF_ASSIST_MIN = parseInt\(Deno\.env\.get\("COPILOT_HANDOFF_ASSIST_MIN"\) \?\? "10", 10\) \|\| 10;/.test(src));
+caso("v121: cuando el reloj calla al bot queda telemetría (asesor_activo_espera)", /if \(habriaAsistido && asesorActivo\) await log\("asistencia_handoff", true, \{ waId, enviado: false, motivo: "asesor_activo_espera"/.test(src));
+// La red de seguridad es el barrido, y debe usar EL MISMO número: si divergen, el bot calla aquí por
+// un umbral y el barrido rescata por otro.
+caso("v121: el barrido comparte el umbral (p_asesor_min: HANDOFF_ASSIST_MIN)", /p_asesor_min: HANDOFF_ASSIST_MIN/.test(src));
+// Lo invitado por el asesor no lleva reloj: la captura (captura_hasta) se decide ANTES del gate.
+caso("v121: la captura invitada por el asesor sigue sin reloj (se decide antes del gate)", (() => {
+  const iCap = src.indexOf("capturaHasta && new Date(capturaHasta).getTime() > Date.now()");
+  const iGate = src.indexOf("const asesorActivo = !!ultHumano");
+  return iCap > -1 && iGate > -1 && iCap < iGate;
+})());
+// v72.4 sigue: la nota de voz en handoff con asesor activo tampoco responde (mismo umbral).
+caso("v121: el camino de audio en handoff usa el mismo umbral", /if \(!ultHumano \|\| minsSinHumano < HANDOFF_ASSIST_MIN\) return;/.test(src));
+// "Le falta leer lo que el asesor escribe": ventana de 20 en asistencia (28% de las asistencias perdían
+// mensajes del asesor con 10), y el archivo del asesor etiquetado como NO visible.
+caso("v121: la asistencia lee 20 filas de historial", /\.limit\(20\);\s*\n\s*const history = \(hist \?\? \[\]\)\.reverse\(\);/.test(src));
+caso("v121: el flujo normal (status=bot) sigue en 10 filas", /select\("role,content,model,created_at,media_url"\)[^\n]*\.limit\(10\);/.test(src));
+caso("v121: el archivo del asesor va etiquetado como contenido no visible", /const esMediaAsesor = m\.model === "human-agent" && \//.test(src) && /Asesor del equipo — envió un archivo cuyo contenido NO puedes ver; no supongas qué dice/.test(src));
+caso("v121: el texto del asesor conserva su etiqueta de siempre", /"\[Asesor del equipo\]: "/.test(src));
+// LA PLANTILLA SIN OWNER: el evento templateMessageSent de WATI no trae owner=true → el guard de v51
+// (que lo exigía) nunca lo veía y 351 plantillas en 14 días se descartaban sin guardar. Una plantilla es
+// la única forma de escribirle a un cliente con la ventana de 24 h vencida: el mensaje con el que el
+// asesor RETOMA la conversación era invisible para el bot.
+caso("v121: la plantilla se intercepta SIN exigir owner (el guard viejo desaparece)", !/if \(esDelNegocio && \(eventType\.includes\("template"\)/.test(src) && /if \(eventType\.includes\("template"\) \|\| eventType\.includes\("plantilla"\)\) \{\s*\n\s*const nombrePl/.test(src));
+caso("v121: el texto de la plantilla se guarda como contexto (humano o sistema)", /model: esHumano \? "human-agent" : "plantilla-saliente"/.test(src));
+caso("v121: la plantilla de un asesor pasa la conversación a handoff, salvo 'cerrada'", /if \(esHumano && convP\.status !== "handoff" && convP\.status !== "cerrada"\) await sb\.from\("conversations"\)\.update\(\{ status: "handoff" \}\)/.test(src));
+// v51 sigue protegido: el re-enganche del cron NUNCA cuenta como asesor (si contara, el cliente que
+// responde quedaría en asistencia en vez de atenderlo el bot).
+caso("v121: el re-enganche del cron nunca cuenta como asesor", /const esReenganche = \/reengan\/i\.test\(nombrePl\);\s*\n\s*const esHumano = !!operador && !esReenganche;/.test(src));
+caso("v121: la telemetría de plantilla registra nombre/sourceType para calibrar", /"evento_plantilla_saliente", true, \{ waId: waId \|\| null, eventType, plantilla: nombrePl \|\| null, sourceType/.test(src));
+// El botón de plantilla que toca el CLIENTE es un mensaje (20 en 14 días quedaban en visto).
+caso("v121: la respuesta por botón del cliente se trata como texto", /if \(!esDelNegocio && texto && \["button", "interactive", "button_reply", "list_reply", "quick_reply"\]\.includes\(tipo\.toLowerCase\(\)\)\) tipo = "text";/.test(src));
+// El prompt nunca explicaba la etiqueta: el asesor entra con rol assistant y el modelo leía sus frases
+// como propias ("la cotización que le pasé", "ya le confirmé la llegada del tóner" — las dijo el asesor).
+caso("v121: el prompt explica que [Asesor del equipo] es una PERSONA, no el bot", /\[Asesor del equipo\]:" los escribió una PERSONA del equipo, NO tú/.test(SYSTEM_PROMPT) && /NUNCA los presentes como tuyos/.test(SYSTEM_PROMPT));
 
 // --- resumen --------------------------------------------------------------------------------------
 console.log(`\n${ok} OK, ${mal} FALLA${mal === 1 ? "" : "S"}`);

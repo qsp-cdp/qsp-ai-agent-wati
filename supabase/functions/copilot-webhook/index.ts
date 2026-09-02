@@ -432,7 +432,9 @@ const MAX_TURNS_DIA = 40;
 // Gerencia). ASSIST: si el asesor lleva >= N min sin escribir y el cliente hace una pregunta
 // BÁSICA de tienda, el bot adelanta SOLO esa info (sigue en handoff). COLD-RETURN: si el asesor
 // lleva > H horas sin escribir, la conversación se considera fría → el bot la RETOMA (status='bot').
-const HANDOFF_ASSIST_MIN = parseInt(Deno.env.get("COPILOT_HANDOFF_ASSIST_MIN") ?? "15", 10) || 15;
+// v121 — default 15 → 10 (decisión de Isaac, 02-sep): es cuánto silencio del asesor exige el bot antes de
+// intervenir en una conversación que ese asesor lleva. El mismo número gobierna el barrido (p_asesor_min).
+const HANDOFF_ASSIST_MIN = parseInt(Deno.env.get("COPILOT_HANDOFF_ASSIST_MIN") ?? "10", 10) || 10;
 const HANDOFF_COLD_HOURS = parseInt(Deno.env.get("COPILOT_HANDOFF_COLD_HOURS") ?? "24", 10) || 24;
 // v49 — DEBOUNCE de ráfagas (ms): el bot espera a que el cliente TERMINE de escribir antes de responder
 // (2-3 líneas y/o imágenes llegan como mensajes separados con segundos de diferencia). Cada mensaje nuevo
@@ -751,6 +753,7 @@ REGLA ANTI-INTERRUPCIÓN — no te metas si hay un humano atendiendo
   - pregunta por una cotización, pedido o pago YA en curso.
 - Ante la duda, NO interrumpas: es mejor que un humano siga la venta a que tú la cortes. Mensajes sueltos de cierre ("ok", "gracias", "listo", "recibido") no requieren respuesta tuya salvo que claramente te estén preguntando algo.
 - NUNCA captures, repitas ni confirmes datos fiscales, de facturación o de pago (RUC, cédula, razón social, "factura a nombre de", comprobantes, transferencias). Si el cliente los envía, NO los proceses: indica en UNA línea que un asesor se encarga y no pidas más datos.
+- En el historial, los mensajes que empiezan con "[Asesor del equipo]:" los escribió una PERSONA del equipo, NO tú. Léelos como lo que el asesor ya le dijo al cliente: NUNCA los presentes como tuyos ("le pasé", "le confirmé", "como le indiqué" — di "el asesor le indicó…"), NO los contradigas y NO repitas lo que el asesor ya respondió. Si el asesor envió un archivo que no puedes ver (una cotización en PDF, una imagen), no supongas qué contiene ni cotices por encima: refiérete a "lo que le envió el asesor".
 
 LOGÍSTICA, PAGOS Y DATOS DE LA TIENDA (envíos, ubicación, horarios, métodos de pago)
 - Para envíos/entregas, ubicación, horarios o métodos de pago usa SIEMPRE la herramienta info_tienda y responde SOLO con lo que devuelva. No respondas estos temas de memoria.
@@ -2741,7 +2744,13 @@ async function responderLLM(history: { role: string; content: string; model?: st
   const ultIdx = hist.length - 1;
   const messages: Anthropic.MessageParam[] = hist.map((m, idx) => {
     const t = (idx < ultIdx && m.created_at) ? `[${etiquetaTiempo(m.created_at, ahoraMs)}] ` : "";
-    const a = m.model === "human-agent" ? "[Asesor del equipo]: " : "";
+    // v121 — un asesor que manda un PDF o una imagen (la COTIZACIÓN, típicamente: el 23% de lo que el
+    // equipo escribe llega así — 205 de 896 mensajes del 31-ago al 02-sep) entra al hilo como el puro
+    // marcador "[document]"/"[image]". El bot no ve el contenido, y sin aviso lo trataba como un hueco
+    // y se ponía a adivinar ("no veo en el chat cuál es el modelo que ya cotizó el asesor…"). Se le dice
+    // qué es y que no lo puede ver, para que ni lo repita ni lo contradiga ni lo invente.
+    const esMediaAsesor = m.model === "human-agent" && /\[(document|image|audio|video|file|sticker)\]$/.test(String(m.content ?? ""));
+    const a = m.model === "human-agent" ? (esMediaAsesor ? "[Asesor del equipo — envió un archivo cuyo contenido NO puedes ver; no supongas qué dice]: " : "[Asesor del equipo]: ") : "";
     return { role: m.role === "assistant" ? "assistant" as const : "user" as const, content: t + a + (m.content || "(vacío)") };
   });
   // v20: la API exige que el ÚLTIMO mensaje sea de usuario; varios modelos no aceptan "prefill"
@@ -3401,7 +3410,12 @@ async function ejecutarAsistencia(
   try {
     if (conDebounce && DEBOUNCE_MS > 0) await new Promise((res) => setTimeout(res, DEBOUNCE_MS)); // v49: misma espera de ráfaga
                     if (await hayMensajeClienteMasNuevo(conv.id, userCreatedAt)) { await log("descartado_superado", true, { waId, fase: "asist-pre" }); return; }
-          const { data: hist } = await sb.from("messages").select("role,content,model,created_at").eq("conversation_id", conv.id).in("role", ["user", "assistant"]).order("created_at", { ascending: false }).limit(10);
+          // v121 — 10 → 20 filas. En asistencia el hilo lo lleva un asesor, y sus mensajes son los que
+          // más importan para no contradecirlo ni repetirlo. Medido del 31-ago al 02-sep: en el 28% de las
+          // asistencias (36 de 128) la ventana de 10 dejaba fuera mensajes del asesor de la misma sesión
+          // (hasta 21 en un caso). El costo es marginal: los mensajes del asesor son cortos y la asistencia
+          // corre ~40 veces al día. El flujo normal (status='bot') no cambia: ahí no hay asesor que leer.
+          const { data: hist } = await sb.from("messages").select("role,content,model,created_at").eq("conversation_id", conv.id).in("role", ["user", "assistant"]).order("created_at", { ascending: false }).limit(20);
           const history = (hist ?? []).reverse();
           // v50 — asistencia hace preventa grounded. forceTool=FALSE a propósito (revisión adversarial):
           // aquí la respuesta correcta suele ser CALLARSE (el humano lleva el caso), así que NO forzamos una
@@ -3814,7 +3828,7 @@ Deno.serve(async (req) => {
         texto: tr?.texto ?? null, ts: new Date().toISOString(),
       });
     }
-    return Response.json({ status: "ok", function: "copilot-webhook", version: "v120-producto-inventado", mode: MODE, mode_raw: MODE_RAW, model: MODEL, llm_configured: !!anthropic, wati_send_configured: !!(WATI_API_TOKEN && WATI_API_BASE), inventario_configurado: !!(SHOPIFY_ADMIN_TOKEN && SHOPIFY_ADMIN_API_BASE), resolve_configured: !!RESOLVE_SECRET, webhook_key_es_default: WEBHOOK_KEY_ES_DEFAULT, handoff_assist_min: HANDOFF_ASSIST_MIN, handoff_cold_hours: HANDOFF_COLD_HOURS, debounce_ms: DEBOUNCE_MS, sesion_gap_dias: SESION_GAP_DIAS, burbujas: BURBUJAS, burbuja_ms: BURBUJA_MS, audio_puente: AUDIO_PUENTE, sweep: SWEEP_MODE, sweep_espera_min: SWEEP_ESPERA_MIN, stt: STT_MODE, stt_raw: STT_RAW, stt_configurado: !!OPENAI_API_KEY, stt_model: STT_MODEL, busqueda_shadow: BUSQUEDA_SHADOW, busqueda_mcp: BUSQUEDA_MCP, busqueda_mcp_limit: BUSQUEDA_MCP_LIMIT, catalog_mcp_url: CATALOG_MCP_URL, ucp_profile_url: UCP_PROFILE_URL, live_targets: MODE === "live" ? (LIVE_ALL ? "all" : LIVE_ALLOWLIST.length) : 0, wa_ignorar: WA_IGNORAR.size, ts: new Date().toISOString() });
+    return Response.json({ status: "ok", function: "copilot-webhook", version: "v121-asesor-activo-espera", mode: MODE, mode_raw: MODE_RAW, model: MODEL, llm_configured: !!anthropic, wati_send_configured: !!(WATI_API_TOKEN && WATI_API_BASE), inventario_configurado: !!(SHOPIFY_ADMIN_TOKEN && SHOPIFY_ADMIN_API_BASE), resolve_configured: !!RESOLVE_SECRET, webhook_key_es_default: WEBHOOK_KEY_ES_DEFAULT, handoff_assist_min: HANDOFF_ASSIST_MIN, handoff_cold_hours: HANDOFF_COLD_HOURS, debounce_ms: DEBOUNCE_MS, sesion_gap_dias: SESION_GAP_DIAS, burbujas: BURBUJAS, burbuja_ms: BURBUJA_MS, audio_puente: AUDIO_PUENTE, sweep: SWEEP_MODE, sweep_espera_min: SWEEP_ESPERA_MIN, stt: STT_MODE, stt_raw: STT_RAW, stt_configurado: !!OPENAI_API_KEY, stt_model: STT_MODEL, busqueda_shadow: BUSQUEDA_SHADOW, busqueda_mcp: BUSQUEDA_MCP, busqueda_mcp_limit: BUSQUEDA_MCP_LIMIT, catalog_mcp_url: CATALOG_MCP_URL, ucp_profile_url: UCP_PROFILE_URL, live_targets: MODE === "live" ? (LIVE_ALL ? "all" : LIVE_ALLOWLIST.length) : 0, wa_ignorar: WA_IGNORAR.size, ts: new Date().toISOString() });
   }
   if (req.method !== "POST") return Response.json({ error: "method_not_allowed" }, { status: 405 });
   if (url.searchParams.get("key") !== WEBHOOK_KEY) return Response.json({ error: "forbidden" }, { status: 403 });
@@ -3994,6 +4008,10 @@ Deno.serve(async (req) => {
   let tipo = (p.type ?? "text").toString();
   const eventType = (p.eventType ?? p.event ?? "").toString().toLowerCase();
   const operador = (p.operatorName ?? p.operatorEmail ?? "").toString().trim(); // asesor que escribió (v15)
+  // v121 — respuesta por BOTÓN de plantilla (type "button"/"interactive"): es el CLIENTE contestando
+  // ("Sí, confirmo", "Retiro en tienda") y caía a evento_sin_texto (20 en 14 días): tocaba el botón y
+  // quedaba en visto. Si trae texto, es un mensaje de texto como cualquier otro.
+  if (!esDelNegocio && texto && ["button", "interactive", "button_reply", "list_reply", "quick_reply"].includes(tipo.toLowerCase())) tipo = "text";
 
   // v71.1 — SONDA DE EVENTOS DESCONOCIDOS. Hallazgo del 17-ago: cuando el asesor marca el chat "resuelto"
   // y el cliente vuelve a escribir, WATI devuelve la conversación A SU PROPIO BOT — o sea, para WATI ya no
@@ -4031,8 +4049,39 @@ Deno.serve(async (req) => {
   // Exige esDelNegocio (owner=true): una plantilla saliente SIEMPRE es del negocio. Así, si algún día WATI
   // mandara un evento ENTRANTE cuyo tipo contenga "template" (p.ej. la respuesta a un botón de plantilla),
   // NO se descarta por error (owner=false → no entra aquí → lo atiende el flujo normal del cliente).
-  if (esDelNegocio && (eventType.includes("template") || eventType.includes("plantilla"))) {
-    await log("evento_plantilla_saliente", true, { waId: waId || null, eventType });
+  //
+  // v121 — LA PLANTILLA NO TRAE `owner`. Hallazgo del 02-sep: el evento "templateMessageSent" de WATI
+  // llega SIN owner=true, así que el guard de arriba (que exigía esDelNegocio) nunca lo vio: el evento
+  // caía a evento_sin_texto — 351 plantillas en 14 días (~25/día) DESCARTADAS sin guardar nada. Y una
+  // plantilla es la ÚNICA forma que tiene un asesor de escribirle a un cliente cuya ventana de 24 h
+  // venció: justo el mensaje con el que RETOMA la conversación era invisible para el bot. Ni quedaba
+  // como contexto, ni pasaba la conversación a handoff. El cliente respondía y el bot lo atendía como si
+  // nadie le hubiera escrito (50769038791, 02-sep: plantilla 15:22 → "¿cuánto tarda el envío?" 15:23 →
+  // dos respuestas del bot, cero del asesor en el hilo). "No lee lo que escribe el asesor" — literal.
+  //
+  // Ahora el texto de la plantilla SIEMPRE se guarda (el bot lo lee). Si la mandó una PERSONA (hay
+  // operador) y no es la de re-enganche del cron, cuenta como asesor escribiendo: human-agent + handoff,
+  // igual que un mensaje tecleado. Si la mandó el sistema (sin operador, o es el re-enganche) se guarda
+  // como 'plantilla-saliente' y NO toca el status — lo que v51 protegía: el cliente que responde al
+  // re-enganche lo atiende el bot, no la asistencia. templateName/sourceType quedan en el log para
+  // calibrar la regla con valores reales (hoy solo conocemos las CLAVES del payload, no los valores).
+  if (eventType.includes("template") || eventType.includes("plantilla")) {
+    const nombrePl = String(p.templateName ?? "").trim();
+    const textoPl = (texto || (typeof p.templateContent === "string" ? p.templateContent : "")).trim().slice(0, 3900);
+    const esReenganche = /reengan/i.test(nombrePl);
+    const esHumano = !!operador && !esReenganche;
+    let guardada = false;
+    if (waId && textoPl) {
+      const { data: convP } = await sb.from("conversations").select("id,status").eq("wa_id", waId).maybeSingle();
+      if (convP?.id) {
+        const marca = `${textoPl} [plantilla${nombrePl ? ": " + nombrePl : ""}]`;
+        const insP = await sb.from("messages").insert({ conversation_id: convP.id, role: "assistant", content: marca, mode: "live", model: esHumano ? "human-agent" : "plantilla-saliente" });
+        if (insP.error) await log("error", false, { fase: "plantilla_insert", waId, error: String(insP.error.message ?? "").slice(0, 120) });
+        else guardada = true;
+        if (esHumano && convP.status !== "handoff" && convP.status !== "cerrada") await sb.from("conversations").update({ status: "handoff" }).eq("id", convP.id);
+      }
+    }
+    await log("evento_plantilla_saliente", true, { waId: waId || null, eventType, plantilla: nombrePl || null, sourceType: p.sourceType ?? null, con_operador: !!operador, como_asesor: esHumano, guardada });
     return Response.json({ ok: true, skipped: "template_message_sent" });
   }
 
@@ -4436,6 +4485,11 @@ Deno.serve(async (req) => {
       // terminar lo que empezó. Los guardarraíles de contexto (interrumpe/HANDOFF_RE/pagos) siguen
       // mandando: están AND-eados abajo.
       let continuaBot = false;
+      // v121 — versión ESTRICTA de la continuidad: el último en hablar fue el bot EN ASISTENCIA (no un
+      // aviso fijo ni un puente). Es la única continuidad que exime del reloj de v121: si el bot pudo
+      // hablar con el asesor activo fue porque el propio asesor lo invitó (captura/envío), y lo que el
+      // cliente responda a ESA pregunta del bot es del bot. Un aviso fijo ("le paso con un asesor") no.
+      let continuaAsistencia = false;
       // v100 — ¿el ASESOR acaba de pedir los datos de entrega? Entonces lo que el cliente responda es la
       // dirección, aunque venga cruda ("Calle 50, edificio Torre A") y sin ninguna palabra que el filtro
       // reconozca. Se mira el mismo último mensaje del equipo: si lo escribió un humano y pedía dirección,
@@ -4446,6 +4500,7 @@ Deno.serve(async (req) => {
         const u = ua?.[0] as any;
         const reciente = !!u && (Date.now() - new Date(u.created_at).getTime()) < 30 * 60000;
         continuaBot = !!u && reciente && !!u.model && u.model !== "fallback" && u.mode === "live";
+        continuaAsistencia = !!u && reciente && u.model === "assist-handoff" && u.mode === "live";
         pidioEnvioElAsesor = !!u && reciente && u.model === "human-agent" && PIDE_ENVIO_RE.test(String(u.content ?? ""));
         if (pidioEnvioElAsesor) await log("asesor_pidio_envio", true, { waId });
       }
@@ -4464,10 +4519,38 @@ Deno.serve(async (req) => {
         asesorCobrando = !!ch && COBRO_RE.test(ch) && !PIDE_ENVIO_RE.test(ch);
         if (asesorCobrando) await log("asesor_cobrando", true, { waId });
       }
-      const puedeAsistir = !frio
+      // v121 — EL ASESOR ACTIVO TIENE LA PALABRA (decisión de Isaac, 02-sep: "está pisando a los asesores").
+      // v79 quitó el reloj y dejó que decidiera el contenido: si el cliente preguntaba algo que el bot
+      // responde con una herramienta, respondía aunque el asesor acabara de escribir. Medido del 31-ago al
+      // 02-sep: 47 respuestas del bot con el asesor activo hacía <10 min, en 29 conversaciones — y 27 de
+      // ellas a menos de 2 minutos del mensaje del asesor. Casi todas traían un dato real (precio, stock,
+      // tarifa), o sea que v110 no las frena: v110 solo calla al bot cuando NO llamó a ninguna
+      // herramienta. Con la herramienta en la mano, se metía en medio de la venta del asesor.
+      //
+      // La premisa de v79 era buena ("un reloj no sabe si el bot puede ayudar") pero le faltaba la otra
+      // mitad: un reloj sí sabe si HAY ALGUIEN atendiendo. Un asesor que escribió hace 90 segundos está
+      // en la conversación; que el bot conteste una pregunta que ese asesor iba a contestar no es ayuda,
+      // es un segundo interlocutor. Vuelve el reloj, a HANDOFF_ASSIST_MIN (ahora 10): si el asesor
+      // escribió hace menos, el bot calla y deja la conversación en manos de quien la lleva.
+      //
+      // Lo que NO cambia: (a) los modos que el propio asesor pidió (captura / "¿me da su dirección?")
+      // siguen sin reloj — él invitó al bot; (b) la continuidad de una asistencia que el bot ya tenía
+      // abierta (continuaAsistencia, la versión estricta) — el cliente le está respondiendo AL BOT;
+      // (c) el cold-return y todos los guardarraíles de contexto. Y la red de seguridad sigue siendo el
+      // BARRIDO (pg_cron): comparte este mismo umbral vía p_asesor_min, así que un cliente al que el bot
+      // calló aquí y al que el asesor tampoco respondió lo rescata el barrido cuando el silencio del
+      // asesor pase de los 10 min. Para que esa espera sea corta, el barrido debe correr cada 10 min con
+      // espera 10 (ver docs/decision-2026-09-02-asesor-activo.md) — sin eso, el hueco es de hasta 45 min.
+      //
+      // Telemetría: cada vez que el reloj calla al bot en un caso que ANTES habría asistido queda
+      // `asistencia_handoff {motivo: asesor_activo_espera, mins_sin_asesor}` — es el número que dice si
+      // los 10 minutos están bien calibrados o si el barrido está rescatando demasiado tarde.
+      const asesorActivo = !!ultHumano && minsSinHumano < HANDOFF_ASSIST_MIN;
+      const habriaAsistido = !frio
         && conv.turns_today <= MAX_TURNS_DIA && !interrumpe && !HANDOFF_RE.test(rafagaHandoff)
         && !tocaPagos && !asesorCobrando
         && (BASIC_INFO_RE.test(texto) || NEEDS_TOOL_RE.test(texto) || continuaBot || pidioEnvioElAsesor);
+      const puedeAsistir = habriaAsistido && (!asesorActivo || pidioEnvioElAsesor || continuaAsistencia);
 
       if (frio) {
         // COLD-RETURN: el asesor lleva >umbral sin escribir → conversación fría. El bot la retoma por
@@ -4491,6 +4574,8 @@ Deno.serve(async (req) => {
         return Response.json({ ok: true, asistencia: true });
       } else {
         // Asesor activo hace poco (<umbral), no es pregunta básica, o handoff sin asesor → callar (v30).
+        // v121 — si calló SOLO por el reloj (antes habría asistido), se registra: es la medida del cambio.
+        if (habriaAsistido && asesorActivo) await log("asistencia_handoff", true, { waId, enviado: false, motivo: "asesor_activo_espera", mins_sin_asesor: Math.round(minsSinHumano * 10) / 10 });
         return Response.json({ ok: true, skipped: "en_handoff" });
       }
     }
