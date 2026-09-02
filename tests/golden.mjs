@@ -47,6 +47,7 @@ const variantesModelo = extraerFuncion("variantesModelo");
 const conItbms = extraerFuncion("conItbms");
 const stockTexto = extraerFuncion("stockTexto");
 const pareceFuncionEnTexto = extraerFuncion("pareceFuncionEnTexto");
+const productosNoDelTurno = extraerFuncion("productosNoDelTurno");
 const limpiarWhatsApp = extraerFuncion("limpiarWhatsApp");
 const frasearTarifa = extraerFuncion("frasearTarifa");
 const frasearPedido = extraerFuncion("frasearPedido");
@@ -1455,6 +1456,58 @@ for (const [nombre, texto] of fuentesFn) {
   const usaGuard = /\?key=|x-wati-token|WEBHOOK_TOKEN|Authorization/i.test(texto);
   if (usaGuard) caso(`${nombre}: su llave sale de un secreto (Deno.env.get)`, /Deno\.env\.get\(/.test(texto));
 }
+
+// --- v120: producto inventado (el bot citó un producto que no existe) ---------------------------
+console.log("v120 producto inventado");
+// Caso real 01-sep (conv 50760016863): tinta para una HP OfficeJet 5255. El bot buscó tres veces; las
+// dos primeras dijo con honestidad que no la encontraba. En la tercera la búsqueda devolvió CINCO
+// productos reales (664XL, 60XL, 964XL, un cabezal, una Smart Tank) — ninguno un 63XL — y el modelo
+// inventó un sexto: título, handle, URL, precio y "✅ 8 unidades disponibles". El cliente salió para
+// la tienda y un asesor tuvo que decirle "fue un error del bot" cuando ya iba en camino.
+const RESP_REAL = `Encontré el cartucho HP 63XL Negro, compatible con la OfficeJet 5255. 📌
+
+*Cartucho HP 63XL Negro*
+https://quickservicepanama.com/products/cartucho-hp-63xl-negro?utm_source=wati&ref_code=qsp01`;
+caso("v120: el caso real sale marcado (handle ajeno al turno + su ref_code)", (() => {
+  const f = productosNoDelTurno(RESP_REAL, {});
+  return f.length === 1 && f[0].handle === "cartucho-hp-63xl-negro" && f[0].ref === "qsp01";
+})());
+// El link que SÍ salió de buscar_producto este turno no se toca (si no, el bot quedaría mudo siempre).
+caso("v120: un link del turno actual NO se marca", productosNoDelTurno(
+  "Mire: https://quickservicepanama.com/products/tinta-hp-664xl-negra?utm_source=whatsapp&ref_code=yl3nBH7j",
+  { "tinta-hp-664xl-negra": "https://quickservicepanama.com/products/tinta-hp-664xl-negra?x=1" }).length === 0);
+// La RE-CONFIRMACIÓN de un link ya compartido antes ("sí, ese" → "Perfecto, entonces le confirmo…")
+// son ~15 turnos legítimos en 30 días. Deben llegar CON su ref_code para que la verificación contra
+// `ref_codes` los absuelva; si aquí perdiéramos el code, se bloquearían y sería una regresión real.
+caso("v120: la re-confirmación conserva su ref_code (lo absuelve la tabla, no esta función)", (() => {
+  const f = productosNoDelTurno("Perfecto, entonces le confirmo:\n*Cabezal HP M0H50AL Tricolor*\nhttps://quickservicepanama.com/products/cabezal-hp-m0h50al?utm_source=whatsapp&ref_code=R5NOAXyT", {});
+  return f.length === 1 && f[0].ref === "R5NOAXyT";
+})());
+caso("v120: URL sin ref_code queda marcada (v63.2 prohíbe reconstruirla de memoria)", (() => {
+  const f = productosNoDelTurno("vea https://quickservicepanama.com/products/algo-inventado", {});
+  return f.length === 1 && f[0].ref === null;
+})());
+caso("v120: solo mira /products/ (una página del sitio no es un producto)", productosNoDelTurno(
+  "Envíos: https://quickservicepanama.com/pages/envios-al-interior", {}).length === 0);
+caso("v120: reconoce el www y no duplica la misma URL repetida", (() => {
+  const f = productosNoDelTurno("https://www.quickservicepanama.com/products/x-1?ref_code=aa https://quickservicepanama.com/products/x-1?ref_code=aa", {});
+  return f.length === 1;
+})());
+// Cableado: el guard corre en los DOS caminos (normal y asistencia), como reaplicarTracking.
+caso("v120: el guard corre en el flujo normal Y en asistencia", (src.match(/linksInventados\(productosNoDelTurno\(/g) || []).length >= 2);
+caso("v120: al detectarlo no se envía la respuesta inventada", /inventado\.length\) \{\s*\n\s*salida = horarioPanama\(\)\.dentro/.test(src));
+caso("v120: en asistencia se calla (un asesor ya tiene el caso)", /invAsist\.length\) \{ await log\("producto_inventado"[\s\S]{0,180}salida = null; \}/.test(src));
+caso("v120: queda telemetría auditable con la respuesta original", /"producto_inventado"/.test(src) && /muestra: \(r\.text \?\? ""\)\.slice\(0, 400\)/.test(src));
+// ORDEN: el guard debe correr ANTES de partir en burbujas. Si corriera después, la burbuja del título
+// ya habría salido (v66 envía secuencialmente) y el cliente vería el producto inventado igual.
+caso("v120: el guard corre ANTES de partir en burbujas", (() => {
+  const iGuard = src.indexOf("inventado = await linksInventados(");
+  const iPartes = src.indexOf("const partes = salida ? partirMensaje(salida) : [];");
+  return iGuard > -1 && iPartes > -1 && iGuard < iPartes;
+})());
+// FAIL-OPEN: si la consulta a ref_codes falla no podemos verificar; dejar mudo al bot ante cada link
+// por un hipo de la base sería peor que el riesgo cubierto. El fallo queda en job_log.
+caso("v120: si no se puede verificar, se deja pasar (fail-open) y se loggea", /ref_code_verif_fallo/.test(src) && /if \(error\) \{ await log\("ref_code_verif_fallo"[\s\S]{0,120}return \[\]; \}/.test(src));
 
 // --- resumen --------------------------------------------------------------------------------------
 console.log(`\n${ok} OK, ${mal} FALLA${mal === 1 ? "" : "S"}`);
