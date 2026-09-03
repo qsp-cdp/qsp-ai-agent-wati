@@ -22,7 +22,9 @@
 //   asesor disparó "Despachar a Shipday" para un cliente RECURRENTE que tenía su dirección en la ficha
 //   del contacto en WATI, pero sin fila en la libreta `contacts` → esta función respondió "no tiene
 //   dirección registrada" y el chatbot cayó a su rama de captura vieja (tres preguntas + POST a
-//   `wati-address`, una función que NO existe en esta rama: nunca hubo un rastro suyo en job_log).
+//   `wati-address`, RETIRADA el 21-ago —hoy responde 410— porque duplicaba la captura del copiloto;
+//   ver docs/legacy/README.md. La primera versión de este comentario decía que "no existía", por no
+//   hallar rastro suyo en job_log: nunca registró ahí. Ausencia de telemetría ≠ ausencia de función).
 //   Resultado: "⚠️ No pudimos guardar tu dirección" y el cliente preguntando "¿cada vez que les compro
 //   debo repetir lo mismo?". Ahora, si la libreta no tiene la dirección, se lee de la ficha de WATI
 //   (direccion_envio / referencia_envio / pin_envio / maps_envio) y la libreta se AUTOCURA con el upsert

@@ -126,7 +126,7 @@ caso("wati-order: libreta → ficha WATI → 400, en ese orden", (() => {
 // Un fallo de red al leer WATI NO es fatal: se registra y el despacho sigue con lo que haya.
 caso("wati-order: la lectura de WATI va en try/catch con telemetría", /catch \(err\) \{\s*\n\s*await logJob\('wati-order', 'ficha_wati_fallo', false/.test(orden));
 caso("wati-order: registra cuándo la dirección salió de WATI", /logJob\('wati-order', 'direccion_desde_wati', true/.test(orden));
-// El error ya no menciona `wati-address` (una función que no existe en esta rama) y deja el teléfono.
+// El error ya no manda a `wati-address` (retirada el 21-ago; responde 410) y deja el teléfono.
 caso("wati-order: el 400 ya no apunta a wati-address", !/flujo wati-address/.test(orden));
 caso("wati-order: el 400 deja el teléfono en el log (sin_direccion)", /logJob\('wati-order', 'sin_direccion', false, \{\s*\n\s*telefono_final/.test(orden));
 // La autocura de la libreta: el upsert tras crear la orden sigue existiendo y usa capture.direccion.
