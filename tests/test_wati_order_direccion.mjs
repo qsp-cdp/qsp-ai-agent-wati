@@ -69,6 +69,45 @@ caso("pin_envio gana sobre maps_envio", r6?.maps_url === "https://maps.google.co
 const largo = "Calle ".repeat(100);
 caso("dirección larga se recorta", (direccionDesdeAtributosWati(attrs({ direccion_envio: largo }))?.direccion ?? "").length <= 400);
 
+// 8. LA FICHA REAL del caso del incidente (50760466239, leída de WATI el 03-sep con el conector ya
+//    renovado). La geografía vive en un atributo APARTE: sin componerla, a Shipday llegaba "Calle 97,
+//    Via porras" — y `customerAddress` es lo que Google geocodifica para poner el pin del repartidor.
+const rReal = direccionDesdeAtributosWati(attrs({
+  direccion_envio: "Calle 97, Via porras",
+  referencia_envio: "Frente a Athens",
+  corregimiento_envio: "San Francisco",
+  nombre: "Keilyn", empresa: "Panama Treasures",
+}));
+caso("ficha real: el corregimiento se compone en la dirección", rReal?.direccion === "Calle 97, Via porras, San Francisco");
+caso("ficha real: la referencia se conserva", rReal?.referencia === "Frente a Athens");
+caso("ficha real: sin pin en la ficha → maps_url null", rReal?.maps_url === null);
+
+// 9. Orden geográfico calle → corregimiento → distrito → provincia (el mismo del camino de Shopify).
+const r9 = direccionDesdeAtributosWati(attrs({
+  direccion_envio: "Calle 50, Edif. Tower",
+  corregimiento_envio: "Bella Vista", distrito_envio: "Panamá", provincia_envio: "Panamá",
+}));
+caso("orden geográfico calle → corregimiento → distrito → provincia", r9?.direccion === "Calle 50, Edif. Tower, Bella Vista, Panamá");
+
+// 10. No duplicar lo que la calle YA dice (muchas direcciones traen el sector escrito a mano).
+const r10 = direccionDesdeAtributosWati(attrs({
+  direccion_envio: "Calle 97, Via Porras, San Francisco",
+  corregimiento_envio: "San Francisco",
+}));
+caso("no repite el sector que la calle ya nombra", r10?.direccion === "Calle 97, Via Porras, San Francisco");
+// …y el descarte es insensible a acentos y mayúsculas: "Panamá" no se agrega dos veces por la tilde.
+const r11 = direccionDesdeAtributosWati(attrs({ direccion_envio: "Vía España, Panama", provincia_envio: "Panamá" }));
+caso("el descarte ignora acentos y mayúsculas", r11?.direccion === "Vía España, Panama");
+
+// 11. Sin geografía en la ficha, el comportamiento es EXACTAMENTE el de antes (no se rompe lo que ya andaba).
+caso("sin atributos de geografía, la dirección queda igual",
+  direccionDesdeAtributosWati(attrs({ direccion_envio: "Tuscany Tower, Calle Winston Churchill" }))?.direccion === "Tuscany Tower, Calle Winston Churchill");
+// El marcador "-" tampoco se cuela como si fuera un corregimiento.
+caso("un corregimiento en '-' no ensucia la dirección",
+  direccionDesdeAtributosWati(attrs({ direccion_envio: "Calle 1ra", corregimiento_envio: "-" }))?.direccion === "Calle 1ra");
+caso("el tope de 400 se respeta al componer",
+  (direccionDesdeAtributosWati(attrs({ direccion_envio: largo, corregimiento_envio: "San Francisco" }))?.direccion ?? "").length <= 400);
+
 // --- Cableado en wati-order (locks sobre el fuente real, estilo golden) ----------------------------
 const orden = readFileSync(
   join(dirname(fileURLToPath(import.meta.url)), "..", "supabase", "functions", "wati-order", "index.ts"),
@@ -87,7 +126,7 @@ caso("wati-order: libreta → ficha WATI → 400, en ese orden", (() => {
 // Un fallo de red al leer WATI NO es fatal: se registra y el despacho sigue con lo que haya.
 caso("wati-order: la lectura de WATI va en try/catch con telemetría", /catch \(err\) \{\s*\n\s*await logJob\('wati-order', 'ficha_wati_fallo', false/.test(orden));
 caso("wati-order: registra cuándo la dirección salió de WATI", /logJob\('wati-order', 'direccion_desde_wati', true/.test(orden));
-// El error ya no menciona `wati-address` (una función que no existe en esta rama) y deja el teléfono.
+// El error ya no manda a `wati-address` (retirada el 21-ago; responde 410) y deja el teléfono.
 caso("wati-order: el 400 ya no apunta a wati-address", !/flujo wati-address/.test(orden));
 caso("wati-order: el 400 deja el teléfono en el log (sin_direccion)", /logJob\('wati-order', 'sin_direccion', false, \{\s*\n\s*telefono_final/.test(orden));
 // La autocura de la libreta: el upsert tras crear la orden sigue existiendo y usa capture.direccion.

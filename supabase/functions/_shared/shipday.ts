@@ -178,8 +178,26 @@ export function direccionDesdeAtributosWati(params: unknown): { direccion: strin
     if (!v || v === '-' || v.includes('{{') || v.startsWith('@')) return '';
     return v.slice(0, 400);
   };
-  const direccion = val('direccion_envio');
-  if (!direccion) return null;
+  const calle = val('direccion_envio');
+  if (!calle) return null;
+  // v65 — LA GEOGRAFÍA VIVE EN ATRIBUTOS APARTE. El copiloto escribe SIETE campos de envío en la ficha
+  // (direccion/referencia/pin/maps + corregimiento/distrito/provincia/zona) y la primera versión de este
+  // lector tomaba solo cuatro: la misma asimetría "se escribe todo, se lee una parte" que causó el
+  // incidente del 03-sep, un piso más abajo. Caso real (50760466239): `direccion_envio` = "Calle 97, Via
+  // porras" y `corregimiento_envio` = "San Francisco" en un campo separado — y `customerAddress` es
+  // justo lo que GOOGLE GEOCODIFICA para poner el pin del repartidor. Sin el corregimiento, "Calle 97"
+  // es ambiguo en la ciudad. El camino de Shopify ya compone así (address1 + city + province): esto lo
+  // alinea, no inventa un criterio nuevo.
+  // El descarte compara sin acentos ni mayúsculas (NFD + quitar diacríticos). Se usa la propiedad
+  // Unicode \p{Diacritic} y no un rango literal: escrito con los caracteres combinantes queda
+  // invisible en el editor y cualquier recodificación del archivo lo rompería en silencio.
+  const norm = (s: string) => s.toLowerCase().normalize('NFD').replace(/\p{Diacritic}/gu, '');
+  const partes = [calle];
+  for (const parte of [val('corregimiento_envio'), val('distrito_envio'), val('provincia_envio')]) {
+    // No repetir lo que la calle ya dice: muchas direcciones ya traen el sector escrito a mano.
+    if (parte && !norm(partes.join(', ')).includes(norm(parte))) partes.push(parte);
+  }
+  const direccion = partes.join(', ').slice(0, 400);
   const referencia = val('referencia_envio');
   const pin = val('pin_envio') || val('maps_envio');
   return { direccion, referencia: referencia || null, maps_url: pin || null };

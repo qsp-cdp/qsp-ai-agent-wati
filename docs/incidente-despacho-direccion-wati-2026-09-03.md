@@ -34,15 +34,44 @@ Y hay una asimetría que lo hacía inevitable: **el copiloto escribe en los dos 
 ficha de WATI: `direccion_envio`, `referencia_envio`, `pin_envio`, `maps_envio`…), pero **el despacho
 solo leía uno**.
 
-### 2. El chatbot "Despachar a Shipday" cae a un flujo de captura que apunta a una función inexistente
+### 2. ~~El chatbot cae a un flujo de captura que apunta a una función inexistente~~ — ERROR, CORREGIDO
 
-Cuando `wati-order` responde 400, el chatbot de WATI entra a su rama de error: las **tres preguntas
-del flujo viejo** ("¿Cuál es la dirección exacta?", "¿Alguna referencia?", "comparte tu ubicación 📎")
-y al final un POST a **`wati-address`** — una Edge Function que **no existe en esta rama**: nunca hubo
-un rastro suyo en `job_log`, y el propio mensaje de error de `wati-order` todavía la nombraba. Ese POST
-falla y el chatbot dice *"No pudimos guardar tu dirección"*.
+> ⚠️ **Esta sección estaba MAL y se corrige aquí en vez de borrarse, porque el error de método vale más
+> que la conclusión.** Lo escrito el 03-sep decía que la rama de error del chatbot posteaba a
+> `wati-address`, *"una Edge Function que no existe"*, y concluía que **nada se habría guardado**.
+> Sobre esa base se le pidió a Isaac desmontar las tres preguntas del chatbot. **No hay que hacerlo.**
 
-Así que aunque el cliente hubiera respondido bien las tres preguntas, **nada se habría guardado**.
+**La conclusión era correcta; el motivo, no.** `wati-address` no es una función fantasma: **existió,
+funcionó, y se apagó a propósito el 21-ago**. Está en el propio repo, en `docs/legacy/README.md`:
+
+> `wati-address` · retirada **21-ago-2026** · *"duplicaba la captura del copiloto con otros nombres de
+> atributo… **0 llamadas en 24 h y el negocio confirmó que su chatbot ya no se usa**"*
+
+Desde entonces responde **410**. Sigue apareciendo ACTIVE en Supabase porque un retiro es un stub
+desplegado, no un borrado.
+
+**Y ese es el problema: la premisa del retiro era falsa, o dejó de ser cierta.** El chatbot SÍ se usa.
+Contando desde el 1-ago los pasos del flujo tal como los recibieron los clientes:
+
+| paso | veces | clientes | primero | último |
+|---|---:|---:|---|---|
+| pregunta la dirección | 24 | 16 | 10-ago | **03-sep** |
+| *"¡Listo! Guardamos tu dirección ✅"* | 4 | 4 | 10-ago | **14-ago** |
+| *"⚠️ No pudimos guardar tu dirección"* | 1 | 1 | 03-sep | 03-sep |
+
+Los cuatro guardados exitosos son **todos anteriores al retiro**, y sus filas están en `contacts` con
+`source='wati'` creadas ese mismo día (`63286286` 14-ago, `67950258` 13-ago, `67632182` 12-ago). Después
+del 21-ago: **veinte preguntas más a los clientes y cero confirmaciones de guardado**.
+
+O sea que **desde hace dos semanas el chatbot les pide la dirección a los clientes y no puede guardarla**.
+(Con la honestidad debida: muchas de esas preguntas seguramente nunca recibieron respuesta, así que
+"cero éxitos" no prueba "veinte fallos" — pero cuatro éxitos en los cinco días previos al retiro y
+ninguno en las tres semanas siguientes es una señal difícil de leer de otro modo.)
+
+**El error de método, que es lo que vale guardar:** se tomó *"no hay rastro en `job_log`"* como prueba de
+que la función no existía. `wati-address` nunca registró en `job_log` (cero filas en 90 días) — ausencia
+de telemetría no es ausencia de función. Y la respuesta correcta llevaba semanas escrita en
+`docs/legacy/` de este mismo repo: bastaba con buscar ahí antes de concluir.
 
 Un efecto lateral que vale anotar: los mensajes de ese chatbot llegan con `owner=true` y
 `operatorName: "Bot"`, así que el copiloto los guarda como **mensajes de asesor** (`human-agent`) — la
@@ -87,17 +116,29 @@ empaqueta su propia copia). Los seis bundles validan con esbuild.
 
 ## Lo que queda del lado de WATI (Isaac)
 
-El fix hace que el 400 sea raro, pero **la rama de error del chatbot sigue apuntando a una función
-muerta**. Hay que cambiarla en el constructor de chatbots de WATI:
+La recomendación **se mantiene**, con el motivo corregido: no es que el POST vaya a una función que no
+existe, es que va a una que **se apagó el 21-ago** y hoy responde 410. El efecto para el cliente es el
+mismo —contesta las tres preguntas y no se guarda nada— y lleva dos semanas ocurriendo.
+
+En el constructor de chatbots de WATI, en la rama de error:
 
 - **Quitar** las tres preguntas + el POST a `wati-address`.
 - **En su lugar**, un webhook-call a la captura del copiloto:
   `POST https://jbigmlcalcwiphqeudxd.functions.supabase.co/copilot-webhook?captura=1&key=<COPILOT_WEBHOOK_KEY>`
-  con body `{"waId": "{{phone}}"}`. El copiloto abre la conversación pidiendo los datos, los guarda en
-  **los dos lados** con `guardar_datos_envio`, y el asesor vuelve a disparar "Despachar a Shipday".
+  con body `{"waId": "{{phone}}"}`. El copiloto pide los datos, los guarda en **los dos lados** con
+  `guardar_datos_envio`, y el asesor vuelve a disparar "Despachar a Shipday".
 
-Mientras tanto, si un despacho da 400, la salida manual es la misma de siempre: pedir la dirección y
-volver a disparar.
+Esto es además lo que el retiro del 21-ago ya daba por hecho: la captura del copiloto **sustituye** a la
+del chatbot (por eso se retiró — duplicaba la ficha con otros nombres de atributo). Lo único que faltó
+fue desconectar el chatbot que seguía llamándola.
+
+Mientras tanto, si un despacho da 400, la salida manual es la de siempre: pedir la dirección y volver a
+disparar.
+
+**Deuda aparte:** el retiro se decidió sobre *"el negocio confirmó que su chatbot ya no se usa"*, y el
+chatbot atendió a 16 clientes en el último mes. Apagar un endpoint sin apagar a quien lo llama deja al
+cliente hablándole a una pared, en silencio y sin telemetría. Si algún día se retira otro, conviene que
+el stub registre en `job_log` cada llamada que reciba: es lo que habría delatado esto en 24 horas.
 
 ## Verificar tras desplegar
 
