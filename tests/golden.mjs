@@ -657,7 +657,8 @@ caso("v57: precio inválido → error precio_invalido", JSON.parse(calcularCotiz
 caso("v57: precio 0 → error (no cotiza gratis)", JSON.parse(calcularCotizacion([{ precio_usd: 0, cantidad: 2 }])).error === "precio_invalido");
 // wiring en el source real: tool definida, cableada en el dispatch, y en el whitelist de asistencia.
 caso("v57: index.ts define la tool calcular_cotizacion", /name: "calcular_cotizacion"/.test(src));
-caso("v57: index.ts cablea calcularCotizacion en el dispatch", /calcularCotizacion\(\(block\.input as any\)\.items\)/.test(src));
+// v125: el dispatch vive en ejecutarTool (compartido con la sombra OpenAI); el lock sigue al cableado real.
+caso("v57: index.ts cablea calcularCotizacion en el dispatch", /case "calcular_cotizacion": return calcularCotizacion\(inp\.items\);/.test(src));
 caso("v57: asistencia incluye calcular_cotizacion", /calcular_cotizacion/.test(assistFilter));
 caso("v57: SYSTEM_PROMPT tiene la regla CANTIDADES / VARIOS PRODUCTOS con calcular_cotizacion", /CANTIDADES \/ VARIOS PRODUCTOS/.test(SYSTEM_PROMPT) && /calcular_cotizacion/.test(SYSTEM_PROMPT));
 caso("v57: SYSTEM_PROMPT advierte del doble ITBMS (una sola vez sobre el subtotal)", /dos veces/.test(SYSTEM_PROMPT) && /una sola vez/i.test(SYSTEM_PROMPT));
@@ -1052,7 +1053,7 @@ caso("v63: rechaza http sin TLS", extraerFolletoPdf('<a href="http://cdn.shopify
 caso("v63: sin .pdf o sin href → null", extraerFolletoPdf('<a href="https://cdn.shopify.com/x.jpg">f</a>') === null && extraerFolletoPdf("texto plano") === null && extraerFolletoPdf(null) === null);
 // wiring
 caso("v63: tool consultar_folleto definida (producto_url + pregunta)", /name: "consultar_folleto"/.test(src) && /required: \["producto_url", "pregunta"\]/.test(src));
-caso("v63: dispatch cableado", /await consultarFolleto\(\(block\.input as any\)\.producto_url \?\? "", \(block\.input as any\)\.pregunta \?\? ""\)/.test(src));
+caso("v63: dispatch cableado", /case "consultar_folleto": return await consultarFolleto\(inp\.producto_url \?\? "", inp\.pregunta \?\? ""\);/.test(src));
 caso("v63: consultar_folleto disponible en MODO ASISTENCIA (read-only)", assistFilter.length > 0 && /consultar_folleto/.test(assistFilter));
 caso("v63: el handle se sanea y la URL de la ficha la construimos NOSOTROS (anti-SSRF)", /\/\^\[a-z0-9_-\]\+\$\/i\.test\(handle\)/.test(src) && /\$\{STORE_APEX\}\/products\/\$\{handle\}\.json/.test(src));
 caso("v63: tope de tamaño del PDF y timeouts", /buf\.byteLength > 4_500_000/.test(src) && /AbortSignal\.timeout\(12000\)/.test(src));
@@ -1664,7 +1665,76 @@ caso("v123: 'sistema-wati' NO se rotula como asesor del equipo", (() => {
   const bloque = src.slice(i, i + 600);
   return i > -1 && /\[Asesor del equipo\]/.test(bloque) && !/sistema-wati" \? "\[Asesor/.test(bloque);
 })());
-caso("v123: el healthcheck delata la versión", /version: "v123\.1-burbuja-4s"/.test(src));
+caso("v123: el healthcheck delata la versión (v125)", /version: "v125-asesor-sombra-openai-ficha-foto"/.test(src));
+
+// --- v125: el asesor es "él" -------------------------------------------------------------------
+console.log("v125 identidad masculina");
+const corregirGeneroBot = extraerFuncion("corregirGeneroBot");
+// Decisión de Gerencia (03-sep): los asesores humanos son hombres; el copiloto habla igual.
+caso("v125: el prompt fija la voz en masculino (QUIÉN ERES)", /QUIÉN ERES: hablas como UN asesor de la tienda, en MASCULINO/.test(SYSTEM_PROMPT) && /NUNCA el femenino \("encantada", "quedo atenta"/.test(SYSTEM_PROMPT));
+caso("v125: el prompt aclara que 'un asesor' es una PERSONA, no el bot", /cuando estas reglas dicen "un asesor" se refieren a una PERSONA del equipo, no a ti/.test(SYSTEM_PROMPT));
+// Candado determinista: concordancias en primera persona que no admiten otra lectura.
+caso("v125: encantada → encantado (con mayúscula conservada)", corregirGeneroBot("Encantada de ayudarle 😊") === "Encantado de ayudarle 😊" && corregirGeneroBot("estoy encantada de atenderle") === "estoy encantado de atenderle");
+caso("v125: quedo atenta → quedo atento", corregirGeneroBot("Quedo atenta a su respuesta.") === "Quedo atento a su respuesta.");
+caso("v125: estoy/estaré/sigo + lista/dispuesta/pendiente", corregirGeneroBot("Estoy lista para ayudarle") === "Estoy listo para ayudarle" && corregirGeneroBot("Estaré atenta por aquí") === "Estaré atento por aquí" && corregirGeneroBot("sigo dispuesta a apoyarle") === "sigo dispuesto a apoyarle");
+caso("v125: 'muy'/'siempre' entre el verbo y el adjetivo también", corregirGeneroBot("Quedo muy atenta") === "Quedo muy atento" && corregirGeneroBot("me mantengo siempre atenta") === "me mantengo siempre atento");
+caso("v125: yo misma → yo mismo", corregirGeneroBot("Yo misma le confirmo el precio") === "Yo mismo le confirmo el precio");
+caso("v125: 'atenta para ayudarle' sin verbo también", corregirGeneroBot("Atenta para ayudarle en lo que necesite") === "Atento para ayudarle en lo que necesite");
+// Lo que NO debe tocar: el cliente, un producto, una cotización.
+caso("v125: no toca a la clienta ni a un producto", corregirGeneroBot("Gracias por estar atenta, señora Ana") === "Gracias por estar atenta, señora Ana" && corregirGeneroBot("La impresora está lista para retirar") === "La impresora está lista para retirar" && corregirGeneroBot("Su cotización queda lista hoy") === "Su cotización queda lista hoy");
+caso("v125: texto ya masculino o sin género queda idéntico", corregirGeneroBot("Con gusto le ayudo. Quedo atento.") === "Con gusto le ayudo. Quedo atento." && corregirGeneroBot("") === "");
+caso("v125: el candado corre en el flujo normal Y en asistencia", (src.match(/corregirGeneroBot\(reaplicarTracking\(limpiarWhatsApp\(r\.text\), linksTracked\)\)/g) || []).length >= 2);
+
+// --- v125: sombra de modelos OpenAI --------------------------------------------------------------
+console.log("v125 sombra OpenAI");
+caso("v125: gateada por COPILOT_SOMBRA_OPENAI (lista de modelos; vacía = off) y requiere OPENAI_API_KEY", /const SOMBRA_OPENAI_MODELS = \(Deno\.env\.get\("COPILOT_SOMBRA_OPENAI"\) \?\? ""\)/.test(src) && /const SOMBRA_OPENAI_ACTIVA = SOMBRA_OPENAI_MODELS\.length > 0 && !!OPENAI_API_KEY;/.test(src));
+caso("v125: muestreo por COPILOT_SOMBRA_OPENAI_PCT (default 100, 0-100)", /COPILOT_SOMBRA_OPENAI_PCT/.test(src) && /Math\.max\(0, Math\.min\(n, 100\)\) : 100/.test(src));
+// La sombra no le cambia nada al cliente: arranca DESPUÉS de la respuesta real y en segundo plano.
+caso("v125: la sombra arranca después de `final` y en waitUntil", (() => {
+  const iFinal = src.indexOf("if (!final) final = { text: null, toolCalls, tokensIn, tokensOut, cacheRead, cacheWrite, agotado: true };");
+  const iSombra = src.indexOf("const ps = sombraOpenAI(sombraCtx, final, waId);");
+  return iFinal > -1 && iSombra > iFinal && /EdgeRuntime\.waitUntil\(ps\)/.test(src);
+})());
+// Sin efectos: las tools que escriben van stubeadas y la búsqueda no emite ref_codes.
+caso("v125: en sombra guardar_lead/guardar_datos_envio se stubean", /if \(sombra && \(nombre === "guardar_lead" \|\| nombre === "guardar_datos_envio"\)\)/.test(src));
+caso("v125: en sombra buscar_producto no emite ref_codes (sinRef)", /sombra \? \{ sinRef: true \} : undefined/.test(src) && /opciones\?\.sinRef \? top\.map\(\(p\) => String\(p\.url \?\? ""\)\) : await urlsConRef/.test(src));
+caso("v125: el loop real y la sombra usan el MISMO despachador (ejecutarTool)", /await ejecutarTool\(block\.name, block\.input, waId, linksTracked, fichas, false\)/.test(src) && /await ejecutarTool\(nombre, input, waId, links, undefined, true\)/.test(src));
+caso("v125: la sombra NO escribe en messages (solo job_log sombra_openai)", (() => {
+  const i = src.indexOf("async function sombraOpenAI(");
+  const fin = src.indexOf("async function responderLLM(", i);
+  const cuerpo = src.slice(i, fin);
+  return i > -1 && /log\("sombra_openai"/.test(cuerpo) && !/from\("messages"\)/.test(cuerpo) && !/enviarWati\(/.test(cuerpo);
+})());
+caso("v125: el error de OpenAI se loguea con la key enmascarada (lección v68)", /replaceAll\(OPENAI_API_KEY, "\*\*\*"\)\.replace\(\/sk-\[A-Za-z0-9_\\-\]\{6,\}\/g, "sk-\*\*\*"\)\.slice\(0, 300\)/.test(src));
+caso("v125: descripciones de tools >1024 van completas en el system de la sombra", /function sombraSystem\(/.test(src) && /String\(t\.description \?\? ""\)\.slice\(0, 1024\)/.test(src));
+caso("v125: healthcheck expone la sombra", /sombra_openai: SOMBRA_OPENAI_MODELS/.test(src) && /sombra_openai_pct: SOMBRA_OPENAI_PCT/.test(src));
+
+// --- v125: ficha con foto ------------------------------------------------------------------------
+console.log("v125 ficha con foto");
+const fichaParaImagen = extraerFuncion("fichaParaImagen");
+const normTitulo = extraerFuncion("normTitulo");
+caso("v125: gateada por COPILOT_FICHA_IMAGEN (default OFF)", /const FICHA_IMAGEN = \(Deno\.env\.get\("COPILOT_FICHA_IMAGEN"\) \?\? ""\)\.trim\(\) === "1"/.test(src));
+caso("v125: la regla del link va en el bloque dinámico y solo con el flag (el prefijo cacheado no cambia)", /ctxDatos \+ \(FICHA_IMAGEN \? FICHA_SUFFIX : ""\)/.test(src) && !/FICHA CON FOTO/.test(SYSTEM_PROMPT));
+caso("v125: el sufijo reserva el link para la repregunta y prohíbe foto en listas/asistencia", /El LINK se entrega cuando el cliente vuelve a preguntar por ESE producto/.test(src) && /en MODO ASISTENCIA no hay foto/.test(src));
+// La foto sale del MISMO resultado que el precio: la elección es en código, por título/handle del turno.
+const FICHAS = { "epson-l3250": { titulo: "Impresora Epson EcoTank L3250", imagen_url: "https://cdn.shopify.com/s/files/1/x/l3250.jpg", url: "https://quickservicepanama.com/products/epson-l3250" }, "tinta-544": { titulo: "Tinta Epson T544 Negro", imagen_url: "https://cdn.shopify.com/s/files/1/x/t544.jpg", url: "https://quickservicepanama.com/products/tinta-544" } };
+caso("v125: UN producto por título exacto (con negrita y acentos) → su ficha", (fichaParaImagen("Claro 👍 le comparto la *Impresora Epson EcoTank L3250*\n[[---]]\n*$249.00 + ITBMS*", FICHAS) || {}).imagen_url === FICHAS["epson-l3250"].imagen_url);
+caso("v125: por handle en el link también", (fichaParaImagen("Aquí está: https://quickservicepanama.com/products/tinta-544?utm_source=x", FICHAS) || {}).titulo === "Tinta Epson T544 Negro");
+caso("v125: dos productos en el texto (lista) → sin foto", fichaParaImagen("Tenemos la *Impresora Epson EcoTank L3250* y la *Tinta Epson T544 Negro*", FICHAS) === null);
+caso("v125: ninguno → sin foto; sin fichas → sin foto", fichaParaImagen("¿Para qué impresora la necesita?", FICHAS) === null && fichaParaImagen("*Impresora Epson EcoTank L3250*", undefined) === null);
+caso("v125: una ficha sin imagen no cuenta", fichaParaImagen("*Sin foto XL*", { "sin-foto": { titulo: "Sin foto XL", imagen_url: "", url: "" } }) === null);
+caso("v125: normTitulo quita acentos, negrita y espacios dobles", normTitulo("  *Tóner  Brother TN-830XL*  ") === "toner brother tn-830xl");
+// Cableado del envío: fila ANTES de enviar (v21), foto → pie con la parte (1), resto sigue su camino; el eco se reconoce.
+caso("v125: fila copilot-imagen insertada ANTES de enviar la foto", (() => { const i1 = src.indexOf('model: "copilot-imagen" }).select("id")'); const i2 = src.indexOf("imagenEnviada = await enviarImagenWati("); return i1 > -1 && i2 > -1 && i1 < i2; })());
+caso("v125: la foto solo con flag + live + sin respuesta de respaldo", /const fichaImagen = \(FICHA_IMAGEN && quiereEnviar && salida && !fugaTool && !inventado\.length && !r\.agotado\) \? fichaParaImagen\(salida, fichas\) : null;/.test(src));
+caso("v125: el pie es la parte (1) y, si salió la foto, esa parte no se repite", /const pie = partes\.length > 1 \? partes\[0\] : `\*\$\{fichaImagen\.titulo\}\*`;/.test(src) && /if \(partes\.length > 1\) \{ partes\.shift\(\); salida = partes\.join\("\\n\\n"\); \}/.test(src));
+caso("v125: la foto corre DESPUÉS del guard v120 y ANTES de partir en burbujas", (() => { const iGuard = src.indexOf("inventado = await linksInventados("); const iFoto = src.indexOf("const fichaImagen = (FICHA_IMAGEN"); const iBurb = src.indexOf("const enBurbujas = BURBUJAS && quiereEnviar && partes.length > 1;"); return iGuard > -1 && iGuard < iFoto && iFoto < iBurb; })());
+caso("v125: el eco de la foto propia se reconoce (no es un asesor mandando una captura)", /skipped: "eco_propio_imagen"/.test(src) && /eq\("model", "copilot-imagen"\)\.gte\("created_at", desdeImg\)/.test(src));
+caso("v125: enviarImagenWati pasa por WA_IGNORAR y solo acepta hosts nuestros/Shopify", (() => { const i = src.indexOf("async function enviarImagenWati("); const c = src.slice(i, i + 3000); return i > -1 && /WA_IGNORAR\.has\(soloDigitos\(waId\)\)/.test(c) && /host === "cdn\.shopify\.com"/.test(c) && /sendSessionFile/.test(c); })());
+caso("v125: webp no se manda (WhatsApp lo vuelve sticker)", /if \(!\/\^image\\\/\(jpeg\|png\)\$\/\.test\(mt\)\)/.test(src));
+caso("v125: la foto viene atada al resultado de buscar_producto (fichas se llenan en enriquecer, no del modelo)", /fichas\[h\.toLowerCase\(\)\] = \{ titulo: String\(p\.titulo\), imagen_url: String\(img\), url: urls\[i\] \};/.test(src));
+caso("v125: inventarioShopify trae featuredImage en el mismo viaje", /totalInventory featuredImage \{ url \}/.test(src));
+caso("v125: healthcheck expone ficha_imagen", /ficha_imagen: FICHA_IMAGEN/.test(src));
 
 // --- resumen --------------------------------------------------------------------------------------
 console.log(`\n${ok} OK, ${mal} FALLA${mal === 1 ? "" : "S"}`);
