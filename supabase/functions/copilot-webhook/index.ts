@@ -504,6 +504,16 @@ const BUSQUEDA_SHADOW = (Deno.env.get("BUSQUEDA_SHADOW") ?? "").trim() === "1";
 // v60 — FLIP: motor de búsqueda primario = search_catalog (Catalog MCP) en vez de suggest.json. Default OFF
 // (deploy = no-op hasta flipear). suggest.json queda de fallback de confiabilidad + verificador de código.
 const BUSQUEDA_MCP = (Deno.env.get("BUSQUEDA_MCP") ?? "").trim() === "1";
+// v120 — RÉPLICA DEL CATÁLOGO como motor de búsqueda. Modos (ADN de COPILOT_MODE: inválido → off):
+//   off      · no se toca (default; deploy no-op)
+//   shadow   · el cliente recibe LO DE SIEMPRE; en background se registra qué habría respondido la
+//              réplica, para decidir el flip CON DATOS y por clase de consulta (la fase 4 del diseño).
+//   codigos  · la réplica responde PRIMERO solo cuando la consulta trae un código de modelo o pide un
+//              consumible "para [modelo]" — su terreno determinista.
+//   primaria · la réplica va primero siempre; el MCP queda de complemento semántico.
+// El shadow es el mismo patrón v59 con el que entró el MCP: mide antes de cambiarle nada al cliente.
+const BUSQUEDA_REPLICA_RAW = (Deno.env.get("BUSQUEDA_REPLICA") ?? "").trim().toLowerCase();
+const BUSQUEDA_REPLICA = ["shadow", "codigos", "primaria"].includes(BUSQUEDA_REPLICA_RAW) ? BUSQUEDA_REPLICA_RAW : "off";
 // v61 — cuántos productos se le PIDEN al MCP (la spec UCP permite 1-50; 10 es el default de Shopify). Se pide
 // de más para poder RE-RANKEAR en código (el combo de una familia de tintas caía en posición 6+ y nunca
 // llegaba al modelo); al modelo se le siguen entregando máx 5 → sin cambio de costo de tokens/ref_codes.
@@ -1756,6 +1766,76 @@ async function compararShadow(consulta: string, salidaBuscar: string): Promise<v
   }
 }
 
+// === v120 — MOTOR LÉXICO SOBRE LA RÉPLICA ==========================================================
+// La réplica (tabla `catalogo`, sincronizada desde Shopify) es el catálogo COMPLETO: incluye AGOTADOS
+// y borradores, que es justo lo que el motor de compra de Shopify no devuelve. Ese hueco convirtió
+// "está agotado" en "no lo tenemos" para un cliente que esperaba reposición (caso C9344, 28-ago).
+//
+// Tres caminos, todos deterministas y en NUESTRO Postgres — el ranking deja de ser ajeno:
+//   1. "para [modelo]" → lookup por TAG de compatibilidad: devuelve el conjunto COMPLETO (el combo ya
+//      no se puede esconder en la posición 6, que fue el caso v61).
+//   2. código de modelo → título/SKU por texto, con y sin guion (la escalera v18/v55 en SQL).
+//   3. texto libre → FTS en español con unaccent + sinónimos del negocio (morada→magenta).
+// Devuelve el MISMO shape que parseCatalogoMCP para que `enriquecer` lo trate igual (precio y stock
+// siguen saliendo EN VIVO: la réplica decide QUÉ mostrar, nunca cuánto cuesta).
+async function buscarEnReplica(consulta: string, limite = BUSQUEDA_MCP_LIMIT): Promise<any[]> {
+  const q = String(consulta ?? "").trim();
+  if (!q) return [];
+  const { data, error } = await sb.rpc("buscar_catalogo", { p_consulta: q, p_limite: limite });
+  if (error) throw new Error(`replica_rpc_${String(error.message ?? error).slice(0, 80)}`);
+  return (data ?? []).map((r: any) => ({
+    id: r.gid,
+    titulo: r.titulo,
+    precio_usd: r.precio_usd,
+    marca: r.marca,
+    tipo: r.tipo,
+    url: `${STORE}/products/${r.handle}`,
+    descripcion_html: r.descripcion ?? "",
+    // Diagnóstico del shadow: por qué entró (tag | codigo | fts) y si está agotado — la clase de
+    // producto que el motor de Shopify no devuelve.
+    _via: r.via,
+    _status: r.status,
+  }));
+}
+
+// Compara el resultado REAL de buscarProducto contra la RÉPLICA y lo registra. Corre en background:
+// no cambia la respuesta ni agrega latencia al cliente. NUNCA lanza hacia el camino del cliente.
+async function compararReplica(consulta: string, salidaBuscar: string): Promise<void> {
+  try {
+    let actuales: string[] = [];
+    try {
+      const p = JSON.parse(salidaBuscar);
+      if (Array.isArray(p)) actuales = p.map((x: any) => String((x && x.titulo) ?? "")).filter(Boolean);
+    } catch { /* no era un array de productos (error/aproximada): actuales queda vacío */ }
+    const t0 = Date.now();
+    let rep: any[] = [];
+    let repError: string | null = null;
+    try { rep = await buscarEnReplica(consulta); } catch (e) { repError = String(e).slice(0, 120); }
+    const titulos = rep.map((r) => String(r.titulo ?? "")).filter(Boolean);
+    // CLASE de consulta: el flip de la fase 4 se decide por clase, no en bloque — la réplica gana en
+    // códigos y compatibilidad, y el MCP probablemente siga ganando en lenguaje difuso.
+    const codigos = modelosEn(consulta);
+    const clase = /\bpara\b/i.test(consulta) && codigos.length ? "para_modelo"
+      : codigos.length ? "codigo"
+      : /11x17|13x19|tabloide|pulgada|gramaje|cartulina|dúplex|duplex/i.test(consulta) ? "atributo"
+      : "libre";
+    await log("busqueda_replica_shadow", !repError, {
+      consulta: String(consulta).slice(0, 120), clase,
+      actual_n: actuales.length, replica_n: titulos.length,
+      actual_top3: actuales.slice(0, 3), replica_top3: titulos.slice(0, 3),
+      replica_ms: Date.now() - t0,
+      // Lo que el shadow existe para medir:
+      replica_rescata: actuales.length === 0 && titulos.length > 0,   // el motor actual no halló y la réplica sí
+      replica_pierde: titulos.length === 0 && actuales.length > 0,    // regresión potencial
+      agotados_solo_en_replica: rep.filter((r) => r._status !== "active").length,
+      via: [...new Set(rep.map((r) => r._via).filter(Boolean))],
+      ...(repError ? { replica_error: repError } : {}),
+    });
+  } catch (e) {
+    try { await log("busqueda_replica_shadow", false, { consulta: String(consulta).slice(0, 120), error: String(e).slice(0, 160) }); } catch { /* nunca romper */ }
+  }
+}
+
 async function buscarProducto(consulta: string, waId: string = "", linksTracked?: Record<string, string>): Promise<string> {
   // Consulta libre tal cual; si no encuentra, reintenta por: (v53) la versión normalizada de dimensiones,
   // (v18) el código de modelo con/sin guion, y (v54) los modelos espaciados JUNTADOS. Deduplica.
@@ -2856,6 +2936,13 @@ async function responderLLM(history: { role: string; content: string; model?: st
           // @ts-ignore EdgeRuntime es global en Supabase Edge Functions
           if (typeof EdgeRuntime !== "undefined") EdgeRuntime.waitUntil(st); else st.catch(() => {});
         }
+        // v120 — SHADOW DE LA RÉPLICA: mismo patrón, en background y sin tocar la respuesta. Mide por
+        // clase de consulta para decidir el flip con datos (fase 4 del diseño del mapa).
+        if (BUSQUEDA_REPLICA === "shadow" && block.name === "buscar_producto") {
+          const rt = compararReplica((block.input as any).consulta ?? "", out);
+          // @ts-ignore EdgeRuntime es global en Supabase Edge Functions
+          if (typeof EdgeRuntime !== "undefined") EdgeRuntime.waitUntil(rt); else rt.catch(() => {});
+        }
         results.push({ type: "tool_result", tool_use_id: block.id, content: out });
       }
     }
@@ -3842,7 +3929,7 @@ Deno.serve(async (req) => {
         texto: tr?.texto ?? null, ts: new Date().toISOString(),
       });
     }
-    return Response.json({ status: "ok", function: "copilot-webhook", version: "v121.1-secuencia-completa", mode: MODE, mode_raw: MODE_RAW, model: MODEL, llm_configured: !!anthropic, wati_send_configured: !!(WATI_API_TOKEN && WATI_API_BASE), inventario_configurado: !!(SHOPIFY_ADMIN_TOKEN && SHOPIFY_ADMIN_API_BASE), resolve_configured: !!RESOLVE_SECRET, webhook_key_es_default: WEBHOOK_KEY_ES_DEFAULT, handoff_assist_min: HANDOFF_ASSIST_MIN, hist_asistencia: HIST_ASISTENCIA, handoff_cold_hours: HANDOFF_COLD_HOURS, debounce_ms: DEBOUNCE_MS, sesion_gap_dias: SESION_GAP_DIAS, burbujas: BURBUJAS, burbuja_ms: BURBUJA_MS, audio_puente: AUDIO_PUENTE, sweep: SWEEP_MODE, sweep_espera_min: SWEEP_ESPERA_MIN, stt: STT_MODE, stt_raw: STT_RAW, stt_configurado: !!OPENAI_API_KEY, stt_model: STT_MODEL, busqueda_shadow: BUSQUEDA_SHADOW, busqueda_mcp: BUSQUEDA_MCP, busqueda_mcp_limit: BUSQUEDA_MCP_LIMIT, catalog_mcp_url: CATALOG_MCP_URL, ucp_profile_url: UCP_PROFILE_URL, live_targets: MODE === "live" ? (LIVE_ALL ? "all" : LIVE_ALLOWLIST.length) : 0, wa_ignorar: WA_IGNORAR.size, ts: new Date().toISOString() });
+    return Response.json({ status: "ok", function: "copilot-webhook", version: "v122-replica-shadow", mode: MODE, mode_raw: MODE_RAW, model: MODEL, llm_configured: !!anthropic, wati_send_configured: !!(WATI_API_TOKEN && WATI_API_BASE), inventario_configurado: !!(SHOPIFY_ADMIN_TOKEN && SHOPIFY_ADMIN_API_BASE), resolve_configured: !!RESOLVE_SECRET, webhook_key_es_default: WEBHOOK_KEY_ES_DEFAULT, handoff_assist_min: HANDOFF_ASSIST_MIN, hist_asistencia: HIST_ASISTENCIA, handoff_cold_hours: HANDOFF_COLD_HOURS, debounce_ms: DEBOUNCE_MS, sesion_gap_dias: SESION_GAP_DIAS, burbujas: BURBUJAS, burbuja_ms: BURBUJA_MS, audio_puente: AUDIO_PUENTE, sweep: SWEEP_MODE, sweep_espera_min: SWEEP_ESPERA_MIN, stt: STT_MODE, stt_raw: STT_RAW, stt_configurado: !!OPENAI_API_KEY, stt_model: STT_MODEL, busqueda_shadow: BUSQUEDA_SHADOW, busqueda_replica: BUSQUEDA_REPLICA, busqueda_replica_raw: BUSQUEDA_REPLICA_RAW, busqueda_mcp: BUSQUEDA_MCP, busqueda_mcp_limit: BUSQUEDA_MCP_LIMIT, catalog_mcp_url: CATALOG_MCP_URL, ucp_profile_url: UCP_PROFILE_URL, live_targets: MODE === "live" ? (LIVE_ALL ? "all" : LIVE_ALLOWLIST.length) : 0, wa_ignorar: WA_IGNORAR.size, ts: new Date().toISOString() });
   }
   if (req.method !== "POST") return Response.json({ error: "method_not_allowed" }, { status: 405 });
   if (url.searchParams.get("key") !== WEBHOOK_KEY) return Response.json({ error: "forbidden" }, { status: 403 });
