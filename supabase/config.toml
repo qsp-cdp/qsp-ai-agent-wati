@@ -1,0 +1,32 @@
+# Ref del proyecto de Supabase de Quick Service Panama
+project_id = "jbigmlcalcwiphqeudxd"
+
+# Los webhooks externos (Shopify, Shipday, WATI) no envían JWT de Supabase;
+# la seguridad la dan la firma HMAC de Shopify y los tokens propios.
+# El copiloto también es un webhook público (guardado por ?key=): verify_jwt debe quedar en false
+# para que un `supabase functions deploy` general no le active JWT por defecto y deje mudo al bot.
+[functions.copilot-webhook]
+verify_jwt = false
+
+[functions.shopify-webhook]
+verify_jwt = false
+
+[functions.wati-order]
+verify_jwt = false
+
+[functions.contacts-lookup]
+verify_jwt = false
+
+[functions.wati-address]
+verify_jwt = false
+
+[functions.shipday-status]
+verify_jwt = false
+
+# Cron de re-enganche de fin de semana (v51): disparado por pg_cron vía net.http_post, guardado por ?key=.
+[functions.reengage-expired]
+verify_jwt = false
+
+# Watchdog de actividad (v69): disparado por pg_cron cada 30 min en horario hábil, guardado por ?key=.
+[functions.watchdog]
+verify_jwt = false

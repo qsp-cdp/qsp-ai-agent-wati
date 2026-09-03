@@ -1,0 +1,12 @@
+{
+  "artboards": [
+    { "file": "Main.dc.html", "x": 0, "y": 0, "w": 600, "h": 900, "title": "Sistema caído" },
+    { "file": "Desatencion.dc.html", "x": 680, "y": 0, "w": 600, "h": 900, "title": "Cliente esperando" },
+    { "file": "Resumen.dc.html", "x": 1360, "y": 0, "w": 600, "h": 1180, "title": "Cómo va el día" }
+  ],
+  "annotations": [
+    { "id": "nota-email", "x": 0, "y": -150, "w": 620, "text": "Plantillas de correo del copiloto.\n\nTodo está construido con HTML apto para correo: tablas, estilos en línea, tipografías del sistema y 540px de ancho útil. Se ven igual en Gmail del teléfono.\n\nLos colores viven en los BORDES y en franjas claras, no en fondos oscuros: el modo oscuro de Gmail invierte los fondos y arruinaría un encabezado de color sólido." },
+    { "id": "nota-jerarquia", "x": 1360, "y": -150, "w": 600, "text": "Orden deliberado: primero lo accionable (quién espera), después la salud del sistema.\n\nUn correo que abre con estadísticas entrena al equipo a ignorarlo." }
+  ],
+  "launch": { "view": "canvas" }
+}

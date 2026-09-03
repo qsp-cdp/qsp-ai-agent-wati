@@ -1,0 +1,26 @@
+# Dependencies
+node_modules/
+
+# Environment / secrets
+.env
+.env.local
+.watirc
+
+# Logs
+*.log
+npm-debug.log*
+
+# OS / editor
+.DS_Store
+.idea/
+.vscode/
+*.swp
+
+# Datos del puente de entregas (contactos/CSVs no van al repo, salvo el ejemplo)
+data/contacts.json
+data/*.csv
+!data/ejemplo-tookan-export.csv
+
+# Lienzo de diseño sembrado (~2 MB del editor, se regenera desde los .dc.html)
+design/*.html
+!design/*.dc.html

@@ -1,0 +1,242 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Envíos al interior y recogida en sucursal · Quick Service Panamá</title>
+  <!--
+    Página lista para Shopify (estática, sin JavaScript → no se rompe con el sanitizador).
+    · Previsualizar: abrí este archivo en el navegador.
+    · Shopify: Tienda online → Páginas → Agregar página → botón <> "Mostrar HTML" y pegá
+      TODO lo que está entre las marcas "PEGAR DESDE AQUÍ / HASTA AQUÍ".
+    · Color de marca: editá --qsp-accent en el <style>.
+    · Datos de sucursales: tomados de la red Servientrega (45 puntos). CDS Las Tablas: teléfono
+      y horario por confirmar (el sitio de Servientrega los muestra duplicados con Mañanitas).
+  -->
+</head>
+<body>
+
+<!-- ===================== PEGAR DESDE AQUÍ EN SHOPIFY ===================== -->
+<div class="qsp-envios">
+  <style>
+    .qsp-envios{
+      --qsp-accent:#1d4ed8;          /* color de marca — cambialo si hace falta */
+      --qsp-accent-dark:#1742a8;
+      --qsp-green:#15803d;
+      --qsp-ink:#1f2937;
+      --qsp-muted:#5b6573;
+      --qsp-line:#e6e9ef;
+      --qsp-soft:#f7f9fc;
+      --qsp-radius:16px;
+      max-width:920px;margin:0 auto;padding:8px 18px 48px;
+      font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+      color:var(--qsp-ink);line-height:1.6;font-size:1.0625rem;-webkit-font-smoothing:antialiased;
+    }
+    .qsp-envios *{box-sizing:border-box}
+    .qsp-envios a{color:var(--qsp-accent)}
+    .qsp-envios .qsp-hero{text-align:center;padding:34px 0 6px}
+    .qsp-envios .qsp-badge{display:inline-block;background:rgba(29,78,216,.08);color:var(--qsp-accent);
+      font-weight:600;font-size:.9rem;letter-spacing:.04em;text-transform:uppercase;
+      padding:6px 14px;border-radius:999px;margin-bottom:16px}
+    .qsp-envios .qsp-hero h1{font-size:2.4rem;margin:0 0 12px;letter-spacing:-.02em;line-height:1.2}
+    .qsp-envios .qsp-hero p{font-size:1.3rem;color:var(--qsp-muted);max-width:640px;margin:0 auto}
+    .qsp-envios h2{font-size:1.65rem;margin:42px 0 18px;letter-spacing:-.01em;text-align:center}
+    .qsp-envios .qsp-steps{display:grid;grid-template-columns:repeat(2,1fr);gap:16px}
+    .qsp-envios .qsp-step{background:#fff;border:1px solid var(--qsp-line);border-radius:var(--qsp-radius);
+      padding:22px 20px;box-shadow:0 1px 3px rgba(16,24,40,.05)}
+    .qsp-envios .qsp-step .n{display:inline-flex;align-items:center;justify-content:center;width:36px;height:36px;
+      border-radius:50%;background:var(--qsp-accent);color:#fff;font-weight:700;font-size:1.15rem;margin-bottom:12px}
+    .qsp-envios .qsp-step h3{margin:0 0 6px;font-size:1.22rem}
+    .qsp-envios .qsp-step p{margin:0;color:var(--qsp-muted);font-size:1.08rem}
+
+    /* Localizador de sucursales */
+    .qsp-envios .qsp-loc-intro{text-align:center;color:var(--qsp-muted);max-width:620px;margin:0 auto 18px}
+    .qsp-envios .qsp-nav{display:flex;flex-wrap:wrap;gap:8px;justify-content:center;margin:0 0 10px}
+    .qsp-envios .qsp-nav a{font-size:.95rem;font-weight:600;color:var(--qsp-accent);background:rgba(29,78,216,.07);
+      text-decoration:none;padding:7px 13px;border-radius:999px}
+    .qsp-envios .qsp-nav a:hover{background:rgba(29,78,216,.14)}
+    .qsp-envios .qsp-prov{scroll-margin-top:16px;margin:30px 0 4px;font-size:1.4rem;display:flex;align-items:center;
+      gap:10px;padding-bottom:8px;border-bottom:2px solid var(--qsp-line)}
+    .qsp-envios .qsp-prov .cnt{font-size:.88rem;font-weight:600;color:var(--qsp-muted);background:var(--qsp-soft);
+      border:1px solid var(--qsp-line);border-radius:999px;padding:2px 10px}
+    .qsp-envios .suc-grid{display:grid;grid-template-columns:repeat(2,1fr);gap:14px;margin-top:14px}
+    .qsp-envios .suc{background:#fff;border:1px solid var(--qsp-line);border-radius:var(--qsp-radius);
+      padding:16px 16px 14px;box-shadow:0 1px 2px rgba(16,24,40,.04)}
+    .qsp-envios .suc-top{display:flex;justify-content:space-between;align-items:flex-start;gap:8px;margin-bottom:8px}
+    .qsp-envios .suc-name{font-weight:700;font-size:1.15rem;line-height:1.3}
+    .qsp-envios .tag{font-size:.72rem;font-weight:700;letter-spacing:.03em;padding:3px 8px;border-radius:6px;
+      white-space:nowrap;flex-shrink:0}
+    .qsp-envios .tag-cds{background:rgba(29,78,216,.1);color:var(--qsp-accent)}
+    .qsp-envios .tag-av{background:rgba(21,128,61,.12);color:var(--qsp-green)}
+    .qsp-envios .suc-row{font-size:1.02rem;color:var(--qsp-muted);margin-top:4px}
+    .qsp-envios .suc-row.conf{color:#9a3412}
+
+    .qsp-envios .qsp-info{display:grid;grid-template-columns:repeat(2,1fr);gap:14px;margin-top:4px}
+    .qsp-envios .qsp-card{background:var(--qsp-soft);border:1px solid var(--qsp-line);
+      border-radius:var(--qsp-radius);padding:20px}
+    .qsp-envios .qsp-card .ic{font-size:1.7rem;line-height:1;margin-bottom:8px}
+    .qsp-envios .qsp-card h3{margin:0 0 6px;font-size:1.18rem}
+    .qsp-envios .qsp-card p{margin:0;color:var(--qsp-muted);font-size:1.08rem}
+    .qsp-envios .qsp-card strong{color:var(--qsp-ink)}
+    .qsp-envios .qsp-note{margin-top:18px;background:#fff7ed;border:1px solid #fed7aa;color:#9a3412;
+      border-radius:var(--qsp-radius);padding:16px 18px;font-size:1.08rem}
+    .qsp-envios .qsp-contact{text-align:center;margin-top:36px;padding-top:28px;border-top:1px solid var(--qsp-line)}
+    .qsp-envios .qsp-contact p{color:var(--qsp-muted);margin:0 0 16px}
+    .qsp-envios .qsp-wa{display:inline-flex;align-items:center;gap:9px;background:#25D366;color:#fff;
+      text-decoration:none;font-weight:700;font-size:1.05rem;padding:13px 26px;border-radius:999px}
+    .qsp-envios .qsp-wa:hover{filter:brightness(.96)}
+    @media(max-width:600px){
+      .qsp-envios .qsp-steps,.qsp-envios .qsp-info,.qsp-envios .suc-grid{grid-template-columns:1fr}
+      .qsp-envios .qsp-hero h1{font-size:1.9rem}
+    }
+  </style>
+
+  <div class="qsp-hero">
+    <span class="qsp-badge">Envíos al interior del país</span>
+    <h1>Recoge tu pedido en la sucursal más cercana</h1>
+    <p>Si vives en el interior, puedes recibir tus compras de Quick Service Panamá en la
+       agencia más cercana a ti. Rápido, seguro y sin complicaciones.</p>
+  </div>
+
+  <h2>¿Cómo funciona?</h2>
+  <div class="qsp-steps">
+    <div class="qsp-step"><span class="n">1</span><h3>Elige “Recoger en sucursal”</h3>
+      <p>Al finalizar tu compra, selecciona la opción de envío a sucursal del interior.</p></div>
+    <div class="qsp-step"><span class="n">2</span><h3>Despachamos tu pedido</h3>
+      <p>Lo enviamos a la agencia que elijas. Por lo general llega al día hábil siguiente.</p></div>
+    <div class="qsp-step"><span class="n">3</span><h3>Te avisamos</h3>
+      <p>Te notificamos cuando tu pedido esté listo para retirar en la sucursal.</p></div>
+    <div class="qsp-step"><span class="n">4</span><h3>Retira tu pedido</h3>
+      <p>Acércate a la sucursal con tu cédula o identificación. ¡A disfrutar tu compra!</p></div>
+  </div>
+
+  <h2>📍 Sucursales Servientrega para recogida</h2>
+  <p class="qsp-loc-intro">Trabajamos con la red Servientrega, que tiene 45 puntos de recogida en todo el país: envía tu pedido a la ciudad más cercana y retíralo ahí. Elige la provincia para ver
+     las sucursales, sus teléfonos y horarios.</p>
+  <div class="qsp-nav">
+    <a href="#prov-panama">Panamá</a>
+    <a href="#prov-panama-oeste">Panamá Oeste</a>
+    <a href="#prov-colon">Colón</a>
+    <a href="#prov-cocle">Coclé</a>
+    <a href="#prov-herrera">Herrera</a>
+    <a href="#prov-los-santos">Los Santos</a>
+    <a href="#prov-veraguas">Veraguas</a>
+    <a href="#prov-chiriqui">Chiriquí</a>
+    <a href="#prov-bocas">Bocas del Toro</a>
+    <a href="#prov-darien">Darién</a>
+    <a href="#prov-otras">Otras</a>
+  </div>
+
+  <h3 class="qsp-prov" id="prov-panama">Panamá <span class="cnt">15 sucursales</span></h3>
+  <div class="suc-grid">
+    <div class="suc"><div class="suc-top"><span class="suc-name">CDS Parque Lefevre</span><span class="tag tag-cds">CDS</span></div><div class="suc-row">📞 2133000</div><div class="suc-row">🕒 Lun–Vie 8:00 AM–7:00 PM · Sáb 8:00 AM–3:00 PM</div></div>
+    <div class="suc"><div class="suc-top"><span class="suc-name">CDS Plaza Aventura – El Dorado</span><span class="tag tag-cds">CDS</span></div><div class="suc-row">📞 62069207</div><div class="suc-row">🕒 Lun–Vie 8:00 AM–5:30 PM (almuerzo 12–1) · Sáb 8:00 AM–1:00 PM</div></div>
+    <div class="suc"><div class="suc-top"><span class="suc-name">CDS Plaza Concordia – Vía España</span><span class="tag tag-cds">CDS</span></div><div class="suc-row">📞 62527762</div><div class="suc-row">🕒 Lun–Vie 8:00 AM–5:00 PM (almuerzo 1–2) · Sáb 8:00 AM–1:00 PM</div></div>
+    <div class="suc"><div class="suc-top"><span class="suc-name">CDS Paitilla – Vía Italia</span><span class="tag tag-cds">CDS</span></div><div class="suc-row">📞 63003052</div><div class="suc-row">🕒 Lun–Vie 8:00 AM–5:00 PM (almuerzo 12–1) · Sáb 8:00 AM–1:00 PM</div></div>
+    <div class="suc"><div class="suc-top"><span class="suc-name">CDS Logística Móvil</span><span class="tag tag-cds">CDS</span></div><div class="suc-row">📞 62069238</div><div class="suc-row">🕒 Lun–Vie 8:00 AM–5:30 PM · Sáb 8:00 AM–1:30 PM</div></div>
+    <div class="suc"><div class="suc-top"><span class="suc-name">CDS Los Andes Mall – San Miguelito</span><span class="tag tag-cds">CDS</span></div><div class="suc-row">📞 62821785</div><div class="suc-row">🕒 Lun–Vie 8:00 AM–5:00 PM (almuerzo 1–2) · Sáb 8:00 AM–1:00 PM</div></div>
+    <div class="suc"><div class="suc-top"><span class="suc-name">CDS Mañanitas</span><span class="tag tag-cds">CDS</span></div><div class="suc-row">📞 62034204</div><div class="suc-row">🕒 Lun–Vie 8:00 AM–5:00 PM · Sáb 8:00 AM–1:00 PM</div></div>
+    <div class="suc"><div class="suc-top"><span class="suc-name">AV Perugraff (Torti)</span><span class="tag tag-av">AGENTE</span></div><div class="suc-row">📞 69797445</div><div class="suc-row">🕒 Lun–Sáb 9 AM–6 PM</div></div>
+    <div class="suc"><div class="suc-top"><span class="suc-name">AV TSB Cargo San Francisco</span><span class="tag tag-av">AGENTE</span></div><div class="suc-row">📞 3736590 / +507 6720-9891</div><div class="suc-row">🕒 Lun–Vie 8 AM–5 PM · Sáb 9 AM–2 PM · Dom 10 AM–2 PM</div></div>
+    <div class="suc"><div class="suc-top"><span class="suc-name">AV Cargo Box Express (Hato Pintado)</span><span class="tag tag-av">AGENTE</span></div><div class="suc-row">📞 +507 67768244 / 2754225</div><div class="suc-row">🕒 Lun–Vie 9 AM–6 PM · Sáb 9 AM–2 PM</div></div>
+    <div class="suc"><div class="suc-top"><span class="suc-name">AV Mr. Mail – El Dorado</span><span class="tag tag-av">AGENTE</span></div><div class="suc-row">📞 +507 6607-2164</div><div class="suc-row">🕒 Lun–Vie 10 AM–5:30 PM · Sáb 10 AM–1:30 PM</div></div>
+    <div class="suc"><div class="suc-top"><span class="suc-name">AV Mr Mail – Vía Argentina</span><span class="tag tag-av">AGENTE</span></div><div class="suc-row">📞 +507 6672-6745</div><div class="suc-row">🕒 Lun–Vie 10 AM–5:30 PM · Sáb 9 AM–1 PM</div></div>
+    <div class="suc"><div class="suc-top"><span class="suc-name">AV Compucel Chepo</span><span class="tag tag-av">AGENTE</span></div><div class="suc-row">📞 +507 62223298</div><div class="suc-row">🕒 Lun–Vie 10 AM–6 PM · Sáb 9 AM–2 PM</div></div>
+    <div class="suc"><div class="suc-top"><span class="suc-name">AV Shop Box Don Bosco</span><span class="tag tag-av">AGENTE</span></div><div class="suc-row">📞 +507 65007378 / 66150948</div><div class="suc-row">🕒 Lun–Vie 10 AM–6 PM · Sáb 9 AM–2 PM</div></div>
+    <div class="suc"><div class="suc-top"><span class="suc-name">AV Nuevo Tocumen Shopline</span><span class="tag tag-av">AGENTE</span></div><div class="suc-row">📞 +507 64373481</div><div class="suc-row">🕒 Lun–Vie 10 AM–6 PM · Sáb 9 AM–2 PM</div></div>
+  </div>
+
+  <h3 class="qsp-prov" id="prov-panama-oeste">Panamá Oeste <span class="cnt">4 sucursales</span></h3>
+  <div class="suc-grid">
+    <div class="suc"><div class="suc-top"><span class="suc-name">CDS Chorrera</span><span class="tag tag-cds">CDS</span></div><div class="suc-row">📞 63003046</div><div class="suc-row">🕒 Lun–Vie 8:00 AM–5:00 PM (almuerzo 1–2) · Sáb 8:00 AM–1:00 PM</div></div>
+    <div class="suc"><div class="suc-top"><span class="suc-name">AV PtyBuy Express Arraiján</span><span class="tag tag-av">AGENTE</span></div><div class="suc-row">📞 6780-9187</div><div class="suc-row">🕒 Lun–Vie 10 AM–6 PM · Sáb 10 AM–3 PM</div></div>
+    <div class="suc"><div class="suc-top"><span class="suc-name">AV Kabak Store Coronado</span><span class="tag tag-av">AGENTE</span></div><div class="suc-row">📞 +507 66367979 / 349-6301</div><div class="suc-row">🕒 Lun–Vie 9:30 AM–6 PM · Sáb 9 AM–3 PM</div></div>
+    <div class="suc"><div class="suc-top"><span class="suc-name">AV Western Union Chorrera Guadalupe</span><span class="tag tag-av">AGENTE</span></div><div class="suc-row">📞 +507 6133-4883</div><div class="suc-row">🕒 Lun–Vie 8 AM–5 PM · Sáb 8 AM–1 PM</div></div>
+  </div>
+
+  <h3 class="qsp-prov" id="prov-colon">Colón <span class="cnt">3 sucursales</span></h3>
+  <div class="suc-grid">
+    <div class="suc"><div class="suc-top"><span class="suc-name">CDS Colón</span><span class="tag tag-cds">CDS</span></div><div class="suc-row">📞 62069261</div><div class="suc-row">🕒 Lun–Vie 8:00 AM–5:00 PM (almuerzo 12–1) · Sáb 8:00 AM–1:00 PM</div></div>
+    <div class="suc"><div class="suc-top"><span class="suc-name">AV Colón Cristóbal Este (Service Freight Jare)</span><span class="tag tag-av">AGENTE</span></div><div class="suc-row">📞 +507 62996136 / 69250730</div><div class="suc-row">🕒 Lun–Sáb 8 AM–5 PM</div></div>
+    <div class="suc"><div class="suc-top"><span class="suc-name">AV Colón San Juan El 20 (Curiosidades Thamara)</span><span class="tag tag-av">AGENTE</span></div><div class="suc-row">📞 +507 63907939</div><div class="suc-row">🕒 Lun–Vie 9 AM–6 PM · Sáb 9 AM–5 PM</div></div>
+  </div>
+
+  <h3 class="qsp-prov" id="prov-cocle">Coclé <span class="cnt">3 sucursales</span></h3>
+  <div class="suc-grid">
+    <div class="suc"><div class="suc-top"><span class="suc-name">CDS Aguadulce</span><span class="tag tag-cds">CDS</span></div><div class="suc-row">📞 62822609</div><div class="suc-row">🕒 Lun–Vie 8:00 AM–5:00 PM (almuerzo 12–1) · Sáb 8:00 AM–1:00 PM</div></div>
+    <div class="suc"><div class="suc-top"><span class="suc-name">CDS Penonomé</span><span class="tag tag-cds">CDS</span></div><div class="suc-row">📞 62069222</div><div class="suc-row">🕒 Lun–Vie 8:00 AM–5:00 PM (almuerzo 12–1) · Sáb 8:00 AM–1:00 PM</div></div>
+    <div class="suc"><div class="suc-top"><span class="suc-name">AV El Valle de Antón (Valle Express)</span><span class="tag tag-av">AGENTE</span></div><div class="suc-row">📞 6983-8292</div><div class="suc-row">🕒 Lun–Vie 8 AM–5 PM · Sáb 8 AM–1 PM</div></div>
+  </div>
+
+  <h3 class="qsp-prov" id="prov-herrera">Herrera <span class="cnt">1 sucursal</span></h3>
+  <div class="suc-grid">
+    <div class="suc"><div class="suc-top"><span class="suc-name">CDS Chitré</span><span class="tag tag-cds">CDS</span></div><div class="suc-row">📞 62822831</div><div class="suc-row">🕒 Lun–Vie 8:00 AM–5:00 PM (almuerzo 12:30–1:30) · Sáb 8:00 AM–1:00 PM</div></div>
+  </div>
+
+  <h3 class="qsp-prov" id="prov-los-santos">Los Santos <span class="cnt">3 sucursales</span></h3>
+  <div class="suc-grid">
+    <div class="suc"><div class="suc-top"><span class="suc-name">CDS Las Tablas</span><span class="tag tag-cds">CDS</span></div><div class="suc-row">📍 Calle Joaquín Pablo Franco, frente a La Paulina Café</div><div class="suc-row conf">📞 Teléfono y horario: por confirmar</div></div>
+    <div class="suc"><div class="suc-top"><span class="suc-name">AV Guararé (Malala)</span><span class="tag tag-av">AGENTE</span></div><div class="suc-row">📞 +507 68763077 / 9945246</div><div class="suc-row">🕒 Lun–Vie 8 AM–5 PM · Sáb 9 AM–2 PM</div></div>
+    <div class="suc"><div class="suc-top"><span class="suc-name">AV Tonosí (Hostal Victoria)</span><span class="tag tag-av">AGENTE</span></div><div class="suc-row">📞 +507 66432936</div><div class="suc-row">🕒 Lun–Vie 8 AM–3:30 PM · Sáb 8 AM–12 MD</div></div>
+  </div>
+
+  <h3 class="qsp-prov" id="prov-veraguas">Veraguas <span class="cnt">1 sucursal</span></h3>
+  <div class="suc-grid">
+    <div class="suc"><div class="suc-top"><span class="suc-name">CDS Santiago</span><span class="tag tag-cds">CDS</span></div><div class="suc-row">📞 62382594</div><div class="suc-row">🕒 Lun–Vie 8:00 AM–5:00 PM (almuerzo 12–1) · Sáb 8:00 AM–1:00 PM</div></div>
+  </div>
+
+  <h3 class="qsp-prov" id="prov-chiriqui">Chiriquí <span class="cnt">8 sucursales</span></h3>
+  <div class="suc-grid">
+    <div class="suc"><div class="suc-top"><span class="suc-name">CDS David Centro Calle 4ta</span><span class="tag tag-cds">CDS</span></div><div class="suc-row">📞 62821798</div><div class="suc-row">🕒 Lun–Vie 8:00 AM–5:00 PM (almuerzo 12–1) · Sáb 8:00 AM–1:00 PM</div></div>
+    <div class="suc"><div class="suc-top"><span class="suc-name">CDS David El Rocío</span><span class="tag tag-cds">CDS</span></div><div class="suc-row">📞 62069219</div><div class="suc-row">🕒 Lun–Vie 8:00 AM–5:00 PM (almuerzo 12–1) · Sáb 8:00 AM–1:00 PM</div></div>
+    <div class="suc"><div class="suc-top"><span class="suc-name">AV Concepción Bugaba</span><span class="tag tag-av">AGENTE</span></div><div class="suc-row">📞 +507 788-3060 / 6733-7049 / 6629-3267</div><div class="suc-row">🕒 Lun–Vie 9:00 AM–5:30 PM · Sáb 9:00 AM–2:00 PM (Dom cerrado)</div></div>
+    <div class="suc"><div class="suc-top"><span class="suc-name">AV Río Sereno (Farmacia Don Andrés)</span><span class="tag tag-av">AGENTE</span></div><div class="suc-row">📞 +507 6551-2690</div><div class="suc-row">🕒 Lun–Sáb 8 AM–2 PM y 4 PM–6 PM</div></div>
+    <div class="suc"><div class="suc-top"><span class="suc-name">AV Volcán (Alfa Cell)</span><span class="tag tag-av">AGENTE</span></div><div class="suc-row">📞 +507 6557-9415 / 6115-3333</div><div class="suc-row">🕒 Lun–Sáb 9 AM–5 PM</div></div>
+    <div class="suc"><div class="suc-top"><span class="suc-name">AV Monchis Compras (Tolé)</span><span class="tag tag-av">AGENTE</span></div><div class="suc-row">📞 +507 62125251</div><div class="suc-row">🕒 Lun–Vie 8 AM–4 PM · Sáb 9 AM–1 PM</div></div>
+    <div class="suc"><div class="suc-top"><span class="suc-name">AV Rapid Service Barú</span><span class="tag tag-av">AGENTE</span></div><div class="suc-row">📞 +507 6585-2214</div><div class="suc-row">🕒 Lun–Sáb 9 AM–5 PM</div></div>
+    <div class="suc"><div class="suc-top"><span class="suc-name">AV E-Box Express (Paso Canoas)</span><span class="tag tag-av">AGENTE</span></div><div class="suc-row">📞 +507 6924-9023</div><div class="suc-row">🕒 Lun–Vie 10 AM–6 PM · Sáb 9 AM–2 PM</div></div>
+  </div>
+
+  <h3 class="qsp-prov" id="prov-bocas">Bocas del Toro <span class="cnt">4 sucursales</span></h3>
+  <div class="suc-grid">
+    <div class="suc"><div class="suc-top"><span class="suc-name">CDS Changuinola</span><span class="tag tag-cds">CDS</span></div><div class="suc-row">📞 62311466</div><div class="suc-row">🕒 Lun–Vie 8:00 AM–5:00 PM (almuerzo 1–2) · Sáb 8:00 AM–1:00 PM</div></div>
+    <div class="suc"><div class="suc-top"><span class="suc-name">AV Almirante</span><span class="tag tag-av">AGENTE</span></div><div class="suc-row">📞 +507 6500-3365 / 6471-8191</div><div class="suc-row">🕒 Lun–Vie 9:00 AM–6:00 PM · Sáb 9:00 AM–5:00 PM</div></div>
+    <div class="suc"><div class="suc-top"><span class="suc-name">AV Bocas Island Express</span><span class="tag tag-av">AGENTE</span></div><div class="suc-row">📞 +507 760-8459</div><div class="suc-row">🕒 Lun–Vie 8:30 AM–4:30 PM · Sáb 8:30 AM–2:00 PM</div></div>
+    <div class="suc"><div class="suc-top"><span class="suc-name">AV Chiriquí Grande (Zamarci)</span><span class="tag tag-av">AGENTE</span></div><div class="suc-row">📞 +507 6285-0553 / 6236-3712</div><div class="suc-row">🕒 Lun–Sáb 8:00 AM–4:00 PM</div></div>
+  </div>
+
+  <h3 class="qsp-prov" id="prov-darien">Darién <span class="cnt">1 sucursal</span></h3>
+  <div class="suc-grid">
+    <div class="suc"><div class="suc-top"><span class="suc-name">AV Metetí Darién (Valeria's)</span><span class="tag tag-av">AGENTE</span></div><div class="suc-row">📞 +507 6168-5748</div><div class="suc-row">🕒 Lun–Sáb 9 AM–5 PM</div></div>
+  </div>
+
+  <h3 class="qsp-prov" id="prov-otras">Otras ubicaciones <span class="cnt">2 sucursales</span></h3>
+  <div class="suc-grid">
+    <div class="suc"><div class="suc-top"><span class="suc-name">AV Servicios y Utilería M&amp;C</span><span class="tag tag-av">AGENTE</span></div><div class="suc-row">📞 +507 64540865</div><div class="suc-row">🕒 Lun–Sáb 8:30 AM–7:00 PM</div></div>
+    <div class="suc"><div class="suc-top"><span class="suc-name">AV Jece Soluciones</span><span class="tag tag-av">AGENTE</span></div><div class="suc-row">📞 +507 308-6977 / 62132930 / 6201-7543</div><div class="suc-row">🕒 Lun–Vie 8 AM–5 PM · Sáb 8 AM–12 PM</div></div>
+  </div>
+
+  <h2>Tarifas y plazos del interior</h2>
+  <div class="qsp-info">
+    <div class="qsp-card"><div class="ic">🏢</div><h3>A sucursal</h3><p>Desde <strong>B/.6.00</strong></p></div>
+    <div class="qsp-card"><div class="ic">🚪</div><h3>Puerta a puerta</h3><p>Desde <strong>B/.9.00</strong></p></div>
+    <div class="qsp-card"><div class="ic">⏱️</div><h3>Plazo de entrega</h3><p>Día hábil siguiente. <strong>Bocas del Toro y Darién:</strong> de 3 a 5 días hábiles.</p></div>
+    <div class="qsp-card"><div class="ic">🎁</div><h3>Envío gratis</h3><p>En compras en línea mayores a <strong>US$300</strong>.</p></div>
+  </div>
+
+  <div class="qsp-note">
+    <strong>Importante:</strong> por el momento no entregamos en las comarcas
+    Guna Yala, Emberá-Wounaan y Ngäbe-Buglé. Si la dirección proporcionada es incorrecta,
+    el costo del reenvío corre por cuenta del cliente.
+  </div>
+
+  <div class="qsp-contact">
+    <p>¿Dudas con tu envío o quieres dar seguimiento a tu pedido?</p>
+    <a class="qsp-wa" href="https://wa.me/50769509988?text=Hola,%20tengo%20una%20consulta%20sobre%20mi%20env%C3%ADo%20al%20interior"
+       target="_blank" rel="noopener">💬 Escríbenos por WhatsApp · +507 6950-9988</a>
+  </div>
+</div>
+<!-- ===================== HASTA AQUÍ ===================== -->
+
+</body>
+</html>
