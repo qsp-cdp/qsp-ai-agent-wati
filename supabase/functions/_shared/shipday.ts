@@ -162,6 +162,29 @@ export function parseMapsCoords(url?: string): { lat: number; lng: number } | nu
   return { lat, lng };
 }
 
+// Dirección de entrega leída de la FICHA del contacto en WATI (customParams). Es el RESPALDO del
+// despacho cuando la libreta `contacts` no la tiene: el cliente recurrente cuya dirección quedó en WATI
+// —la ficha del sistema anterior, o cargada a mano por un asesor— y nunca llegó a Supabase. Caso real
+// 03-sep-2026 (conv 50760466239): "¿Cada vez que les compro debo repetir lo mismo?".
+// Nombres que se leen: los que escribe el copiloto (direccion_envio / referencia_envio / pin_envio) y
+// el pin del sistema anterior (maps_envio). "-" es el marcador de VACÍO que escribe el copiloto; una
+// variable sin resolver ("{{x}}", "@x") no es una dirección. Pura: sin red, sin efectos (la prueba
+// `tests/test_wati_order_direccion.mjs` la extrae de aquí).
+export function direccionDesdeAtributosWati(params: unknown): { direccion: string; referencia: string | null; maps_url: string | null } | null {
+  const lista = Array.isArray(params) ? params : [];
+  const val = (nombre: string): string => {
+    const p = lista.find((x: any) => String(x?.name ?? '').trim().toLowerCase() === nombre);
+    const v = String(p?.value ?? '').trim();
+    if (!v || v === '-' || v.includes('{{') || v.startsWith('@')) return '';
+    return v.slice(0, 400);
+  };
+  const direccion = val('direccion_envio');
+  if (!direccion) return null;
+  const referencia = val('referencia_envio');
+  const pin = val('pin_envio') || val('maps_envio');
+  return { direccion, referencia: referencia || null, maps_url: pin || null };
+}
+
 // ¿El valor es una ubicación de verdad? Solo aceptamos link http(s), URI geo:
 // (ubicación nativa de WhatsApp) o un par de coordenadas suelto. Todo lo demás
 // — "no", "no lo tengo", "ahí mismo" — es prosa, no un pin: filtrar por FORMA

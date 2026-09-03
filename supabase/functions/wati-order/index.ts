@@ -18,9 +18,19 @@
 //   3. CONCIENCIA DE ZONA: antes marcaba TODO como flota propia. Ahora resuelve la zona real y, si el
 //      destino es del INTERIOR, Z4a (sin domicilio) o zona sin servicio, lo anota en la orden con 🚨 y
 //      lo registra como bandera consultable — el asesor ve el problema en Shipday, no después.
-import { createShipdayOrder, HttpError, json, resolveMapsCoords, watiCaptureToShipday } from '../_shared/shipday.ts';
+// v64 — LA FICHA DE WATI COMO RESPALDO DE DIRECCIÓN. Caso real (03-sep-2026, conv 50760466239): el
+//   asesor disparó "Despachar a Shipday" para un cliente RECURRENTE que tenía su dirección en la ficha
+//   del contacto en WATI, pero sin fila en la libreta `contacts` → esta función respondió "no tiene
+//   dirección registrada" y el chatbot cayó a su rama de captura vieja (tres preguntas + POST a
+//   `wati-address`, una función que NO existe en esta rama: nunca hubo un rastro suyo en job_log).
+//   Resultado: "⚠️ No pudimos guardar tu dirección" y el cliente preguntando "¿cada vez que les compro
+//   debo repetir lo mismo?". Ahora, si la libreta no tiene la dirección, se lee de la ficha de WATI
+//   (direccion_envio / referencia_envio / pin_envio / maps_envio) y la libreta se AUTOCURA con el upsert
+//   que ya corre tras crear la orden. Solo si las DOS fuentes están vacías se devuelve el 400 — y ese
+//   error ahora nombra el camino vivo (la captura del copiloto, `?captura=1`) y deja el teléfono en el log.
+import { createShipdayOrder, direccionDesdeAtributosWati, HttpError, json, resolveMapsCoords, watiCaptureToShipday } from '../_shared/shipday.ts';
 import { findContactByPhone, logJob, pedidoWatiReciente, resolverTarifa, upsertContactByPhone, upsertPedido } from '../_shared/db.ts';
-import { sendWatiSessionMessage } from '../_shared/watiapi.ts';
+import { getWatiContact, sendWatiSessionMessage } from '../_shared/watiapi.ts';
 
 Deno.serve(async (req) => {
   if (req.method !== 'POST') return json({ error: 'Método no permitido' }, 405);
@@ -61,8 +71,36 @@ Deno.serve(async (req) => {
         }
         if (!String(capture.nombre ?? '').trim()) capture.nombre = contacto.name;
       }
+      // v64 — RESPALDO: la ficha del contacto en WATI (ver cabecera). Un fallo de red aquí no es fatal:
+      // se registra y se sigue con lo que haya; el 400 de abajo solo sale si tampoco hay dirección.
       if (!String(capture.direccion ?? '').trim()) {
-        throw new HttpError(400, 'El cliente no tiene dirección registrada: captura la dirección primero (flujo wati-address o la captura del copiloto)');
+        let ficha: { name: string; attrs: { name: string; value: string }[] } | null = null;
+        try {
+          ficha = await getWatiContact(capture.telefono);
+        } catch (err) {
+          await logJob('wati-order', 'ficha_wati_fallo', false, {
+            telefono_final: String(capture.telefono).slice(-4), error: String((err as Error).message ?? err).slice(0, 150),
+          });
+        }
+        const d = direccionDesdeAtributosWati(ficha?.attrs);
+        if (d) {
+          capture.direccion = d.direccion;
+          if (!capture.referencia && d.referencia) capture.referencia = d.referencia;
+          if (!capture.maps_url && d.maps_url) capture.maps_url = d.maps_url;
+          if (!String(capture.nombre ?? '').trim() && ficha?.name) capture.nombre = ficha.name;
+          // La libreta se autocura más abajo: upsertContactByPhone corre tras crear la orden con esta
+          // dirección, así que el PRÓXIMO despacho ya no necesita venir a WATI.
+          await logJob('wati-order', 'direccion_desde_wati', true, {
+            telefono_final: String(capture.telefono).slice(-4), con_referencia: !!d.referencia, con_pin: !!d.maps_url,
+            habia_fila_contacts: !!contacto,
+          });
+        }
+      }
+      if (!String(capture.direccion ?? '').trim()) {
+        await logJob('wati-order', 'sin_direccion', false, {
+          telefono_final: String(capture.telefono).slice(-4), habia_fila_contacts: !!contacto,
+        });
+        throw new HttpError(400, 'El cliente no tiene dirección ni en la libreta ni en su ficha de WATI: activa la captura del copiloto (?captura=1) y despacha cuando confirme');
       }
     }
 

@@ -24,6 +24,32 @@ export async function sendWatiSessionMessage(phone: string, text: string) {
   return res.json();
 }
 
+// Lee la FICHA de un contacto en WATI: nombre + atributos custom (customParams). Es el único endpoint
+// que el token abre para leer contactos (`/api/v1/getContacts`; el copiloto probó que la v2,
+// getContact/<num> y getContactAttributes/<num> dan 404). El filtro `name` es DIFUSO — puede devolver
+// otro contacto — así que se exige que el teléfono coincida, como hace el copiloto. Devuelve null si no
+// hay ficha; lanza solo ante un fallo de red/HTTP (el que llama decide si es fatal).
+export async function getWatiContact(phone: string): Promise<{ name: string; attrs: { name: string; value: string }[] } | null> {
+  const cfg = watiConfig();
+  if (!cfg) throw new Error('Faltan WATI_API_BASE / WATI_API_TOKEN');
+  const number = String(phone).replace(/\D/g, '');
+  if (number.length < 8) return null;
+  const res = await fetch(
+    `${cfg.base}/api/v1/getContacts?pageSize=1&pageNumber=0&name=${encodeURIComponent(number)}`,
+    { headers: { Authorization: `Bearer ${cfg.token}` }, signal: AbortSignal.timeout(8000) },
+  );
+  if (!res.ok) throw new Error(`WATI getContacts respondió ${res.status}`);
+  const j = await res.json().catch(() => null);
+  const c = j?.contact_list?.[0];
+  if (!c) return null;
+  const suyo = String(c.wAid ?? c.phone ?? '').replace(/\D/g, '');
+  if (suyo !== number && suyo.slice(-8) !== number.slice(-8)) return null;
+  const attrs = Array.isArray(c.customParams)
+    ? c.customParams.map((x: any) => ({ name: String(x?.name ?? ''), value: String(x?.value ?? '') }))
+    : [];
+  return { name: String(c.fullName ?? c.firstName ?? c.name ?? '').trim(), attrs };
+}
+
 // Actualiza los atributos custom del contacto en WATI (mismo formato que usa
 // el copiloto). Los atributos deben existir en WATI → Contactos → Atributos.
 export async function updateWatiAttributes(waId: string, attrs: Record<string, string>) {
