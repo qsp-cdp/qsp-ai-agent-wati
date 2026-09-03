@@ -1577,6 +1577,31 @@ caso("v121: la respuesta por botón del cliente se trata como texto", /if \(!esD
 // como propias ("la cotización que le pasé", "ya le confirmé la llegada del tóner" — las dijo el asesor).
 caso("v121: el prompt explica que [Asesor del equipo] es una PERSONA, no el bot", /\[Asesor del equipo\]:" los escribió una PERSONA del equipo, NO tú/.test(SYSTEM_PROMPT) && /NUNCA los presentes como tuyos/.test(SYSTEM_PROMPT));
 
+
+// --- v122: réplica del catálogo en SHADOW (fase 2) ----------------------------------------------
+console.log("v122 réplica shadow");
+// La fase 1 (tabla `catalogo` + catalogo-sync) ya está en producción: 1.633 productos, sincronía por
+// webhook y reconciliación nocturna. La fase 2 SOLO MIDE: el cliente sigue recibiendo lo de siempre.
+caso("v122: el modo tiene el ADN de COPILOT_MODE (inválido → off)", /\["shadow", "codigos", "primaria"\]\.includes\(BUSQUEDA_REPLICA_RAW\) \? BUSQUEDA_REPLICA_RAW : "off"/.test(src));
+caso("v122: por defecto está APAGADO (desplegar es no-op)", /BUSQUEDA_REPLICA_RAW = \(Deno\.env\.get\("BUSQUEDA_REPLICA"\) \?\? ""\)/.test(src));
+// El shadow no puede tocar al cliente: corre en segundo plano y jamás lanza hacia el camino de envío.
+caso("v122: el shadow corre en background (waitUntil), como el de v59", (() => {
+  const i = src.indexOf('if (BUSQUEDA_REPLICA === "shadow" && block.name === "buscar_producto")');
+  const j = src.indexOf("EdgeRuntime.waitUntil(rt)");
+  return i > -1 && j > -1 && j > i && j - i < 400;
+})());
+caso("v122: compararReplica nunca lanza hacia el camino del cliente", /catch \(e\) \{\s*\n\s*try \{ await log\("busqueda_replica_shadow", false/.test(src));
+// La línea roja del diseño: la réplica decide QUÉ mostrar, nunca cuánto cuesta ni si hay stock.
+caso("v122: la réplica no devuelve stock (el precio es de referencia, la cotización va en vivo)", (() => {
+  const i = src.indexOf("async function buscarEnReplica");
+  const cuerpo = src.slice(i, src.indexOf("\n}", i));
+  return i > -1 && !/stock/i.test(cuerpo) && /precio_usd: r\.precio_usd/.test(cuerpo);
+})());
+// Lo que el shadow existe para medir: dónde la réplica rescata y dónde perdería, POR CLASE.
+caso("v122: mide rescate y pérdida por clase de consulta", /replica_rescata:/.test(src) && /replica_pierde:/.test(src) && /clase,/.test(src));
+caso("v122: cuenta los agotados que solo la réplica ve (la razón de existir: caso C9344)", /agotados_solo_en_replica: rep\.filter\(\(r\) => r\._status !== "active"\)\.length/.test(src));
+caso("v122: el healthcheck expone el modo", /busqueda_replica: BUSQUEDA_REPLICA/.test(src));
+
 // --- resumen --------------------------------------------------------------------------------------
 console.log(`\n${ok} OK, ${mal} FALLA${mal === 1 ? "" : "S"}`);
 if (mal > 0) process.exit(1);
