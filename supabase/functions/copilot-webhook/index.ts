@@ -543,14 +543,20 @@ const SESION_GAP_DIAS = (() => {
 // (partirMensaje). Default OFF: sin el flag los marcadores se re-unen y sale UN mensaje idéntico al de
 // siempre → deploy no-op, flip por secreto, rollback instantáneo (el ADN de COPILOT_MODE).
 const BURBUJAS = (Deno.env.get("COPILOT_BURBUJAS") ?? "").trim() === "1";
-// Pausa ENTRE burbujas. 3000 ms por defecto: valor elegido POR GERENCIA probándolo en vivo el 13-ago
-// (400 ms las mandaba casi juntas; a 1 s todavía se sentía de máquina). Verificado en el teléfono: la
-// separación real coincide con lo configurado (el envío secuencial no agrega overhead propio). Tuneable
-// por secreto sin redeploy, tope 5 s. 0 = sin pausa. OJO: son 2 pausas en una cotización de 3 partes →
-// a 3 s la última burbuja llega ~6 s después de la primera (sobre los ~15 s de debounce + LLM).
+// Pausa ENTRE burbujas. Elegida POR GERENCIA probándola en vivo: 3000 ms el 13-ago (400 ms las mandaba
+// casi juntas; a 1 s todavía se sentía de máquina) y **4000 ms el 03-sep**, que es el valor de hoy.
+// Verificado en el teléfono: la separación real coincide con lo configurado (el envío secuencial no
+// agrega overhead propio). Tuneable por secreto sin redeploy, tope 5 s. 0 = sin pausa. OJO: son 2 pausas
+// en una cotización de 3 partes → a 4 s la última burbuja llega ~8 s después de la primera (sobre los
+// ~15 s de debounce + LLM).
+//
+// POR QUÉ EL DEFAULT SUBE A 4000 EN VEZ DE quedarse en 3000 con un secreto encima: producción llevaba un
+// `COPILOT_BURBUJA_MS=4000` que el repo no reflejaba, así que el comportamiento real vivía SOLO en el
+// secreto — borrarlo habría cambiado la conversación sin que nadie tocara código. Es la disciplina
+// repo-first de v66.1: el repo y prod dicen lo mismo, y el secreto queda como palanca, no como fuente.
 const BURBUJA_MS = (() => {
   const n = parseInt((Deno.env.get("COPILOT_BURBUJA_MS") ?? "").trim(), 10);
-  return Number.isFinite(n) && n >= 0 ? Math.min(n, 5000) : 3000;
+  return Number.isFinite(n) && n >= 0 ? Math.min(n, 5000) : 4000;
 })();
 
 // v67 — AUDIO PUENTE: una nota de voz de un cliente recibe un acuse fijo ("¿me lo escribe? o un asesor
@@ -3964,7 +3970,7 @@ Deno.serve(async (req) => {
         texto: tr?.texto ?? null, ts: new Date().toISOString(),
       });
     }
-    return Response.json({ status: "ok", function: "copilot-webhook", version: "v123-operador-maquina", mode: MODE, mode_raw: MODE_RAW, model: MODEL, llm_configured: !!anthropic, wati_send_configured: !!(WATI_API_TOKEN && WATI_API_BASE), inventario_configurado: !!(SHOPIFY_ADMIN_TOKEN && SHOPIFY_ADMIN_API_BASE), resolve_configured: !!RESOLVE_SECRET, webhook_key_es_default: WEBHOOK_KEY_ES_DEFAULT, handoff_assist_min: HANDOFF_ASSIST_MIN, hist_asistencia: HIST_ASISTENCIA, handoff_cold_hours: HANDOFF_COLD_HOURS, debounce_ms: DEBOUNCE_MS, sesion_gap_dias: SESION_GAP_DIAS, burbujas: BURBUJAS, burbuja_ms: BURBUJA_MS, audio_puente: AUDIO_PUENTE, sweep: SWEEP_MODE, sweep_espera_min: SWEEP_ESPERA_MIN, stt: STT_MODE, stt_raw: STT_RAW, stt_configurado: !!OPENAI_API_KEY, stt_model: STT_MODEL, busqueda_shadow: BUSQUEDA_SHADOW, busqueda_replica: BUSQUEDA_REPLICA, busqueda_replica_raw: BUSQUEDA_REPLICA_RAW, busqueda_mcp: BUSQUEDA_MCP, busqueda_mcp_limit: BUSQUEDA_MCP_LIMIT, catalog_mcp_url: CATALOG_MCP_URL, ucp_profile_url: UCP_PROFILE_URL, live_targets: MODE === "live" ? (LIVE_ALL ? "all" : LIVE_ALLOWLIST.length) : 0, wa_ignorar: WA_IGNORAR.size, ts: new Date().toISOString() });
+    return Response.json({ status: "ok", function: "copilot-webhook", version: "v123.1-burbuja-4s", mode: MODE, mode_raw: MODE_RAW, model: MODEL, llm_configured: !!anthropic, wati_send_configured: !!(WATI_API_TOKEN && WATI_API_BASE), inventario_configurado: !!(SHOPIFY_ADMIN_TOKEN && SHOPIFY_ADMIN_API_BASE), resolve_configured: !!RESOLVE_SECRET, webhook_key_es_default: WEBHOOK_KEY_ES_DEFAULT, handoff_assist_min: HANDOFF_ASSIST_MIN, hist_asistencia: HIST_ASISTENCIA, handoff_cold_hours: HANDOFF_COLD_HOURS, debounce_ms: DEBOUNCE_MS, sesion_gap_dias: SESION_GAP_DIAS, burbujas: BURBUJAS, burbuja_ms: BURBUJA_MS, audio_puente: AUDIO_PUENTE, sweep: SWEEP_MODE, sweep_espera_min: SWEEP_ESPERA_MIN, stt: STT_MODE, stt_raw: STT_RAW, stt_configurado: !!OPENAI_API_KEY, stt_model: STT_MODEL, busqueda_shadow: BUSQUEDA_SHADOW, busqueda_replica: BUSQUEDA_REPLICA, busqueda_replica_raw: BUSQUEDA_REPLICA_RAW, busqueda_mcp: BUSQUEDA_MCP, busqueda_mcp_limit: BUSQUEDA_MCP_LIMIT, catalog_mcp_url: CATALOG_MCP_URL, ucp_profile_url: UCP_PROFILE_URL, live_targets: MODE === "live" ? (LIVE_ALL ? "all" : LIVE_ALLOWLIST.length) : 0, wa_ignorar: WA_IGNORAR.size, ts: new Date().toISOString() });
   }
   if (req.method !== "POST") return Response.json({ error: "method_not_allowed" }, { status: 405 });
   if (url.searchParams.get("key") !== WEBHOOK_KEY) return Response.json({ error: "forbidden" }, { status: 403 });
