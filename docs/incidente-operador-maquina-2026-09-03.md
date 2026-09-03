@@ -49,7 +49,7 @@ const puedeAsistir = habriaAsistido && (!asesorActivo || pidioEnvioElAsesor || c
 Es una excepción diseñada para cuando **una persona** acaba de pedir la dirección: ahí el bot debe ayudar,
 no callar. Con un robot disparándola, el copiloto arrancaba su propia captura de dirección **encima** de
 las tres preguntas del chatbot. Dos flujos preguntando lo mismo al mismo tiempo — y solo uno de los dos
-guarda de verdad, porque el del chatbot termina en un POST a `wati-address`, que no existe.
+guarda de verdad, porque el del chatbot postea a `wati-address`, retirada el 21-ago (responde 410).
 
 Encaja con lo que se ve en el hilo del incidente del despacho a las 10:31: el cliente contestando
 *"agente"*, *"panama treasures"*, y después *"¿Cada vez que les compro debo repetir lo mismo?"*.
@@ -116,7 +116,8 @@ el re-enganche del cron tampoco.
 ## Lo que sigue pendiente del lado de WATI
 
 Esto arregla el lado del copiloto, pero **no arregla el chatbot**. Su rama de error sigue haciendo tres
-preguntas y mandándolas a `wati-address`, que no existe: el cliente contesta todo y no se guarda nada. Con
+preguntas y mandándolas a `wati-address`, retirada el 21-ago porque duplicaba la captura del copiloto
+(hoy responde 410; ver `docs/legacy/README.md`): el cliente contesta todo y no se guarda nada. Con
 `wati-order` v64 eso ya solo le pasa a un cliente **nuevo** — el que estrena, el peor a quien fallarle.
 
 En el flowbuilder: quitar las tres preguntas y el POST, y dejar un webhook-call a
