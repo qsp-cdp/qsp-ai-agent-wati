@@ -58,6 +58,7 @@ jobs:
           node tests/test_shipday_campos.mjs
           node tests/test_semaforo.mjs
           node tests/test_catalogo_sync.mjs
+          node tests/test_wati_order_direccion.mjs
 
   deploy:
     needs: pruebas
