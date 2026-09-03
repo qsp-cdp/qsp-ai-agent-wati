@@ -420,7 +420,10 @@ caso("v51: copilot salta eventos de plantilla saliente", /eventType\.includes\("
 // protege al entrante ahora: (a) se intercepta por el TIPO DE EVENTO saliente, no por el `type` del
 // mensaje (la respuesta por botón del cliente llega como eventType "message" y se normaliza a texto);
 // (b) solo cuenta como asesor si hay OPERADOR — un mensaje de cliente jamás lo trae.
-caso("v121: el guard de plantilla intercepta por eventType y solo cuenta como asesor con operador", /if \(eventType\.includes\("template"\) \|\| eventType\.includes\("plantilla"\)\) \{/.test(src) && /const esHumano = !!operador && !esReenganche;/.test(src));
+// v123 ENDURECE (b), no la afloja: tener operador dejó de bastar, porque el chatbot del flowbuilder y el
+// token de la API también traen uno. La propiedad que este lock protege —el entrante nunca cuenta como
+// asesor— sigue intacta: `!!operador` sigue siendo la primera condición.
+caso("v121: el guard de plantilla intercepta por eventType y solo cuenta como asesor con operador", /if \(eventType\.includes\("template"\) \|\| eventType\.includes\("plantilla"\)\) \{/.test(src) && /const esHumano = !!operador &&/.test(src));
 caso("v51: el guard de plantilla va ANTES del path owner=true (human-agent)", (() => {
   const iGuard = src.indexOf('skipped: "template_message_sent"');
   const iOwner = src.indexOf("Mensaje del NEGOCIO (owner=true)");
@@ -1569,7 +1572,10 @@ caso("v121: el texto de la plantilla se guarda como contexto (humano o sistema)"
 caso("v121: la plantilla de un asesor pasa la conversación a handoff, salvo 'cerrada'", /if \(esHumano && convP\.status !== "handoff" && convP\.status !== "cerrada"\) await sb\.from\("conversations"\)\.update\(\{ status: "handoff" \}\)/.test(src));
 // v51 sigue protegido: el re-enganche del cron NUNCA cuenta como asesor (si contara, el cliente que
 // responde quedaría en asistencia en vez de atenderlo el bot).
-caso("v121: el re-enganche del cron nunca cuenta como asesor", /const esReenganche = \/reengan\/i\.test\(nombrePl\);\s*\n\s*const esHumano = !!operador && !esReenganche;/.test(src));
+// (v123 metió un comentario entre las dos líneas, así que se afirma cada parte por separado en vez de su
+// adyacencia — la propiedad es que `!esReenganche` siga siendo condición de `esHumano`, no el formato.)
+caso("v121: el re-enganche del cron nunca cuenta como asesor", /const esReenganche = \/reengan\/i\.test\(nombrePl\);/.test(src)
+  && /const esHumano = [^;\n]*&& !esReenganche/.test(src));
 caso("v121: la telemetría de plantilla registra nombre/sourceType para calibrar", /"evento_plantilla_saliente", true, \{ waId: waId \|\| null, eventType, plantilla: nombrePl \|\| null, sourceType/.test(src));
 // El botón de plantilla que toca el CLIENTE es un mensaje (20 en 14 días quedaban en visto).
 caso("v121: la respuesta por botón del cliente se trata como texto", /if \(!esDelNegocio && texto && \["button", "interactive", "button_reply", "list_reply", "quick_reply"\]\.includes\(tipo\.toLowerCase\(\)\)\) tipo = "text";/.test(src));
@@ -1601,6 +1607,61 @@ caso("v122: la réplica no devuelve stock (el precio es de referencia, la cotiza
 caso("v122: mide rescate y pérdida por clase de consulta", /replica_rescata:/.test(src) && /replica_pierde:/.test(src) && /clase,/.test(src));
 caso("v122: cuenta los agotados que solo la réplica ve (la razón de existir: caso C9344)", /agotados_solo_en_replica: rep\.filter\(\(r\) => r\._status !== "active"\)\.length/.test(src));
 caso("v122: el healthcheck expone el modo", /busqueda_replica: BUSQUEDA_REPLICA/.test(src));
+
+// --- v123: un robot no es un asesor ---------------------------------------------------------------
+// Todo saliente de WATI llega con owner=true y se archivaba como `human-agent`. Dos de los cinco
+// operadores del inbox no son personas: el chatbot del flowbuilder ("Bot") y el token de la API
+// (api-token-user.764@clare.ai, con el que notifican wati-order y shipday-status). 60 días de job_log:
+// 144 mensajes en 44 conversaciones haciéndose pasar por asesor — reseteando el reloj de v121 y, peor,
+// encendiendo pidioEnvioElAsesor (que ANULA la espera de 10 min) con las frases del chatbot de despacho.
+const OPERADOR_MAQUINA_RE = extraerConst("OPERADOR_MAQUINA_RE");
+const esOpHumano = (o) => !OPERADOR_MAQUINA_RE.test((o ?? "").trim());
+
+// Los cinco operadores REALES medidos en producción (60 días, job_log.mensaje_humano).
+caso("v123: 'Bot' (chatbot del flowbuilder) NO es persona", !esOpHumano("Bot"));
+caso("v123: el token de la API NO es persona", !esOpHumano("api-token-user.764@clare.ai"));
+caso("v123: Irving Herazo es persona", esOpHumano("Irving Herazo"));
+caso("v123: Miguel Cabrera es persona", esOpHumano("Miguel Cabrera"));
+caso("v123: Isaac Gerente de Ventas es persona", esOpHumano("Isaac Gerente de Ventas"));
+// EL LOCK QUE DEFINE EL DISEÑO: denylist, no allowlist. Un asesor nuevo que nadie listó sigue siendo
+// persona — al revés, el bot le hablaría encima mientras cierra una venta (la anti-interrupción es
+// sagrada). Un robot nuevo sin listar solo hace que el bot calle de más: recuperable.
+caso("v123: un asesor NUEVO, no listado, se presume PERSONA", esOpHumano("Yaritza Pérez"));
+caso("v123: operador vacío se presume PERSONA (no se relaja lo de hoy)", esOpHumano(""));
+caso("v123: el patrón del token cubre cualquier número, no solo el 764", !esOpHumano("api-token-user.999@clare.ai"));
+caso("v123: sin sensibilidad a mayúsculas ni espacios", !esOpHumano("  bot  "));
+// Anclado: solo el operador que se llama EXACTAMENTE "Bot" es el chatbot.
+caso("v123: 'Bot Ventas' sería una persona (el ancla es exacta)", esOpHumano("Bot Ventas"));
+
+// ⚠️ EL ORDEN: el copiloto envía por el MISMO token, así que sus propias respuestas también vuelven como
+// api-token-user. Lo único que las separa de una notificación de wati-order es el anti-eco (texto, <5min).
+// Si la decisión de máquina corriera ANTES, cada respuesta del bot se guardaría una segunda vez.
+caso("v123: el anti-eco sigue corriendo ANTES de decidir humano/máquina", (() => {
+  const iEco = src.indexOf('skipped: "eco_propio"');
+  const iHum = src.indexOf("const humano = esOperadorHumano(operador);");
+  return iEco > -1 && iHum > iEco;
+})());
+// El mensaje se GUARDA igual (Isaac: el bot lee al cliente, al asesor y a sí mismo EN SECUENCIA); lo que
+// cambia es bajo qué modelo, y que no dispare el handoff.
+caso("v123: el texto de máquina se guarda igual, como 'sistema-wati'", /model: humano \? "human-agent" : "sistema-wati"/.test(src));
+caso("v123: una máquina NO manda la conversación a handoff", /if \(humano && convH\.status !== "handoff"/.test(src));
+caso("v123: el camino de MEDIA aplica el mismo criterio", /const humanoM = esOperadorHumano\(operador\);/.test(src)
+  && /model: humanoM \? "human-agent" : "sistema-wati"/.test(src)
+  && /if \(humanoM && convH\.status !== "handoff"/.test(src));
+caso("v123: en PLANTILLAS, tener operador ya no basta para ser persona", /const esHumano = !!operador && !esReenganche && esOperadorHumano\(operador\);/.test(src));
+// `mensaje_humano` queda limpio para poder medir: si sigue contando robots, la telemetría de "asesor
+// activo" mide otra cosa que lo que dice medir.
+caso("v123: mensaje_humano queda solo para personas; las máquinas van a mensaje_sistema", /log\(humano \? "mensaje_humano" : "mensaje_sistema"/.test(src)
+  && /log\(humanoM \? "mensaje_humano" : "mensaje_sistema"/.test(src));
+// Sin rótulo, el modelo leería el mensaje del chatbot como algo que dijo él mismo y daría por hecho que
+// ya preguntó la dirección.
+caso("v123: el historial rotula la voz automática como lo que es", /m\.model === "sistema-wati" \? "\[Mensaje autom[áa]tico del sistema/.test(src));
+caso("v123: 'sistema-wati' NO se rotula como asesor del equipo", (() => {
+  const i = src.indexOf('const a = m.model === "human-agent"');
+  const bloque = src.slice(i, i + 600);
+  return i > -1 && /\[Asesor del equipo\]/.test(bloque) && !/sistema-wati" \? "\[Asesor/.test(bloque);
+})());
+caso("v123: el healthcheck delata la versión", /version: "v123-operador-maquina"/.test(src));
 
 // --- resumen --------------------------------------------------------------------------------------
 console.log(`\n${ok} OK, ${mal} FALLA${mal === 1 ? "" : "S"}`);

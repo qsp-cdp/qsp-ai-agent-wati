@@ -964,6 +964,35 @@ const TOOLS: Anthropic.Tool[] = [{
 // word-char). Validado contra 22 frases reales que piden y 14 que no: 0 FN, 0 FP.
 const PIDE_ENVIO_RE = /\b(?:cu[aá]l|qu[eé])\s[^?.!\n]{0,30}(?:direcci[oó]n|ubicaci[oó]n|sucursal)|\b(?:a|para|hacia) d[oó]nde\b[^?.!\n]{0,20}(?:env[ií]|entreg|mand|llev|despach|ser[ií]a)|\bd[oó]nde (?:es|ser[aá]|ser[ií]a|queda)\b[^?.!\n]{0,25}(?:entreg|env[ií]|delivery|despach|ubicaci|direcci)|\bd[oó]nde se l[oa]s? ?(?:entreg|env[ií]|dej|llev|mand)|\b(?:permit[ae]|confirm[ae]|indi(?:ca|que)|facilit[ae]|brind[ae]|regal[ae]|deme|dame|escr[ií]b[ae]|env[ií][ae]|enviar(?:me|nos)?|avis[ae]|necesit|quedo atent[oa] a)[^.;!\n]{0,20}(?:direcci[oó]n|ubicaci[oó]n)|\bp[aá]s[ae](?:me|nos|rme|rnos)?[^.;\n]{0,15}(?:direcci[oó]n|ubicaci[oó]n)|compart[ae](?:me|nos)?[^.;\n]{0,15}(?:tu|su)s? (?:ubicaci[oó]n|direcci[oó]n)|\bdatos\b[^.;\n]{0,35}(?:entrega|env[ií]o|despacho)|\b(?:confirmar?|indicar?|indique|facilitar?|d[ií]game|me diga)[^.;\n]{0,25}lugar de entrega|punto de referencia|alguna referencia\s*\?|peg(?:a|ue)[^.;\n]{0,30}(?:google maps|ubicaci[oó]n)|(?:esta|esa) (?:es|ser[ií]a) la (?:direcci[oó]n|ubicaci[oó]n) de (?:entrega|env[ií]o)|adjuntar[^.;\n]{0,15}ubicaci[oó]n/i;
 
+// v123 — QUIÉN CUENTA COMO PERSONA. Todo lo que sale del inbox de WATI llega con owner=true, y hasta hoy
+// CUALQUIER saliente que no fuera eco propio se archivaba como asesor (`human-agent`): ponía la
+// conversación en handoff y reseteaba el reloj de v121. Pero de los cinco operadores del inbox, DOS no son
+// personas — el chatbot del flowbuilder ("Bot") y el token de la API ("api-token-user.764@clare.ai", con el
+// que wati-order y shipday-status le notifican al cliente). Medido sobre 60 días de job_log: 6.530 mensajes
+// de Irving, 5.719 de Miguel, 782 de Isaac… y 144 en 44 conversaciones de las DOS MÁQUINAS, haciéndose
+// pasar por asesor.
+//
+// El daño no era solo telemetría. El chatbot "Despachar a Shipday" abre con "Necesitamos tu dirección de
+// entrega primero 📍" y sigue con las tres preguntas del flujo viejo: CUATRO de sus cinco frases matchean
+// PIDE_ENVIO_RE (verificado contra el regex real). Al archivarse como human-agent encendían
+// `pidioEnvioElAsesor`, que en v121 ANULA a propósito la espera de 10 minutos — una excepción pensada para
+// cuando una PERSONA acaba de pedir la dirección. Con un robot disparándola, el copiloto arrancaba su
+// propia captura ENCIMA de la del chatbot: dos flujos preguntando lo mismo, y solo uno de los dos guarda.
+//
+// DENYLIST, NO ALLOWLIST — se nombran las MÁQUINAS y todo lo demás se presume persona. Al revés (listar a
+// Miguel/Isaac/Irving) el día que entre un asesor nuevo el bot le hablaría encima mientras cierra una
+// venta: exactamente lo que la anti-interrupción existe para impedir. Un robot nuevo sin listar solo hace
+// que el bot calle de más — se ve en la telemetría y se corrige. El error se elige hacia el lado que no le
+// cuesta una venta a nadie. El patrón del token cubre cualquier número, no solo el 764.
+//
+// ⚠️ EL ORDEN IMPORTA: el copiloto envía por ESE MISMO token, así que sus propias respuestas también
+// vuelven como `api-token-user.…`. Lo único que las distingue de una notificación de wati-order es el
+// anti-eco (mismo texto, <5 min) — por eso sigue corriendo ANTES de esta decisión. Invertirlo haría que el
+// bot guardara cada respuesta suya una segunda vez y la leyera duplicada en el historial.
+const OPERADOR_MAQUINA_RE = /^(?:bot|api-token-user\.\d+@[\w.-]+)$/i;
+// Vacío = desconocido = se presume PERSONA (hoy todo saliente cuenta como asesor; eso no se relaja).
+const esOperadorHumano = (operador: string): boolean => !OPERADOR_MAQUINA_RE.test((operador ?? "").trim());
+
 const HANDOFF_RE = /\b(humano|persona|asesor|agente|reclamo|queja|hablar con alguien|supervisor|quiero devolver|devolver (el|la|lo|los|las|un|una|mi|este|esta|esto|eso)|devolverl[oa]s?|devuelvan|cambiarl[oa]s?|(una|la|mi|su|esa|esta) devoluci[oó]n|(aplicar|usar|reclamar|validar|activar|hacer (v[aá]lida|efectiva)) (la |mi |su )?garant[ií]a|(mi|su) garant[ií]a|en garant[ií]a|tiene garant[ií]a|sali[oó] (mal|malo|mala|da[ñn]ad[oa]|defectuos[oa])|(lleg[oó]|vino) (mal|malo|mala|da[ñn]ad[oa]|roto|rota|defectuos[oa])|defectuos[oa]s?|me vendieron (uno|una|algo) (malo|mala|da[ñn]ad[oa]|defectuos[oa])|nota de cr[eé]dito|me factur(aron|a|[oó]) (de m[aá]s|mal|otra cantidad)|me cobr(aron|a|[oó]) de m[aá]s|factura(ci[oó]n)? (incorrecta|equivocada|mal (hecha|emitida))|(solo|nom[aá]s|pero) .{0,40}(entregaron|entreg[oó]|dieron|lleg(aron|[oó])) .{0,60}factur\w*|factur\w* .{0,60}(solo|nom[aá]s|pero) .{0,40}(entregaron|entreg[oó]|dieron|lleg(aron|[oó]))|(precios?|descuentos?) (de |del |de la |para |al )?(distribuidor|mayorista|revendedor)\w*|al por mayor)\b/i;
 // v73 — PEDIR UN ASESOR NO ES LO MISMO QUE UN RECLAMO. HANDOFF_RE mezcla las dos cosas y el barrido las
 // trataba igual: se apartaba de ambas. Caso real 18-ago: el cliente pidió asesor a las 14:44, nadie llegó,
@@ -2841,7 +2870,13 @@ async function responderLLM(history: { role: string; content: string; model?: st
     // y se ponía a adivinar ("no veo en el chat cuál es el modelo que ya cotizó el asesor…"). Se le dice
     // qué es y que no lo puede ver, para que ni lo repita ni lo contradiga ni lo invente.
     const esMediaAsesor = m.model === "human-agent" && /\[(document|image|audio|video|file|sticker)\]$/.test(String(m.content ?? ""));
-    const a = m.model === "human-agent" ? (esMediaAsesor ? "[Asesor del equipo — envió un archivo cuyo contenido NO puedes ver; no supongas qué dice]: " : "[Asesor del equipo]: ") : "";
+    // v123 — CUARTA VOZ en el hilo. Un mensaje de máquina (chatbot del flowbuilder o notificación de
+    // wati-order/shipday-status) no lo escribió ni una persona ni tú: sin etiqueta, el modelo lo leería
+    // como algo que dijo ÉL MISMO y daría por hecho que ya preguntó lo que preguntó el chatbot. Se rotula
+    // para que lo lea como lo que es —un automatismo— y ni lo repita ni lo atribuya a un asesor.
+    const a = m.model === "human-agent"
+      ? (esMediaAsesor ? "[Asesor del equipo — envió un archivo cuyo contenido NO puedes ver; no supongas qué dice]: " : "[Asesor del equipo]: ")
+      : m.model === "sistema-wati" ? "[Mensaje automático del sistema — no lo escribió una persona ni tú; no lo repitas]: " : "";
     return { role: m.role === "assistant" ? "assistant" as const : "user" as const, content: t + a + (m.content || "(vacío)") };
   });
   // v20: la API exige que el ÚLTIMO mensaje sea de usuario; varios modelos no aceptan "prefill"
@@ -3929,7 +3964,7 @@ Deno.serve(async (req) => {
         texto: tr?.texto ?? null, ts: new Date().toISOString(),
       });
     }
-    return Response.json({ status: "ok", function: "copilot-webhook", version: "v122-replica-shadow", mode: MODE, mode_raw: MODE_RAW, model: MODEL, llm_configured: !!anthropic, wati_send_configured: !!(WATI_API_TOKEN && WATI_API_BASE), inventario_configurado: !!(SHOPIFY_ADMIN_TOKEN && SHOPIFY_ADMIN_API_BASE), resolve_configured: !!RESOLVE_SECRET, webhook_key_es_default: WEBHOOK_KEY_ES_DEFAULT, handoff_assist_min: HANDOFF_ASSIST_MIN, hist_asistencia: HIST_ASISTENCIA, handoff_cold_hours: HANDOFF_COLD_HOURS, debounce_ms: DEBOUNCE_MS, sesion_gap_dias: SESION_GAP_DIAS, burbujas: BURBUJAS, burbuja_ms: BURBUJA_MS, audio_puente: AUDIO_PUENTE, sweep: SWEEP_MODE, sweep_espera_min: SWEEP_ESPERA_MIN, stt: STT_MODE, stt_raw: STT_RAW, stt_configurado: !!OPENAI_API_KEY, stt_model: STT_MODEL, busqueda_shadow: BUSQUEDA_SHADOW, busqueda_replica: BUSQUEDA_REPLICA, busqueda_replica_raw: BUSQUEDA_REPLICA_RAW, busqueda_mcp: BUSQUEDA_MCP, busqueda_mcp_limit: BUSQUEDA_MCP_LIMIT, catalog_mcp_url: CATALOG_MCP_URL, ucp_profile_url: UCP_PROFILE_URL, live_targets: MODE === "live" ? (LIVE_ALL ? "all" : LIVE_ALLOWLIST.length) : 0, wa_ignorar: WA_IGNORAR.size, ts: new Date().toISOString() });
+    return Response.json({ status: "ok", function: "copilot-webhook", version: "v123-operador-maquina", mode: MODE, mode_raw: MODE_RAW, model: MODEL, llm_configured: !!anthropic, wati_send_configured: !!(WATI_API_TOKEN && WATI_API_BASE), inventario_configurado: !!(SHOPIFY_ADMIN_TOKEN && SHOPIFY_ADMIN_API_BASE), resolve_configured: !!RESOLVE_SECRET, webhook_key_es_default: WEBHOOK_KEY_ES_DEFAULT, handoff_assist_min: HANDOFF_ASSIST_MIN, hist_asistencia: HIST_ASISTENCIA, handoff_cold_hours: HANDOFF_COLD_HOURS, debounce_ms: DEBOUNCE_MS, sesion_gap_dias: SESION_GAP_DIAS, burbujas: BURBUJAS, burbuja_ms: BURBUJA_MS, audio_puente: AUDIO_PUENTE, sweep: SWEEP_MODE, sweep_espera_min: SWEEP_ESPERA_MIN, stt: STT_MODE, stt_raw: STT_RAW, stt_configurado: !!OPENAI_API_KEY, stt_model: STT_MODEL, busqueda_shadow: BUSQUEDA_SHADOW, busqueda_replica: BUSQUEDA_REPLICA, busqueda_replica_raw: BUSQUEDA_REPLICA_RAW, busqueda_mcp: BUSQUEDA_MCP, busqueda_mcp_limit: BUSQUEDA_MCP_LIMIT, catalog_mcp_url: CATALOG_MCP_URL, ucp_profile_url: UCP_PROFILE_URL, live_targets: MODE === "live" ? (LIVE_ALL ? "all" : LIVE_ALLOWLIST.length) : 0, wa_ignorar: WA_IGNORAR.size, ts: new Date().toISOString() });
   }
   if (req.method !== "POST") return Response.json({ error: "method_not_allowed" }, { status: 405 });
   if (url.searchParams.get("key") !== WEBHOOK_KEY) return Response.json({ error: "forbidden" }, { status: 403 });
@@ -4170,7 +4205,9 @@ Deno.serve(async (req) => {
     const nombrePl = String(p.templateName ?? "").trim();
     const textoPl = (texto || (typeof p.templateContent === "string" ? p.templateContent : "")).trim().slice(0, 3900);
     const esReenganche = /reengan/i.test(nombrePl);
-    const esHumano = !!operador && !esReenganche;
+    // v123 — "hay operador" ya no basta para decir que la mandó una persona: el chatbot del flowbuilder y
+    // el token de la API también traen operador. Cuenta como asesor solo si ese operador NO es una máquina.
+    const esHumano = !!operador && !esReenganche && esOperadorHumano(operador);
     let guardada = false;
     if (waId && textoPl) {
       const { data: convP } = await sb.from("conversations").select("id,status").eq("wa_id", waId).maybeSingle();
@@ -4200,7 +4237,12 @@ Deno.serve(async (req) => {
       if (eco && eco.length) return Response.json({ ok: true, skipped: "eco_propio" });
       // El negocio está atendiendo: guarda el mensaje como contexto y marca la conversación como
       // ATENDIDA POR HUMANO (v15). El bot no la retoma hasta que se devuelva a status='bot'.
-      await sb.from("messages").insert({ conversation_id: convH.id, role: "assistant", content: texto.slice(0, 4000), mode: "live", model: "human-agent" });
+      // v123 — salvo que quien escribió sea una MÁQUINA (el chatbot del flowbuilder, o el token de la API
+      // con el que wati-order/shipday-status notifican). El texto se guarda IGUAL —el bot debe leer todo lo
+      // que pasó en el hilo, en secuencia— pero bajo 'sistema-wati': no arranca el reloj del asesor, no
+      // enciende pidioEnvioElAsesor y no manda la conversación a handoff. Un robot no atiende a nadie.
+      const humano = esOperadorHumano(operador);
+      await sb.from("messages").insert({ conversation_id: convH.id, role: "assistant", content: texto.slice(0, 4000), mode: "live", model: humano ? "human-agent" : "sistema-wati" });
       // v115 — 'cerrada' NO se pisa. Esta línea promovía CUALQUIER status a 'handoff' en cuanto un asesor
       // escribía, y con eso resucitaba al bot en una conversación marcada "no es cliente". Caso real del
       // 25-ago con nuestro PROVEEDOR (5076741…): a las 14:15 se marcó 'cerrada'; a las 15:04 un asesor le
@@ -4208,8 +4250,10 @@ Deno.serve(async (req) => {
       // NUESTRO precio de venta ($132.00 + ITBMS) frente a la cotización del proveedor ($112.35) — o sea,
       // le enseñó nuestro margen. 'cerrada' es una decisión del negocio, no un estado transitorio: solo
       // sale de ahí quien la escribió, a mano.
-      if (convH.status !== "handoff" && convH.status !== "cerrada") await sb.from("conversations").update({ status: "handoff" }).eq("id", convH.id);
-      await log("mensaje_humano", true, { waId, operador: operador || null });
+      if (humano && convH.status !== "handoff" && convH.status !== "cerrada") await sb.from("conversations").update({ status: "handoff" }).eq("id", convH.id);
+      // v123 — `mensaje_humano` queda LIMPIO (solo personas); las máquinas van a su propia acción. Así la
+      // telemetría de "asesor activo" deja de contar robots y se puede medir el cambio.
+      await log(humano ? "mensaje_humano" : "mensaje_sistema", true, { waId, operador: operador || null });
     }
     return Response.json({ ok: true, skipped: "negocio_atendiendo" });
   }
@@ -4222,10 +4266,11 @@ Deno.serve(async (req) => {
     const { data: convH } = await sb.from("conversations").select("id,status").eq("wa_id", waId).maybeSingle();
     if (convH?.id) {
       const marca = texto ? `${texto.slice(0, 3900)} [${tipo}]` : `[${tipo}]`;
-      const insH = await sb.from("messages").insert({ conversation_id: convH.id, role: "assistant", content: marca, mode: "live", model: "human-agent" });
+      const humanoM = esOperadorHumano(operador); // v123 — mismo criterio que el camino de texto
+      const insH = await sb.from("messages").insert({ conversation_id: convH.id, role: "assistant", content: marca, mode: "live", model: humanoM ? "human-agent" : "sistema-wati" });
       if (insH.error) await log("error", false, { fase: "media_asesor_insert", waId, error: String(insH.error.message ?? "").slice(0, 120) });
-      if (convH.status !== "handoff" && convH.status !== "cerrada") await sb.from("conversations").update({ status: "handoff" }).eq("id", convH.id); // v115: misma razón que arriba — el asesor que manda un PDF tampoco resucita al bot en una 'cerrada'
-      await log("mensaje_humano", true, { waId, operador: operador || null, tipo });
+      if (humanoM && convH.status !== "handoff" && convH.status !== "cerrada") await sb.from("conversations").update({ status: "handoff" }).eq("id", convH.id); // v115: misma razón que arriba — el asesor que manda un PDF tampoco resucita al bot en una 'cerrada'
+      await log(humanoM ? "mensaje_humano" : "mensaje_sistema", true, { waId, operador: operador || null, tipo });
     }
     return Response.json({ ok: true, skipped: "negocio_atendiendo_media" });
   }
