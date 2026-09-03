@@ -2,3 +2,10 @@
 # Artefactos de Python (armar.py se corre a mano; el .pyc no aporta nada al repo)
 __pycache__/
 *.pyc
+
+# El LIENZO SEMBRADO de las maquetas de correo (v72.2): ~2,2 MB de HTML GENERADO que empaqueta el editor
+# de diseño junto con el contenido. Sus fuentes —los .dc.html por artboard y canvas.json— sí se versionan,
+# en la rama archivo. La regla existía allá y faltaba aquí, así que un `git add -A` en esta rama se lo
+# llevaba puesto: 2,2 MB de salida generada en la rama DESDE LA QUE SE DESPLIEGA. Pasó el 03-sep.
+design/*.html
+!design/*.dc.html
