@@ -1665,7 +1665,6 @@ caso("v123: 'sistema-wati' NO se rotula como asesor del equipo", (() => {
   const bloque = src.slice(i, i + 600);
   return i > -1 && /\[Asesor del equipo\]/.test(bloque) && !/sistema-wati" \? "\[Asesor/.test(bloque);
 })());
-caso("v123: el healthcheck delata la versión (v126)", /version: "v126-guard-precio"/.test(src));
 
 // --- v126: guard de precio por producto ------------------------------------------------------------
 console.log("v126 guard de precio");
@@ -1786,6 +1785,44 @@ caso("v125: webp no se manda (WhatsApp lo vuelve sticker)", /if \(!\/\^image\\\/
 caso("v125: la foto viene atada al resultado de buscar_producto (fichas se llenan en enriquecer, no del modelo)", /fichas\[h\.toLowerCase\(\)\] = \{ titulo: String\(p\.titulo\), imagen_url: String\(img\), url: urls\[i\]/.test(src));
 caso("v125: inventarioShopify trae featuredImage en el mismo viaje", /totalInventory featuredImage \{ url \}/.test(src));
 caso("v125: healthcheck expone ficha_imagen", /ficha_imagen: FICHA_IMAGEN/.test(src));
+// --- v126.1: la captura registra sus rechazos ---------------------------------------------------------
+// El 03-sep el webhook-call de "Despachar a Shipday" no llegó nunca a `captura_activada` y desde el log
+// no se podía saber por qué: las tres salidas de rechazo (key mala, body sin waId, número sin
+// conversación) devolvían su código HTTP en silencio. "No se llamó" y "se llamó y lo rechacé" se veían
+// exactamente igual. Estos candados fijan que cada rechazo deje rastro.
+caso("v126.1: el body sin waId se registra, no solo devuelve 400", (() => {
+  const i = src.indexOf('motivo: "falta_waId"');
+  return i > -1 && src.lastIndexOf('await log("captura_rechazada", false, {', i) > -1;
+})());
+caso("v126.1: un número sin conversación se registra", /log\("captura_rechazada", false, \{ motivo: "sin_conversacion", waId: waCap \}\)/.test(src));
+// El rechazo se registra ANTES de devolver: si el return va primero, el log es inalcanzable.
+caso("v126.1: el log del rechazo precede al return en las dos salidas", (() => {
+  for (const error of ["falta_waId", "sin_conversacion"]) {
+    const iLog = src.indexOf(`motivo: "${error}"`);
+    const iRet = src.indexOf(`return Response.json({ ok: false, error: "${error}" }`, iLog);
+    if (!(iLog > -1 && iRet > iLog)) return false;
+  }
+  return true;
+})());
+// Una key mala deja rastro SOLO si nombró una acción nuestra: el log de un endpoint público que
+// cualquiera puede llenar deja de ser telemetría y pasa a ser un problema.
+caso("v126.1: la key rechazada se registra solo si la URL nombra una acción conocida", (() => {
+  const i = src.indexOf('const accion = ["captura", "sweep"].find(');
+  const bloque = src.slice(i, i + 400);
+  return i > -1 && /if \(accion\) \{/.test(bloque) && /log\("key_rechazada", false/.test(bloque);
+})());
+// La key mala NO se guarda: se guarda que venía y cuánto medía. Una key equivocada suele ser la buena
+// con un carácter de más, así que escribirla en job_log es acercarla a quien lea el log.
+caso("v126.1: el log de la key rechazada nunca guarda la key", (() => {
+  const i = src.indexOf('await log("key_rechazada", false,');
+  const bloque = src.slice(i, i + 200);
+  return i > -1 && /key_presente: k !== null/.test(bloque) && /key_largo: \(k \?\? ""\)\.length/.test(bloque)
+    && !/key: k[,\s}]/.test(bloque);
+})());
+// Del body se guardan NOMBRES de campo, no valores: alcanza para ver {"phone":…} en vez de {"waId":…}
+// sin copiar el teléfono a un segundo lugar.
+caso("v126.1: del body rechazado se guardan los nombres de campo, no los valores", /campos: Object\.keys\(body \?\? \{\}\)\.slice\(0, 10\)/.test(src));
+caso("v126.1: el healthcheck delata la versión", /version: "v126\.1-captura-visible"/.test(src));
 
 // --- resumen --------------------------------------------------------------------------------------
 console.log(`\n${ok} OK, ${mal} FALLA${mal === 1 ? "" : "S"}`);

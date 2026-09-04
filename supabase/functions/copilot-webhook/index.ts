@@ -4488,10 +4488,28 @@ Deno.serve(async (req) => {
         texto: tr?.texto ?? null, ts: new Date().toISOString(),
       });
     }
-    return Response.json({ status: "ok", function: "copilot-webhook", version: "v126-guard-precio", mode: MODE, mode_raw: MODE_RAW, model: MODEL, llm_configured: !!anthropic, wati_send_configured: !!(WATI_API_TOKEN && WATI_API_BASE), inventario_configurado: !!(SHOPIFY_ADMIN_TOKEN && SHOPIFY_ADMIN_API_BASE), resolve_configured: !!RESOLVE_SECRET, webhook_key_es_default: WEBHOOK_KEY_ES_DEFAULT, handoff_assist_min: HANDOFF_ASSIST_MIN, hist_asistencia: HIST_ASISTENCIA, handoff_cold_hours: HANDOFF_COLD_HOURS, debounce_ms: DEBOUNCE_MS, sesion_gap_dias: SESION_GAP_DIAS, burbujas: BURBUJAS, burbuja_ms: BURBUJA_MS, audio_puente: AUDIO_PUENTE, sweep: SWEEP_MODE, sweep_espera_min: SWEEP_ESPERA_MIN, stt: STT_MODE, stt_raw: STT_RAW, stt_configurado: !!OPENAI_API_KEY, stt_model: STT_MODEL, busqueda_shadow: BUSQUEDA_SHADOW, busqueda_replica: BUSQUEDA_REPLICA, busqueda_replica_raw: BUSQUEDA_REPLICA_RAW, busqueda_mcp: BUSQUEDA_MCP, busqueda_mcp_limit: BUSQUEDA_MCP_LIMIT, catalog_mcp_url: CATALOG_MCP_URL, ucp_profile_url: UCP_PROFILE_URL, live_targets: MODE === "live" ? (LIVE_ALL ? "all" : LIVE_ALLOWLIST.length) : 0, wa_ignorar: WA_IGNORAR.size, sombra_openai: SOMBRA_OPENAI_MODELS, sombra_openai_activa: SOMBRA_OPENAI_ACTIVA, sombra_openai_pct: SOMBRA_OPENAI_PCT, sombra_openai_esfuerzo: SOMBRA_OPENAI_ESFUERZO, ficha_imagen: FICHA_IMAGEN, guard_precio: GUARD_PRECIO, ts: new Date().toISOString() });
+    return Response.json({ status: "ok", function: "copilot-webhook", version: "v126.1-captura-visible", mode: MODE, mode_raw: MODE_RAW, model: MODEL, llm_configured: !!anthropic, wati_send_configured: !!(WATI_API_TOKEN && WATI_API_BASE), inventario_configurado: !!(SHOPIFY_ADMIN_TOKEN && SHOPIFY_ADMIN_API_BASE), resolve_configured: !!RESOLVE_SECRET, webhook_key_es_default: WEBHOOK_KEY_ES_DEFAULT, handoff_assist_min: HANDOFF_ASSIST_MIN, hist_asistencia: HIST_ASISTENCIA, handoff_cold_hours: HANDOFF_COLD_HOURS, debounce_ms: DEBOUNCE_MS, sesion_gap_dias: SESION_GAP_DIAS, burbujas: BURBUJAS, burbuja_ms: BURBUJA_MS, audio_puente: AUDIO_PUENTE, sweep: SWEEP_MODE, sweep_espera_min: SWEEP_ESPERA_MIN, stt: STT_MODE, stt_raw: STT_RAW, stt_configurado: !!OPENAI_API_KEY, stt_model: STT_MODEL, busqueda_shadow: BUSQUEDA_SHADOW, busqueda_replica: BUSQUEDA_REPLICA, busqueda_replica_raw: BUSQUEDA_REPLICA_RAW, busqueda_mcp: BUSQUEDA_MCP, busqueda_mcp_limit: BUSQUEDA_MCP_LIMIT, catalog_mcp_url: CATALOG_MCP_URL, ucp_profile_url: UCP_PROFILE_URL, live_targets: MODE === "live" ? (LIVE_ALL ? "all" : LIVE_ALLOWLIST.length) : 0, wa_ignorar: WA_IGNORAR.size, sombra_openai: SOMBRA_OPENAI_MODELS, sombra_openai_activa: SOMBRA_OPENAI_ACTIVA, sombra_openai_pct: SOMBRA_OPENAI_PCT, sombra_openai_esfuerzo: SOMBRA_OPENAI_ESFUERZO, ficha_imagen: FICHA_IMAGEN, guard_precio: GUARD_PRECIO, ts: new Date().toISOString() });
   }
   if (req.method !== "POST") return Response.json({ error: "method_not_allowed" }, { status: 405 });
-  if (url.searchParams.get("key") !== WEBHOOK_KEY) return Response.json({ error: "forbidden" }, { status: 403 });
+  // v126.1 — UNA KEY MAL PUESTA DEJA RASTRO, pero solo si quien llama nombró un endpoint nuestro.
+  // El 03-sep Isaac cableó el webhook-call de "Despachar a Shipday" a `?captura=1`; el despacho falló
+  // (20:14, cliente 50766144415), el chatbot mandó su mensaje… y en job_log no había NADA. Sin telemetría
+  // de rechazo, "nunca se llamó" y "se llamó y lo rechacé" son indistinguibles desde aquí, y no se le
+  // podía responder si su configuración servía. Es la misma deuda que dejó anotada el incidente de
+  // `wati-address` ("conviene que el stub registre cada llamada que reciba"), mordiendo un día después.
+  //
+  // Se registra SOLO si la URL nombra una acción conocida: un escáner que golpea la URL pelada no
+  // escribe filas (esto es un endpoint público, y un log que cualquiera puede llenar es un problema,
+  // no una función). Y NUNCA se guarda la key —ni la mala—: solo si venía y cuánto medía; una key mal
+  // tecleada suele ser la buena con un carácter de más, y job_log no es lugar para acercarse a ella.
+  if (url.searchParams.get("key") !== WEBHOOK_KEY) {
+    const accion = ["captura", "sweep"].find((a) => url.searchParams.get(a) === "1");
+    if (accion) {
+      const k = url.searchParams.get("key");
+      await log("key_rechazada", false, { accion, key_presente: k !== null, key_largo: (k ?? "").length });
+    }
+    return Response.json({ error: "forbidden" }, { status: 403 });
+  }
 
   // v118 — ¿QUÉ DEVUELVE WATI CUANDO LE PREGUNTAMOS POR UN CONTACTO? La sonda de equipos (v116, ya
   // retirada) dejó probado que el EQUIPO no viaja en el webhook: en 8 mensajes de clientes el asignado
@@ -4616,9 +4634,21 @@ Deno.serve(async (req) => {
     try {
       const body = await req.json().catch(() => ({}));
       const waCap = String(body?.waId ?? body?.wa_id ?? body?.telefono ?? body?.whatsappNumber ?? "").replace(/\D/g, "");
-      if (waCap.length < 8) return Response.json({ ok: false, error: "falta_waId" }, { status: 400 });
+      // v126.1 — los rechazos también se registran (ver el porqué en la puerta de la key). Aquí ya se pasó
+      // esa puerta, así que quien llama está autenticado: no hay riesgo de que un extraño llene el log.
+      // Del body se guardan los NOMBRES de los campos, no los valores: alcanza para ver que llegó
+      // {"phone": …} en vez de {"waId": …}, que es el error de cableado típico en el constructor de WATI.
+      if (waCap.length < 8) {
+        await log("captura_rechazada", false, {
+          motivo: "falta_waId", campos: Object.keys(body ?? {}).slice(0, 10), digitos: waCap.length,
+        });
+        return Response.json({ ok: false, error: "falta_waId" }, { status: 400 });
+      }
       const { data: convCap } = await sb.from("conversations").select("id,status").eq("wa_id", waCap).maybeSingle();
-      if (!convCap?.id) return Response.json({ ok: false, error: "sin_conversacion" }, { status: 404 });
+      if (!convCap?.id) {
+        await log("captura_rechazada", false, { motivo: "sin_conversacion", waId: waCap });
+        return Response.json({ ok: false, error: "sin_conversacion" }, { status: 404 });
+      }
       const hasta = new Date(Date.now() + 30 * 60 * 1000).toISOString();
       const updCap = await sb.from("conversations").update({ captura_hasta: hasta }).eq("id", convCap.id);
       if (updCap.error) return Response.json({ ok: false, error: String(updCap.error.message ?? "").slice(0, 150) }, { status: 500 });
