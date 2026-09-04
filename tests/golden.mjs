@@ -1665,7 +1665,11 @@ caso("v123: 'sistema-wati' NO se rotula como asesor del equipo", (() => {
   const bloque = src.slice(i, i + 600);
   return i > -1 && /\[Asesor del equipo\]/.test(bloque) && !/sistema-wati" \? "\[Asesor/.test(bloque);
 })());
-caso("v123: el healthcheck delata la versión (v125)", /version: "v125-asesor-sombra-openai-ficha-foto"/.test(src));
+caso("v123: el healthcheck delata la versión (v125.1)", /version: "v125\.1-sombra-esfuerzo-none"/.test(src));
+// v125.1 — gpt-5.6 en chat/completions rechaza tools con reasoning_effort ≠ 'none' (14 de 14 turnos fallidos el 03-sep).
+caso("v125.1: 'none' es un esfuerzo válido", /\["none", "minimal", "low", "medium", "high"\]\.includes\(e\)/.test(src));
+caso("v125.1: ante el 400 de reasoning_effort se reintenta UNA vez con 'none'", /r\.status === 400 && esRazonador && esfuerzo !== "none" && \/reasoning_effort\/i\.test\(cuerpo\)/.test(src) && /esfuerzo = "none";\s*\n\s*r = await pedir\(\);/.test(src));
+caso("v125.1: el log dice qué esfuerzo terminó usándose", /esfuerzo_usado: s\.esfuerzo \?\? null/.test(src));
 
 // --- v125: el asesor es "él" -------------------------------------------------------------------
 console.log("v125 identidad masculina");
