@@ -1665,7 +1665,49 @@ caso("v123: 'sistema-wati' NO se rotula como asesor del equipo", (() => {
   const bloque = src.slice(i, i + 600);
   return i > -1 && /\[Asesor del equipo\]/.test(bloque) && !/sistema-wati" \? "\[Asesor/.test(bloque);
 })());
-caso("v123: el healthcheck delata la versión (v125.2)", /version: "v125\.2-sombra-replay"/.test(src));
+caso("v123: el healthcheck delata la versión (v126)", /version: "v126-guard-precio"/.test(src));
+
+// --- v126: guard de precio por producto ------------------------------------------------------------
+console.log("v126 guard de precio");
+const preciosInconsistentes = extraerFuncion("preciosInconsistentes");
+const normPrecio = extraerFuncion("normPrecio");
+// Caso REAL (replay 03-sep, turno del UPS): Sonnet 5 le puso al BV650 el precio del BV500. $56.00 SÍ era un
+// monto del turno, así que solo un guard que EMPAREJE título y precio lo ve.
+const FICHAS_UPS = {
+  "apc-back-ups-bv500": { titulo: "APC Back-UPS -BV500", imagen_url: "", url: "u1", precio_usd: "56.00", itbms_7pct: "3.92", total_con_itbms: "59.92" },
+  "apc-easy-bv650-650va-375w": { titulo: "APC Easy BV650 650VA | 375W", imagen_url: "", url: "u2", precio_usd: "66.00", itbms_7pct: "4.62", total_con_itbms: "70.62" },
+};
+const TEXTO_UPS = "Para una impresora como la Pixma G4170, le recomiendo el *APC Back-UPS - BV500*, es suficiente y económico:\n\n600 VA / 300 W, 6 tomas.\n$56.00 + ITBMS (7%) = $59.92\n✅ 4 unidades disponibles\nhttps://quickservicepanama.com/products/apc-back-ups-bv500?utm_source=whatsapp\n\nSi prefiere algo con más respaldo, también tenemos el *APC Easy BV650 650VA* a $56.00 + ITBMS = $59.92 (mismo precio, un poco más de potencia). ¿Le sirve alguno de estos?";
+caso("v126: el caso real del UPS se detecta (BV650 con el precio del BV500)", (() => {
+  const r = preciosInconsistentes(TEXTO_UPS, FICHAS_UPS);
+  return r.length === 2 && r.every((x) => /BV650/.test(x.titulo)) && r.map((x) => x.monto).sort().join(",") === "56.00,59.92";
+})());
+caso("v126: el mismo texto con el precio correcto pasa limpio", preciosInconsistentes(TEXTO_UPS.replace("a $56.00 + ITBMS = $59.92", "a $66.00 + ITBMS = $70.62"), FICHAS_UPS).length === 0);
+caso("v126: ancla por código único aunque el modelo abrevie el título ('APC Back-UPS - BV500')", (() => {
+  const r = preciosInconsistentes("*APC Back-UPS - BV500*\n$57.00 + ITBMS (7%) = $60.99", FICHAS_UPS);
+  return r.length === 2 && /BV500/.test(r[0].titulo);
+})());
+const FICHAS_G4170 = { "canon-g4170": { titulo: "Impresora Canon Pixma G4170 | Escáner Automático | Wi-Fi", imagen_url: "x", url: "u", precio_usd: "174.95", itbms_7pct: "12.25", total_con_itbms: "187.20", precio_antes_usd: "209.95", ahorro_usd: "35.00" } };
+caso("v126: oferta (antes/ahora/ahorro) no dispara", preciosInconsistentes("La *Impresora Canon Pixma G4170 | Escáner Automático | Wi-Fi* está en OFERTA 🏷️: antes $209.95, ahora $174.95 + ITBMS (7%) = $187.20 (ahorra $35.00)\n⚠️ stock bajo", FICHAS_G4170).length === 0);
+caso("v126: el envío en otro párrafo no se cuenta contra el producto", preciosInconsistentes("*Impresora Canon Pixma G4170 | Escáner Automático | Wi-Fi*\n$174.95 + ITBMS (7%) = $187.20\n\nEl envío a Santa María es B/.6.00 + ITBMS (7%) = B/.6.42.", FICHAS_G4170).length === 0);
+caso("v126: los montos de calcular_cotizacion (clave __montos_turno) están permitidos", preciosInconsistentes("*Impresora Canon Pixma G4170 | Escáner Automático | Wi-Fi*\n3 unidades: $524.85 + ITBMS $36.74 = $561.59", { ...FICHAS_G4170, __montos_turno: { titulo: "", imagen_url: "", url: "", montos: ["524.85", "36.74", "561.59"] } }).length === 0);
+caso("v126: sin ancla (título ni código en el texto) no se juzga nada", preciosInconsistentes("Tenemos varias opciones desde $99.00", FICHAS_G4170).length === 0);
+caso("v126: código compartido entre productos del turno NO sirve de ancla (T544 ×2)", (() => {
+  const f = { a: { titulo: "Tinta Epson T544 Negro", imagen_url: "", url: "", precio_usd: "12.00", itbms_7pct: "0.84", total_con_itbms: "12.84" }, b: { titulo: "Tinta Epson T544 Cyan", imagen_url: "", url: "", precio_usd: "14.00", itbms_7pct: "0.98", total_con_itbms: "14.98" } };
+  return preciosInconsistentes("La T544 cuesta $14.00 + ITBMS", f).length === 0;
+})());
+caso("v126: sin fichas o sin texto → []", preciosInconsistentes("", FICHAS_UPS).length === 0 && preciosInconsistentes("x $1.00", undefined).length === 0);
+caso("v126: normPrecio conserva los párrafos (el corte los necesita)", normPrecio("*A*  b\n\n\n\nc") === "a b\n\nc");
+caso("v126: gateado por COPILOT_GUARD_PRECIO (on|log|off, default on)", /\["on", "log", "off"\]\.includes\(e\) \? e : "on"/.test(src));
+caso("v126: corre DESPUÉS del guard v120 y ANTES de la foto/burbujas", (() => { const a = src.indexOf("inventado = await linksInventados("); const b = src.indexOf("precioMal = preciosInconsistentes(salida, fichas);"); const c = src.indexOf("const fichaImagen = (FICHA_IMAGEN"); return a > -1 && a < b && b < c; })());
+caso("v126: el reintento va con thinking adaptive + esfuerzo medio, sin tool_choice forzado", /\? \{ model: MODEL, max_tokens: 4096, thinking: \{ type: "adaptive" \}, output_config: \{ effort: "medium" \}, system, tools: toolsActivas, messages \}/.test(src));
+caso("v126: el reintento vuelve a pasar por fuga de tool, producto inventado y precio", /motivo = "fuga_tool"; salida2 = null;/.test(src) && /motivo = "producto_inventado"; salida2 = null;/.test(src) && /motivo = "precio_inconsistente"; precioMal = mal2; salida2 = null;/.test(src));
+caso("v126: si el reintento tampoco cuadra sale la deferencia de precio", /déjeme verificar bien el precio antes de confirmarle/.test(src));
+caso("v126: el reintento no se sombrea", /SOMBRA_OPENAI_ACTIVA && waId && !pensar &&/.test(src));
+caso("v126: telemetría precio_inconsistente + precio_reintento", /"precio_inconsistente"/.test(src) && /"precio_reintento"/.test(src));
+caso("v126: en asistencia el guard calla sin reintentar", /const malA = preciosInconsistentes\(salida, fichasA\);/.test(src) && /if \(GUARD_PRECIO === "on"\) salida = null;/.test(src));
+caso("v126: las fichas guardan TODOS los productos con sus montos (no solo los con foto)", /fichas\[h\.toLowerCase\(\)\] = \{ titulo: String\(p\.titulo\), imagen_url: String\(img\), url: urls\[i\], precio_usd: pr\.precio_usd/.test(src));
+caso("v126: healthcheck expone guard_precio", /guard_precio: GUARD_PRECIO/.test(src));
 // v125.2 — replay de sombra: re-corre una conversación ya ocurrida solo contra OpenAI (Claude no se llama).
 caso("v125.2: el replay está gateado por la key y por la sombra activa", /url\.searchParams\.get\("sombra_replay"\)/.test(src) && /error: "sombra_apagada"/.test(src));
 caso("v125.2: en replay no se llama a Claude y se devuelve la respuesta real", /if \(replay\) \{[\s\S]{0,600}return \{ \.\.\.replay\.real, cacheRead: 0, cacheWrite: 0 \};/.test(src));
@@ -1741,7 +1783,7 @@ caso("v125: la foto corre DESPUÉS del guard v120 y ANTES de partir en burbujas"
 caso("v125: el eco de la foto propia se reconoce (no es un asesor mandando una captura)", /skipped: "eco_propio_imagen"/.test(src) && /eq\("model", "copilot-imagen"\)\.gte\("created_at", desdeImg\)/.test(src));
 caso("v125: enviarImagenWati pasa por WA_IGNORAR y solo acepta hosts nuestros/Shopify", (() => { const i = src.indexOf("async function enviarImagenWati("); const c = src.slice(i, i + 3000); return i > -1 && /WA_IGNORAR\.has\(soloDigitos\(waId\)\)/.test(c) && /host === "cdn\.shopify\.com"/.test(c) && /sendSessionFile/.test(c); })());
 caso("v125: webp no se manda (WhatsApp lo vuelve sticker)", /if \(!\/\^image\\\/\(jpeg\|png\)\$\/\.test\(mt\)\)/.test(src));
-caso("v125: la foto viene atada al resultado de buscar_producto (fichas se llenan en enriquecer, no del modelo)", /fichas\[h\.toLowerCase\(\)\] = \{ titulo: String\(p\.titulo\), imagen_url: String\(img\), url: urls\[i\] \};/.test(src));
+caso("v125: la foto viene atada al resultado de buscar_producto (fichas se llenan en enriquecer, no del modelo)", /fichas\[h\.toLowerCase\(\)\] = \{ titulo: String\(p\.titulo\), imagen_url: String\(img\), url: urls\[i\]/.test(src));
 caso("v125: inventarioShopify trae featuredImage en el mismo viaje", /totalInventory featuredImage \{ url \}/.test(src));
 caso("v125: healthcheck expone ficha_imagen", /ficha_imagen: FICHA_IMAGEN/.test(src));
 
