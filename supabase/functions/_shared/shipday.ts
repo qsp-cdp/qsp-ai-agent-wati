@@ -1,0 +1,352 @@
+// Port Deno de src/shipday.js (la versión Node tiene las pruebas unitarias;
+// si cambias lógica aquí, replica el cambio allá y corre `npm test`).
+const SHIPDAY_BASE_URL = 'https://api.shipday.com';
+
+export interface Pickup {
+  name: string;
+  address: string;
+  phone: string;
+}
+
+export function defaultPickup(): Pickup {
+  return {
+    name: Deno.env.get('PICKUP_NAME') || 'Quick Service Panama',
+    address: Deno.env.get('PICKUP_ADDRESS') || '',
+    phone: Deno.env.get('PICKUP_PHONE') || '',
+  };
+}
+
+export async function createShipdayOrder(order: Record<string, unknown>) {
+  const apiKey = Deno.env.get('SHIPDAY_API_KEY');
+  if (!apiKey) throw new Error('Falta el secreto SHIPDAY_API_KEY');
+  const res = await fetch(`${SHIPDAY_BASE_URL}/orders`, {
+    method: 'POST',
+    headers: {
+      Authorization: `Basic ${apiKey}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(order),
+    // v62: timeout — es la única llamada externa del despacho sin límite, y va al final de una cadena
+    // de 5+5+8s. Sin esto, si Shipday tarda, Shopify da el webhook por fallido y reintenta (→ duplicado).
+    signal: AbortSignal.timeout(15000),
+  });
+  const text = await res.text();
+  if (!res.ok) throw new Error(`Shipday respondió ${res.status}: ${text}`);
+  try {
+    return JSON.parse(text);
+  } catch {
+    return { raw: text };
+  }
+}
+
+export function shouldDispatchShopifyOrder(
+  shopifyOrder: any,
+  filter = Deno.env.get('SHOPIFY_DELIVERY_FILTER'),
+): boolean {
+  const terms = (filter || '').split(',').map((t) => t.trim().toLowerCase()).filter(Boolean);
+  if (!terms.length) return true;
+  const methods: string[] = (shopifyOrder.shipping_lines || []).map(
+    (l: any) => `${l.title ?? ''} ${l.code ?? ''}`.toLowerCase(),
+  );
+  return methods.some((m) => terms.some((t) => m.includes(t)));
+}
+
+// LOS DOS CAMPOS DE SHIPDAY HACEN COSAS DISTINTAS, y hasta ahora los tratábamos como uno solo:
+//
+//   · `customerAddress`      → lo geocodifica Google. Sirve para poner el PIN en el mapa.
+//   · `deliveryInstruction`  → lo lee el repartidor cuando YA llegó. Sirve para encontrar la PUERTA.
+//
+// Meter el piso, la oficina o "al lado de la lavandería" en el campo que se geocodifica no ayuda a
+// nadie: Google no ubica un apartamento, y cada palabra de más aleja el pin del edificio correcto.
+// El detalle de unidad va a las instrucciones, que es donde el repartidor lo va a leer.
+//
+// Se COPIA, no se quita del texto de la dirección: en Panamá "calle 15, casa 123" sí es parte de lo
+// que Google usa para ubicar, y recortarlo automáticamente sería adivinar. Un detalle repetido es
+// ruido inofensivo; un pin mal puesto manda a alguien a la puerta equivocada.
+const RE_UNIDAD =
+  /(?:\S{1,10}\s+)?\b(?:apto|apartamento|apt|ofic|oficina|piso|nivel|casa|local|torre|of)\b\.?(?:\s*(?:#|n[º°o]\.?)?\s*[\wáéíóúñ.-]{1,12})?/gi;
+
+export function detallesDeUnidad(...textos: (string | undefined | null)[]): string {
+  const vistos = new Set<string>();
+  const out: string[] = [];
+  for (const t of textos) {
+    const s = String(t ?? '').trim();
+    if (!s) continue;
+    for (const bruto of s.match(RE_UNIDAD) ?? []) {
+      const limpio = bruto.replace(/\s+/g, ' ').replace(/^[,;.\s]+|[,;.\s]+$/g, '').trim();
+      if (limpio.length < 3) continue;
+      const clave = limpio.toLowerCase();
+      if (vistos.has(clave)) continue;
+      vistos.add(clave);
+      out.push(limpio);
+    }
+  }
+  return out.join(' · ');
+}
+
+export function shopifyOrderToShipday(shopifyOrder: any, pickup: Pickup = defaultPickup()) {
+  const shipping = shopifyOrder.shipping_address || shopifyOrder.billing_address || {};
+  const customer = shopifyOrder.customer || {};
+  const name =
+    shipping.name ||
+    [customer.first_name, customer.last_name].filter(Boolean).join(' ') ||
+    'Cliente';
+  // `address2` en Shopify es literalmente el campo "Apartamento, oficina, etc." — el checkout YA lo
+  // separó. Volver a pegarlo aquí era deshacer ese trabajo y mandarlo a geocodificar. Va a las
+  // instrucciones, junto con lo que se detecte dentro de la calle ("3er Piso" en el pedido #8871).
+  const addressParts = [shipping.address1, shipping.city, shipping.province, shipping.country]
+    .filter(Boolean)
+    .join(', ');
+  const detalle = detallesDeUnidad(shipping.address2, shipping.address1);
+  const instrucciones = [
+    detalle ? `🏠 Entrega exacta: ${detalle}` : '',
+    String(shopifyOrder.note ?? '').trim(),
+  ].filter(Boolean).join('\n');
+
+  const order: Record<string, unknown> = {
+    orderNumber: String(shopifyOrder.order_number ?? shopifyOrder.name ?? shopifyOrder.id),
+    customerName: name,
+    customerAddress: addressParts,
+    customerPhoneNumber: shipping.phone || shopifyOrder.phone || customer.phone || '',
+    customerEmail: shopifyOrder.email || customer.email || undefined,
+    restaurantName: pickup.name,
+    restaurantAddress: pickup.address,
+    restaurantPhoneNumber: pickup.phone,
+    totalOrderCost: Number(shopifyOrder.total_price) || undefined,
+    deliveryFee: Number(shopifyOrder.total_shipping_price_set?.shop_money?.amount) || undefined,
+    deliveryInstruction: instrucciones || undefined,
+    orderSource: 'Shopify',
+    orderItem: (shopifyOrder.line_items || []).map((li: any) => ({
+      name: li.title,
+      quantity: li.quantity,
+      unitPrice: Number(li.price) || 0,
+    })),
+  };
+  if (shipping.latitude != null && shipping.longitude != null) {
+    order.deliveryLatitude = Number(shipping.latitude);
+    order.deliveryLongitude = Number(shipping.longitude);
+  }
+  return order;
+}
+
+export interface WatiCapture {
+  nombre?: string;
+  telefono?: string;
+  direccion?: string;
+  referencia?: string;
+  maps_url?: string;
+  lat?: number | null;   // coordenadas ya resueltas (tienen prioridad sobre maps_url)
+  lng?: number | null;
+  pedido?: string;
+  total?: string | number;
+  orderNumber?: string;
+  items?: Array<{ name?: string; quantity?: number; unitPrice?: number } | string>;
+}
+
+// Extrae lat/lng de un link de Google Maps (formatos @lat,lng · ?q=lat,lng ·
+// ll=lat,lng · !3dlat!4dlng · geo:lat,lng de la ubicación nativa de WhatsApp).
+export function parseMapsCoords(url?: string): { lat: number; lng: number } | null {
+  if (!url) return null;
+  const s = String(url);
+  const m =
+    s.match(/@(-?\d{1,2}\.\d+),(-?\d{1,3}\.\d+)/) ||
+    s.match(/[?&](?:q|ll|query|daddr|destination)=(-?\d{1,2}\.\d+),\s*(-?\d{1,3}\.\d+)/) ||
+    s.match(/!3d(-?\d{1,2}\.\d+)!4d(-?\d{1,3}\.\d+)/) ||
+    s.match(/^geo:(-?\d{1,2}\.\d+),(-?\d{1,3}\.\d+)/i) ||
+    // último recurso: dos números tipo coordenada separados por coma
+    s.match(/(-?\d{1,2}\.\d{3,}),\s*(-?\d{1,3}\.\d{3,})/);
+  if (!m) return null;
+  const lat = Number(m[1]);
+  const lng = Number(m[2]);
+  if (!Number.isFinite(lat) || !Number.isFinite(lng) || Math.abs(lat) > 90 || Math.abs(lng) > 180) return null;
+  return { lat, lng };
+}
+
+// Dirección de entrega leída de la FICHA del contacto en WATI (customParams). Es el RESPALDO del
+// despacho cuando la libreta `contacts` no la tiene: el cliente recurrente cuya dirección quedó en WATI
+// —la ficha del sistema anterior, o cargada a mano por un asesor— y nunca llegó a Supabase. Caso real
+// 03-sep-2026 (conv 50760466239): "¿Cada vez que les compro debo repetir lo mismo?".
+// Nombres que se leen: los que escribe el copiloto (direccion_envio / referencia_envio / pin_envio) y
+// el pin del sistema anterior (maps_envio). "-" es el marcador de VACÍO que escribe el copiloto; una
+// variable sin resolver ("{{x}}", "@x") no es una dirección. Pura: sin red, sin efectos (la prueba
+// `tests/test_wati_order_direccion.mjs` la extrae de aquí).
+export function direccionDesdeAtributosWati(params: unknown): { direccion: string; referencia: string | null; maps_url: string | null } | null {
+  const lista = Array.isArray(params) ? params : [];
+  const val = (nombre: string): string => {
+    const p = lista.find((x: any) => String(x?.name ?? '').trim().toLowerCase() === nombre);
+    const v = String(p?.value ?? '').trim();
+    if (!v || v === '-' || v.includes('{{') || v.startsWith('@')) return '';
+    return v.slice(0, 400);
+  };
+  const calle = val('direccion_envio');
+  if (!calle) return null;
+  // v65 — LA GEOGRAFÍA VIVE EN ATRIBUTOS APARTE. El copiloto escribe SIETE campos de envío en la ficha
+  // (direccion/referencia/pin/maps + corregimiento/distrito/provincia/zona) y la primera versión de este
+  // lector tomaba solo cuatro: la misma asimetría "se escribe todo, se lee una parte" que causó el
+  // incidente del 03-sep, un piso más abajo. Caso real (50760466239): `direccion_envio` = "Calle 97, Via
+  // porras" y `corregimiento_envio` = "San Francisco" en un campo separado — y `customerAddress` es
+  // justo lo que GOOGLE GEOCODIFICA para poner el pin del repartidor. Sin el corregimiento, "Calle 97"
+  // es ambiguo en la ciudad. El camino de Shopify ya compone así (address1 + city + province): esto lo
+  // alinea, no inventa un criterio nuevo.
+  // El descarte compara sin acentos ni mayúsculas (NFD + quitar diacríticos). Se usa la propiedad
+  // Unicode \p{Diacritic} y no un rango literal: escrito con los caracteres combinantes queda
+  // invisible en el editor y cualquier recodificación del archivo lo rompería en silencio.
+  const norm = (s: string) => s.toLowerCase().normalize('NFD').replace(/\p{Diacritic}/gu, '');
+  const partes = [calle];
+  for (const parte of [val('corregimiento_envio'), val('distrito_envio'), val('provincia_envio')]) {
+    // No repetir lo que la calle ya dice: muchas direcciones ya traen el sector escrito a mano.
+    if (parte && !norm(partes.join(', ')).includes(norm(parte))) partes.push(parte);
+  }
+  const direccion = partes.join(', ').slice(0, 400);
+  const referencia = val('referencia_envio');
+  const pin = val('pin_envio') || val('maps_envio');
+  return { direccion, referencia: referencia || null, maps_url: pin || null };
+}
+
+// ¿El valor es una ubicación de verdad? Solo aceptamos link http(s), URI geo:
+// (ubicación nativa de WhatsApp) o un par de coordenadas suelto. Todo lo demás
+// — "no", "no lo tengo", "ahí mismo" — es prosa, no un pin: filtrar por FORMA
+// evita la carrera interminable contra una lista de palabras negativas.
+export function looksLikeLocation(value?: unknown): boolean {
+  const s = String(value ?? '').trim();
+  if (!s) return false;
+  if (/^https?:\/\//i.test(s) || /^geo:/i.test(s)) return true;
+  return parseMapsCoords(s) != null;
+}
+
+// Los links cortos (maps.app.goo.gl, goo.gl/maps) no traen coordenadas: hay
+// que seguir la redirección para llegar a la URL larga que sí las tiene.
+// Devuelve las coordenadas o null (nunca lanza: si falla, seguimos sin pin).
+export async function resolveMapsCoords(url?: string, fetchFn = fetch): Promise<{ lat: number; lng: number } | null> {
+  const direct = parseMapsCoords(url);
+  if (direct || !url) return direct;
+  if (!/^https?:\/\/(maps\.app\.goo\.gl|goo\.gl\/maps|g\.co\/kgs)/i.test(url)) return null;
+  try {
+    // manual: leemos el Location del 3xx sin seguirlo (más rápido y evita cargar la página)
+    let current = url;
+    for (let i = 0; i < 5; i++) {
+      const res = await fetchFn(current, {
+        method: 'GET',
+        redirect: 'manual',
+        // UA de navegador: Google puede responder distinto a clientes "raros"
+        // desde IPs de datacenter.
+        headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0 Safari/537.36' },
+        signal: AbortSignal.timeout(6000),
+      });
+      const loc = res.headers.get('location');
+      if (loc) {
+        const coords = parseMapsCoords(loc);
+        if (coords) {
+          if (res.body) await res.body.cancel();
+          return coords;
+        }
+        current = new URL(loc, current).href;
+        if (res.body) await res.body.cancel();
+        continue;
+      }
+      // sin redirección: intentar parsear el cuerpo (algunos short links resuelven vía HTML)
+      const body = await res.text();
+      const fromBody = parseMapsCoords(body);
+      // Solo se registra el fallo (sin datos de ubicación del cliente): útil
+      // para detectar bloqueos de Google al datacenter (403/429/consent).
+      if (!fromBody) console.log(`resolveMaps sin coordenadas: HTTP ${res.status}, body ${body.length} bytes`);
+      return fromBody;
+    }
+    console.log('resolveMaps: se agotaron los saltos de redirección');
+  } catch (err) {
+    console.log(`resolveMaps error: ${String(err).slice(0, 200)}`);
+  }
+  return null;
+}
+
+export function watiCaptureToShipday(capture: WatiCapture, pickup: Pickup = defaultPickup()) {
+  const required = ['nombre', 'telefono', 'direccion'] as const;
+  const missing = required.filter((f) => !String(capture?.[f] ?? '').trim());
+  if (missing.length) {
+    throw new HttpError(400, `Faltan campos obligatorios: ${missing.join(', ')}`);
+  }
+  if (looksUnresolved(capture.telefono) || looksUnresolved(capture.direccion)) {
+    throw new HttpError(400, 'Variable de WATI sin resolver en el pedido (teléfono o dirección)');
+  }
+  if (!isValidPhone(normalizePhone(capture.telefono!))) {
+    throw new HttpError(400, `Teléfono inválido: "${normalizePhone(capture.telefono!)}"`);
+  }
+  // La referencia YA NO se pega a la dirección. Iba al campo que Google geocodifica, y ahí "al lado de
+  // la Universidad del Istmo, cualquier pregunta me llaman gracias" no ubica nada: solo aleja el pin.
+  //
+  // Tenía además un efecto de vuelta que se comprobó en producción (contacto 6328-6286): la orden salía
+  // con "dirección — referencia", Shipday guardaba esa concatenación, y la pierna de vuelta de
+  // shipday-status la leía como "la dirección cambió" y la escribía de regreso en `contacts.address`.
+  // La referencia terminaba DENTRO de la dirección, duplicada, y de ahí se espejaba a la ficha de WATI.
+  const direccion = String(capture.direccion ?? '').trim();
+  const items = Array.isArray(capture.items)
+    ? capture.items.map((it) =>
+        typeof it === 'string'
+          ? { name: it, quantity: 1, unitPrice: 0 }
+          : { name: it.name ?? '', quantity: Number(it.quantity) || 1, unitPrice: Number(it.unitPrice) || 0 },
+      )
+    : undefined;
+
+  // Lo que el repartidor necesita cuando ya está parado frente al edificio, primero: casa, piso,
+  // oficina, y la referencia que dio el cliente. Después el mapa y el pedido.
+  const detalle = detallesDeUnidad(capture.direccion);
+  const instrucciones = [
+    detalle ? `🏠 Entrega exacta: ${detalle}` : '',
+    capture.referencia ? `📝 Referencia: ${String(capture.referencia).trim()}` : '',
+    capture.maps_url ? `📍 Mapa: ${capture.maps_url}` : '',
+    capture.pedido ? `Pedido: ${capture.pedido}` : '',
+  ].filter(Boolean).join('\n');
+  const coords = (capture.lat != null && capture.lng != null)
+    ? { lat: Number(capture.lat), lng: Number(capture.lng) }
+    : parseMapsCoords(capture.maps_url);
+
+  return {
+    orderNumber: capture.orderNumber || `WATI-${Date.now()}`,
+    customerName: String(capture.nombre).trim(),
+    customerAddress: direccion,
+    customerPhoneNumber: normalizePhone(capture.telefono!),
+    restaurantName: pickup.name,
+    restaurantAddress: pickup.address,
+    restaurantPhoneNumber: pickup.phone,
+    totalOrderCost: capture.total != null ? Number(capture.total) : undefined,
+    deliveryInstruction: instrucciones || undefined,
+    orderSource: 'WATI',
+    ...(coords ? { deliveryLatitude: coords.lat, deliveryLongitude: coords.lng } : {}),
+    ...(items ? { orderItem: items } : {}),
+  };
+}
+
+export function normalizePhone(phone: string | number): string {
+  const digits = String(phone).replace(/[^\d+]/g, '');
+  if (digits.startsWith('+')) return digits;
+  // Panamá: celulares de 8 dígitos → anteponer +507
+  if (/^\d{7,8}$/.test(digits)) return `+${digits.length <= 8 ? '507' : ''}${digits}`;
+  return `+${digits}`;
+}
+
+// Detecta un valor que WATI no resolvió: llegó como plantilla literal
+// (@variable o {{variable}}). Evita guardar basura y falsos éxitos.
+export function looksUnresolved(value: unknown): boolean {
+  const s = String(value ?? '');
+  return s.startsWith('@') || s.includes('{{') || s.includes('}}');
+}
+
+// Teléfono ya normalizado válido: + seguido de 8 a 15 dígitos.
+export function isValidPhone(phone: string): boolean {
+  return /^\+\d{8,15}$/.test(phone);
+}
+
+export class HttpError extends Error {
+  status: number;
+  constructor(status: number, message: string) {
+    super(message);
+    this.status = status;
+  }
+}
+
+export function json(body: unknown, status = 200): Response {
+  return new Response(JSON.stringify(body), {
+    status,
+    headers: { 'Content-Type': 'application/json' },
+  });
+}
