@@ -1,3 +1,26 @@
+// === copilot-webhook v125 — Copiloto AI de WATI — el asesor (masculino) + sombra OpenAI + ficha con foto ===
+// v125 (2026-09-03): tres pedidos de Gerencia, cada uno con su palanca:
+//   (1) EL COPILOTO ES "ÉL". Los asesores humanos de QSP son hombres; el bot a veces hablaba de sí mismo en
+//       femenino ("encantada de ayudarle", "quedo atenta") y el cliente notaba el cambio de voz entre un
+//       turno del asesor y uno del bot. El prompt lo fija (ESTILO → QUIÉN ERES) y `corregirGeneroBot` es la
+//       última línea de defensa determinista sobre la salida (patrón v87: el prompt pide, el código garantiza).
+//       Sin flag: aplica siempre — no cambia ningún dato, solo la concordancia de la propia voz del bot.
+//   (2) SOMBRA DE MODELOS OPENAI. `COPILOT_SOMBRA_OPENAI` = lista de modelos (ej. "gpt-5-mini,gpt-5"); vacío =
+//       apagado (deploy no-op). Con la lista puesta, DESPUÉS de responder con Claude y en segundo plano, el
+//       MISMO turno (mismo system, historial, imágenes/PDF y herramientas) se corre contra cada modelo de
+//       OpenAI y se registra en job_log `sombra_openai`: su texto junto al real, qué tools llamó cada uno,
+//       tokens, latencia y tres señales de calidad (calló o no, fuga de tool como texto, links fuera del
+//       turno). El cliente recibe LO DE SIEMPRE: la sombra no envía, no guarda leads ni direcciones (esas
+//       tools van stubeadas) y no emite ref_codes. Es el patrón v59/v120: medir antes de cambiar.
+//   (3) FICHA CON FOTO. Un asesor humano no manda un link cada vez que cotiza: manda una CAPTURA del producto.
+//       Con `COPILOT_FICHA_IMAGEN=1`, al cotizar UN producto el bot envía la FOTO oficial del producto (la de
+//       Shopify) con el título de contexto como pie, y después el precio y el stock; el LINK se reserva para
+//       cuando el cliente vuelve a preguntar por ese producto (detalles, "¿me pasa el link?", verlo en la
+//       web). La foto sale por sendSessionFile de WATI; se inserta su fila ANTES de enviar con
+//       model='copilot-imagen' (invariante v21) y el eco de esa imagen se reconoce como propio — hasta hoy
+//       "el bot nunca envía media" era la premisa del anti-eco de v65. Default OFF → deploy no-op.
+//   Sin tocar: guardrails de precio/stock (la foto y el título salen del MISMO resultado de buscar_producto
+//   que el precio), anti-interrupción, burbujas v66 (la foto se integra como primera burbuja).
 // === copilot-webhook v49 — Copiloto AI de WATI — DEBOUNCE de ráfagas + visión multi-imagen ===
 // v49 (2026-07-08): auditoría real (conv 50764417334): el cliente mandó [foto][foto]"¿estas no hay?" en 3 s
 //   → 3 invocaciones; el anti-duplicado v20 mató 2 (una DESPUÉS de gastar el LLM) y la que respondió era la
@@ -580,6 +603,22 @@ const OPENAI_API_KEY = (Deno.env.get("OPENAI_API_KEY") ?? "").trim();
 const STT_MODEL = (Deno.env.get("OPENAI_STT_MODEL") ?? "whisper-1").trim();
 const STT_ACTIVO = STT_MODE !== "off" && !!OPENAI_API_KEY;
 
+// v125 — SOMBRA DE MODELOS OPENAI. Lista de modelos separados por coma (máx 4, ej. "gpt-5-mini,gpt-5"). Vacía
+// = apagada (default; deploy no-op). Reusa OPENAI_API_KEY (la del STT). Cada turno real se re-corre en
+// segundo plano contra cada modelo de la lista y se registra en job_log `sombra_openai` — el cliente nunca
+// ve la salida de la sombra. PCT = porcentaje de turnos que se sombrean (control de costo; default 100).
+// ESFUERZO = reasoning_effort para los modelos razonadores (gpt-5*/o*): "minimal" | "low" | "medium" | "high";
+// "low" de default — un asesor de WhatsApp responde en segundos, no pensando un minuto.
+const SOMBRA_OPENAI_MODELS = (Deno.env.get("COPILOT_SOMBRA_OPENAI") ?? "").split(/[,;\s]+/).map((s) => s.trim()).filter(Boolean).slice(0, 4);
+const SOMBRA_OPENAI_PCT = (() => { const n = parseInt((Deno.env.get("COPILOT_SOMBRA_OPENAI_PCT") ?? "").trim(), 10); return Number.isFinite(n) ? Math.max(0, Math.min(n, 100)) : 100; })();
+const SOMBRA_OPENAI_ESFUERZO = (() => { const e = (Deno.env.get("COPILOT_SOMBRA_OPENAI_ESFUERZO") ?? "low").trim().toLowerCase(); return ["minimal", "low", "medium", "high"].includes(e) ? e : "low"; })();
+const SOMBRA_OPENAI_ACTIVA = SOMBRA_OPENAI_MODELS.length > 0 && !!OPENAI_API_KEY;
+
+// v125 — FICHA CON FOTO: al cotizar UN producto, la foto oficial del producto viaja como primera burbuja
+// (con el título de contexto como pie) y el link se reserva para cuando el cliente pregunta más. Default
+// OFF → deploy no-op; flip por secreto, rollback instantáneo (el ADN de COPILOT_MODE).
+const FICHA_IMAGEN = (Deno.env.get("COPILOT_FICHA_IMAGEN") ?? "").trim() === "1";
+
 // Piloto gradual: en live, SOLO se envía a estos wa_id. Vacío = no se envía a nadie (sigue
 // registrando en sombra); "all"/"*" = todos. Evita ir a live total por accidente.
 const LIVE_RAW = (Deno.env.get("COPILOT_LIVE_ALLOWLIST") ?? "").trim().toLowerCase();
@@ -717,6 +756,7 @@ MISIÓN
 ESTILO
 - Mensajes CORTOS: 1 a 3 oraciones. Español de Panamá: cordial, cercano y PROFESIONAL, como un buen asesor de tienda — amable y servicial, nunca robótico ni acartonado.
 - TRATO DE USTED, siempre. Es lo natural, respetuoso y profesional en Panamá. NUNCA uses voseo: nada de "vos", "tenés", "podés", "querés", "mirá", "dale", "fijate". Tampoco tutees ("tú", "te", "tienes"): el trato es de usted, y el usted también puede ser cálido. Ejemplos correctos: "Con gusto le ayudo", "¿Para qué impresora la necesita?", "Le confirmo el precio y la disponibilidad", "Quedamos atentos a cualquier consulta".
+- QUIÉN ERES: hablas como UN asesor de la tienda, en MASCULINO — igual que el equipo humano de QSP, que son asesores (hombres). Cada vez que hables de ti mismo usa el masculino: "encantado de ayudarle", "quedo atento", "estoy pendiente", "listo para ayudarle", "yo mismo le confirmo". NUNCA el femenino ("encantada", "quedo atenta", "estoy lista", "yo misma"): un cliente que ayer habló con un asesor y hoy lee "encantada" nota el cambio de voz. No te pongas nombre propio ni te presentes como "asistente virtual": eres Quick Service Panamá atendiendo por aquí. OJO: cuando estas reglas dicen "un asesor" se refieren a una PERSONA del equipo, no a ti.
 - Negrita SOLO con UN asterisco: *así*. NUNCA uses dobles asteriscos (**texto**), porque en WhatsApp se ven literales y se ve mal. Tampoco uses otra sintaxis de Markdown (#, listas con guion, tablas). Para enlaces, escribe la URL completa tal cual (https://...); NUNCA uses el formato [texto](url) — en WhatsApp se ve literal.
 - Emojis con moderación (uno o dos por mensaje, no más).
 - Da la respuesta FINAL directamente: NUNCA pienses en voz alta ni te corrijas a mitad de mensaje ("espere, veo que…", "ah no, mejor…"). Y no afirmes acciones que no puedes hacer ni verificar: NO tienes forma de anotar, apartar, reservar, preparar un pedido ni de avisarle a nadie del equipo. Están PROHIBIDAS las frases del tipo "ya lo anoté", "quedó anotado", "lo registré", "ya le avisamos al equipo", "ya le avisé a un asesor", "se lo tenemos listo/apartado" y "el asesor ya vio su mensaje" — aunque suenen amables, le hacen creer al cliente que alguien ya está actuando y NADIE lo está. Di en cambio que un asesor le dará seguimiento por aquí (la conversación queda visible para el equipo, eso basta). Excepción: si guardar_lead confirmó que guardó los datos, decir "quedaron guardados" SÍ es real.
@@ -874,6 +914,17 @@ MODO CAPTURA DE ENTREGA — un asesor del equipo te pidió capturar los datos de
 - Repregunta SOLO lo que la herramienta diga que falta, UNA vez por dato, con calidez y sin sonar a formulario. Cuando acabas de guardar una dirección, ABRE con el eco_guardado de la herramienta (la dirección + su sector, tal cual) antes de repreguntar: así el cliente corrige al instante si algo quedó mal registrado.
 - Cuando la herramienta confirme que no falta nada: agradece, MUESTRA en 1-2 líneas lo que quedó guardado (la dirección, la referencia y si hay ubicación 📍) para que el cliente corrija si algo quedó mal, y di que el asesor continúa con el despacho. Al nombrar su ubicación usa lo que el CLIENTE conoce (el sector/corregimiento en zona.lugar o su dirección) — NUNCA el código interno de zona (Z1, Z2, Z4a…); el costo sí, tal cual.
 - NO vendas, NO cotices productos, NO coordines ni confirmes pagos, NO toques datos fiscales (RUC/cédula/factura), NO prometas hora de entrega. Si el cliente pregunta otra cosa, responde en UNA línea solo si una herramienta te da el dato; si no, dile que el asesor le confirma enseguida.`;
+
+// v125 — FICHA CON FOTO. Se ANEXA al bloque dinámico del system (no al SYSTEM_PROMPT cacheado) solo con
+// COPILOT_FICHA_IMAGEN=1: así el flag OFF deja el prompt byte a byte igual que antes. Le dice al modelo que
+// el SISTEMA manda la foto (él no puede) y que el link se reserva para la repregunta — como hace un asesor
+// humano, que manda la captura y solo pasa el link cuando el cliente quiere ver más o comprar en la web.
+const FICHA_SUFFIX = `
+
+FICHA CON FOTO — así se presenta UN producto en este chat
+- Cuando cotices UN solo producto con datos de buscar_producto, el sistema le envía al cliente la FOTO oficial de ese producto (como hace un asesor cuando manda una captura de pantalla). Por eso en ESA respuesta NO incluyas el link. Estructura (RESPUESTA EN PARTES): (1) una frase corta de contexto + el *Título* EXACTO tal cual lo devolvió buscar_producto (es lo que identifica la foto; no lo resumas ni lo reescribas) y nada más; [[---]] (2) el precio con ITBMS (o el bloque de OFERTA 🏷️); [[---]] (3) el stock con su emoji y la pregunta corta de cierre.
+- El LINK se entrega cuando el cliente vuelve a preguntar por ESE producto: más detalles o características, si lo puede ver o comprar en la web, "¿me pasa el link?", o cualquier segunda pregunta sobre el mismo artículo. Ahí respondes su duda y agregas la URL en su propia línea. Para tenerla, llama de nuevo a buscar_producto en ese turno (NUNCA escribas una URL de memoria).
+- En LISTAS o comparaciones de VARIOS productos, en cotizaciones con calcular_cotizacion y en MODO ASISTENCIA no hay foto: aplica el FORMATO DE PRODUCTO de siempre, con el link de cada uno.`;
 
 const TOOLS: Anthropic.Tool[] = [{
   name: "buscar_producto",
@@ -1269,6 +1320,8 @@ async function suggestShopify(q: string): Promise<any[]> {
     tipo: p.product_type || p.type || undefined,
     url: p.url?.startsWith("http") ? p.url : `${STORE}${p.url ?? ""}`,
     descripcion_html: p.body || undefined,
+    // v125 — foto oficial (predictive search la trae como `image` y/o `featured_image.url`); la usa la ficha con foto.
+    imagen_url: (typeof p.image === "string" && p.image) || (p.featured_image && p.featured_image.url) || undefined,
   }));
 }
 
@@ -1447,12 +1500,14 @@ function calcularCotizacion(items: any): string {
 // silencio. Ahora cada fallo se loggea a job_log distinguiendo el tipo (token_401_403 / http_N /
 // graphql_error / timeout_o_red) → detección en horas con:
 //   select * from job_log where action='inventario_fallo' order by created_at desc;
-async function inventarioShopify(ids: (string | number)[]): Promise<Record<string, number>> {
+// v125 — `imagenes` (opcional, de salida): id → URL de la foto principal (featuredImage). Viaja en la MISMA
+// consulta que el stock, así la ficha con foto no cuesta un viaje extra a Shopify.
+async function inventarioShopify(ids: (string | number)[], imagenes?: Record<string, string>): Promise<Record<string, number>> {
   if (!SHOPIFY_ADMIN_TOKEN || !SHOPIFY_ADMIN_API_BASE || !ids.length) return {};
   try {
     const gids = ids.map((id) => `gid://shopify/Product/${String(id).replace(/\D/g, "")}`).filter((g) => /\d/.test(g));
     if (!gids.length) return {};
-    const query = "query($ids:[ID!]!){ nodes(ids:$ids){ ... on Product { id totalInventory } } }";
+    const query = "query($ids:[ID!]!){ nodes(ids:$ids){ ... on Product { id totalInventory featuredImage { url } } } }";
     const r = await fetch(`${SHOPIFY_ADMIN_API_BASE}/graphql.json`, {
       method: "POST",
       headers: { "Content-Type": "application/json", "X-Shopify-Access-Token": SHOPIFY_ADMIN_TOKEN },
@@ -1471,6 +1526,7 @@ async function inventarioShopify(ids: (string | number)[]): Promise<Record<strin
     const out: Record<string, number> = {};
     for (const n of (j?.data?.nodes ?? [])) {
       if (n?.id && typeof n.totalInventory === "number") out[String(n.id).replace(/\D/g, "")] = n.totalInventory;
+      if (imagenes && n?.id && n?.featuredImage?.url) imagenes[String(n.id).replace(/\D/g, "")] = String(n.featuredImage.url);
     }
     return out;
   } catch (e) {
@@ -1748,6 +1804,9 @@ function parseCatalogoMCP(j: any): any[] {
       url: (p && p.url) ?? null,
       variant_id: (p && p.variants && p.variants[0] && p.variants[0].id) ?? null,
       descripcion_html: (p && p.description && p.description.html) ? p.description.html : undefined,  // v60 → especificaciones
+      // v125 — foto oficial, si el MCP la trae (nombres defensivos: image_url / images[0].url / featured_image.url).
+      // Si no viene, inventarioShopify la completa desde Admin (featuredImage) en el mismo viaje del stock.
+      imagen_url: (p && (p.image_url || (p.images && p.images[0] && p.images[0].url) || (p.featured_image && p.featured_image.url))) || undefined,
     }));
   }
   return [];
@@ -1871,7 +1930,12 @@ async function compararReplica(consulta: string, salidaBuscar: string): Promise<
   }
 }
 
-async function buscarProducto(consulta: string, waId: string = "", linksTracked?: Record<string, string>): Promise<string> {
+// v125 — `fichas` (opcional, de salida): handle → {titulo, imagen_url, url} de cada resultado con foto, para
+// que el envío pueda mandar la foto del producto que el bot cotizó (ver fichaParaImagen). `opciones.sinRef`:
+// la SOMBRA (v125) busca sin emitir ref_codes — un ref_code es una promesa de atribución de algo que se le
+// mostró al cliente, y la sombra no le muestra nada; además el guard v120 los toma como "emitidos por
+// nosotros", y no debe aflojarse por una búsqueda que el cliente nunca vio.
+async function buscarProducto(consulta: string, waId: string = "", linksTracked?: Record<string, string>, fichas?: Record<string, FichaProducto>, opciones?: { sinRef?: boolean }): Promise<string> {
   // Consulta libre tal cual; si no encuentra, reintenta por: (v53) la versión normalizada de dimensiones,
   // (v18) el código de modelo con/sin guion, y (v54) los modelos espaciados JUNTADOS. Deduplica.
   // v55: si la consulta trae códigos de modelo, un resultado sin el código en NINGÚN título no corta la
@@ -1901,7 +1965,7 @@ async function buscarProducto(consulta: string, waId: string = "", linksTracked?
         // el costo extra es 1 fila de ref_codes y ~200 tokens por búsqueda con combo.
         const top = rerankearCombos(mcp, codigos, 6).map((p: any) => ({
           id: p.id, titulo: p.titulo, precio_usd: p.precio_usd, precio_lista: p.precio_lista, disponible: p.disponible, precio_desde: p.precio_desde,
-          marca: undefined, tipo: undefined, url: p.url, descripcion_html: p.descripcion_html,
+          marca: undefined, tipo: undefined, url: p.url, descripcion_html: p.descripcion_html, imagen_url: p.imagen_url,
         }));
         // El guard v60.1 se evalúa sobre el TOP-5 ORIGINAL del MCP (no sobre los 10 ni sobre el set
         // re-rankeado): pedir 10 no debe ensanchar qué se considera "coincidencia exacta" — un match casual
@@ -2030,11 +2094,20 @@ async function buscarProducto(consulta: string, waId: string = "", linksTracked?
   // hit directo y el fallback v55.
   async function enriquecer(top: any[], exacto: boolean = true): Promise<string> {
     // v21: enriquece con ITBMS (cálculo en código) y stock real (Shopify Admin, best-effort).
-    const inv = await inventarioShopify(top.map((p) => p.id).filter(Boolean));
+    const imagenesAdmin: Record<string, string> = {};   // v125 — foto principal desde Admin, mismo viaje que el stock
+    const inv = await inventarioShopify(top.map((p) => p.id).filter(Boolean), imagenesAdmin);
     // v28: tracking — URL apex + UTMs + ref_code (guarda el mapeo para el stitch WhatsApp→web).
-    const urls = await urlsConRef(top.map((p) => p.url), waId);
+    // v125: la sombra no emite ref_codes (sinRef) — usa la URL pelada.
+    const urls = opciones?.sinRef ? top.map((p) => String(p.url ?? "")) : await urlsConRef(top.map((p) => p.url), waId);
     // v29: registra handle → URL con tracking, para re-aplicarla si el modelo "limpia" el link.
     if (linksTracked) top.forEach((p, i) => { const h = handleDeUrl(p.url); if (h) linksTracked[h.toLowerCase()] = urls[i]; });
+    // v125: la foto NO va al modelo (no debe escribir URLs de imágenes); queda en `fichas` para que el envío la
+    // mande él, atada al MISMO resultado del que salen título, precio y stock.
+    if (fichas) top.forEach((p, i) => {
+      const h = handleDeUrl(p.url);
+      const img = p.imagen_url || imagenesAdmin[String(p.id ?? "").replace(/\D/g, "")];
+      if (h && img && p.titulo) fichas[h.toLowerCase()] = { titulo: String(p.titulo), imagen_url: String(img), url: urls[i] };
+    });
     const enriquecidos = top.map((p, i) => {
       const precio = conItbms(p.precio_usd);
       const cant = inv[String(p.id ?? "").replace(/\D/g, "")];
@@ -2795,7 +2868,159 @@ async function asesorarImpresora(f: Record<string, unknown> = {}): Promise<strin
   }
 }
 
-async function responderLLM(history: { role: string; content: string; model?: string | null; created_at?: string | null }[], forceTool: boolean, imagenes?: { b64: string; mediaType: string }[] | null, imagenFallo?: boolean, waId: string = "", atributos: Record<string, string> = {}, linksTracked: Record<string, string> = {}, modoAsistencia: boolean = false, sufijoExtra: string = "", modoCaptura: boolean = false, pdf?: { b64: string } | null): Promise<{ text: string | null; toolCalls: unknown[]; tokensIn: number; tokensOut: number; cacheRead: number; cacheWrite: number; agotado?: boolean }> {
+// v125 — ficha de un producto buscado en ESTE turno (la foto la manda el código, nunca el modelo).
+type FichaProducto = { titulo: string; imagen_url: string; url: string };
+
+// v125 — DESPACHADOR DE HERRAMIENTAS, compartido por el loop real (Claude) y la sombra (OpenAI): las dos
+// corren EXACTAMENTE las mismas tools contra los mismos datos, que es lo que hace comparable la sombra.
+// Con `sombra=true` las tools con EFECTO (guardar_lead, guardar_datos_envio) se stubean —la sombra no
+// puede escribirle la ficha de WATI ni la libreta de despacho a un cliente que no ve su respuesta— y la
+// búsqueda no emite ref_codes. Las de solo lectura corren igual.
+async function ejecutarTool(nombre: string, input: any, waId: string, linksTracked: Record<string, string>, fichas: Record<string, FichaProducto> | undefined, sombra: boolean): Promise<string> {
+  const inp = (input ?? {}) as any;
+  if (sombra && (nombre === "guardar_lead" || nombre === "guardar_datos_envio")) {
+    return JSON.stringify({ ok: true, sombra: true, nota: "Modo sombra: los datos se recibieron pero NO se guardaron. Continúa la conversación como si se hubieran guardado.", faltan: [] });
+  }
+  switch (nombre) {
+    case "buscar_producto": return await buscarProducto(inp.consulta ?? "", waId, linksTracked, fichas, sombra ? { sinRef: true } : undefined);
+    case "info_tienda": return await infoTienda();
+    case "guardar_lead": return await guardarLead(waId, inp.email, inp.empresa, inp.nombre, inp.apellido);
+    case "guardar_datos_envio": return await guardarDatosEnvio(waId, inp);
+    case "sucursales_interior": return await sucursalesInterior(inp.lugar ?? "");
+    case "tarifa_entrega": return await tarifaEntrega(inp.lugar ?? "");
+    case "estado_pedido": return await estadoPedido(waId);
+    case "asesorar_impresora": return await asesorarImpresora(inp);
+    case "calcular_cotizacion": return calcularCotizacion(inp.items);
+    case "consultar_folleto": return await consultarFolleto(inp.producto_url ?? "", inp.pregunta ?? "");
+    default: return JSON.stringify({ error: "tool desconocida" });
+  }
+}
+
+// v125 — SOMBRA OPENAI: el mismo turno, contra otro proveedor, en segundo plano. Se le pasa el system YA
+// armado (estático + dinámico), los mensajes tal como fueron a Claude (con imágenes/PDF en base64) y las
+// tools activas del modo. Nada de esto se envía al cliente: termina en job_log `sombra_openai`.
+type SombraCtx = { system: string; messages: Anthropic.MessageParam[]; tools: Anthropic.Tool[]; forceTool: boolean; modo: string };
+type SombraResultado = { modelo: string; text: string | null; toolCalls: unknown[]; tokensIn: number; tokensOut: number; ms: number; links: Record<string, string>; error?: string; agotado?: boolean; finish?: string };
+
+// Traduce los tools de Anthropic al formato function-calling de OpenAI. OpenAI limita la `description` a 1024
+// caracteres y las nuestras son más largas (buscar_producto ~1.500): se recorta ahí y la versión COMPLETA
+// va en el system (ver sombraSystem), para que el modelo sombra lea las mismas instrucciones que Claude.
+function toolsParaOpenAI(tools: Anthropic.Tool[]): unknown[] {
+  return tools.map((t: any) => ({
+    type: "function",
+    function: { name: t.name, description: String(t.description ?? "").slice(0, 1024), parameters: t.input_schema ?? { type: "object", properties: {} } },
+  }));
+}
+function sombraSystem(system: string, tools: Anthropic.Tool[]): string {
+  const largas = tools.filter((t: any) => String(t.description ?? "").length > 1024);
+  if (!largas.length) return system;
+  return system + "\n\nHERRAMIENTAS — descripción completa (la ficha corta de cada función es un resumen; esta es la que manda):\n" +
+    largas.map((t: any) => `- ${t.name}: ${t.description}`).join("\n");
+}
+// Traduce los mensajes de Anthropic (bloques text/image/document) a OpenAI (text/image_url/file).
+function mensajesParaOpenAI(system: string, messages: Anthropic.MessageParam[]): any[] {
+  const out: any[] = [{ role: "system", content: system }];
+  for (const m of messages) {
+    if (typeof m.content === "string") { out.push({ role: m.role, content: m.content }); continue; }
+    const partes: any[] = [];
+    for (const b of (m.content as any[])) {
+      if (!b) continue;
+      if (b.type === "text") partes.push({ type: "text", text: String(b.text ?? "") });
+      else if (b.type === "image" && b.source?.type === "base64") partes.push({ type: "image_url", image_url: { url: `data:${b.source.media_type};base64,${b.source.data}` } });
+      else if (b.type === "document" && b.source?.type === "base64") partes.push({ type: "file", file: { filename: "adjunto.pdf", file_data: `data:application/pdf;base64,${b.source.data}` } });
+    }
+    out.push({ role: m.role, content: partes.length ? partes : "(vacío)" });
+  }
+  return out;
+}
+// Un turno completo (loop de tools, tope 4 como el real) contra UN modelo de OpenAI. Nunca lanza: todo
+// fallo vuelve como `error` para que quede en el log con el modelo que lo produjo.
+async function correrOpenAI(modelo: string, ctx: SombraCtx, waId: string): Promise<SombraResultado> {
+  const t0 = Date.now();
+  const links: Record<string, string> = {};
+  const msgs = mensajesParaOpenAI(sombraSystem(ctx.system, ctx.tools), ctx.messages);
+  const tools = toolsParaOpenAI(ctx.tools);
+  const toolCalls: unknown[] = [];
+  let tokensIn = 0, tokensOut = 0;
+  const base = { modelo, toolCalls, links };
+  // reasoning_effort solo lo aceptan los razonadores (gpt-5*, o*); a un gpt-4.1 le daría 400.
+  const esRazonador = /^(gpt-5|o\d)/i.test(modelo);
+  try {
+    for (let i = 0; i < 4; i++) {
+      const body: Record<string, unknown> = {
+        model: modelo, messages: msgs, tools, max_completion_tokens: 1024,
+        ...(i === 0 && ctx.forceTool ? { tool_choice: "required" } : {}),
+        ...(esRazonador ? { reasoning_effort: SOMBRA_OPENAI_ESFUERZO } : {}),
+      };
+      const r = await fetch("https://api.openai.com/v1/chat/completions", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${OPENAI_API_KEY}` },
+        body: JSON.stringify(body),
+        signal: AbortSignal.timeout(60000),
+      });
+      if (!r.ok) {
+        // Misma lección de v68: el cuerpo de error de OpenAI puede ECHOAR la key → se enmascara antes de loguear.
+        const cuerpo = (await r.text().catch(() => "")).replaceAll(OPENAI_API_KEY, "***").replace(/sk-[A-Za-z0-9_\-]{6,}/g, "sk-***").slice(0, 300);
+        return { ...base, text: null, tokensIn, tokensOut, ms: Date.now() - t0, error: `http_${r.status}: ${cuerpo}` };
+      }
+      const j = await r.json();
+      tokensIn += Number(j?.usage?.prompt_tokens ?? 0); tokensOut += Number(j?.usage?.completion_tokens ?? 0);
+      const choice = j?.choices?.[0];
+      const msg = choice?.message;
+      if (!msg) return { ...base, text: null, tokensIn, tokensOut, ms: Date.now() - t0, error: "sin_choices" };
+      const calls = Array.isArray(msg.tool_calls) ? msg.tool_calls : [];
+      if (!calls.length) {
+        const text = String(msg.content ?? "").trim();
+        return { ...base, text: text || null, tokensIn, tokensOut, ms: Date.now() - t0, finish: String(choice.finish_reason ?? "") };
+      }
+      msgs.push({ role: "assistant", content: msg.content ?? null, tool_calls: calls });
+      for (const c of calls) {
+        let input: any = {};
+        try { input = JSON.parse(c?.function?.arguments || "{}"); } catch { input = {}; }
+        const nombre = String(c?.function?.name ?? "");
+        toolCalls.push({ name: nombre, input });
+        const out = await ejecutarTool(nombre, input, waId, links, undefined, true);
+        msgs.push({ role: "tool", tool_call_id: c.id, content: out });
+      }
+    }
+    return { ...base, text: null, tokensIn, tokensOut, ms: Date.now() - t0, agotado: true };
+  } catch (e) {
+    return { ...base, text: null, tokensIn, tokensOut, ms: Date.now() - t0, error: String(e).replaceAll(OPENAI_API_KEY, "***").slice(0, 200) };
+  }
+}
+const resumirTool = (t: any) => ({ name: t?.name, ...(t?.input?.consulta ? { consulta: String(t.input.consulta).slice(0, 80) } : {}), ...(t?.input?.lugar ? { lugar: String(t.input.lugar).slice(0, 60) } : {}) });
+// Corre la lista de modelos EN SERIE (no en paralelo: una sola instancia de Edge, y el costo se controla con
+// PCT) y deja una fila por modelo en job_log, con la respuesta real al lado para comparar. Consulta útil:
+//   select detail->>'modelo', count(*), avg((detail->>'ms')::int),
+//          sum((detail->>'callo_sombra')::bool::int) callos, sum((detail->>'fuga_tool_sombra')::bool::int) fugas,
+//          sum((detail->>'links_fuera_del_turno_sombra')::int) links_inventados
+//   from job_log where action='sombra_openai' and created_at > now() - interval '7 days' group by 1;
+async function sombraOpenAI(ctx: SombraCtx, real: { text: string | null; toolCalls: unknown[]; tokensIn: number; tokensOut: number }, waId: string): Promise<void> {
+  for (const modelo of SOMBRA_OPENAI_MODELS) {
+    try {
+      const s = await correrOpenAI(modelo, ctx, waId);
+      const crudo = s.text ?? "";
+      const textoS = crudo ? corregirGeneroBot(limpiarWhatsApp(crudo)) : null;
+      await log("sombra_openai", !s.error, {
+        waId, modo: ctx.modo, modelo, modelo_real: MODEL, ms: s.ms, error: s.error ?? null, agotado: s.agotado ?? false, finish: s.finish ?? null,
+        texto_sombra: textoS ? textoS.slice(0, 1500) : null,
+        texto_real: real.text ? real.text.slice(0, 1500) : null,
+        tools_sombra: s.toolCalls.map(resumirTool), tools_real: real.toolCalls.map(resumirTool),
+        tokens_sombra: { in: s.tokensIn, out: s.tokensOut }, tokens_real: { in: real.tokensIn, out: real.tokensOut },
+        // Señales de calidad, las mismas que el camino real vigila:
+        callo_sombra: !textoS, callo_real: !real.text,
+        fuga_tool_sombra: textoS ? pareceFuncionEnTexto(textoS) : false,
+        links_fuera_del_turno_sombra: textoS ? productosNoDelTurno(textoS, s.links).length : 0,
+        femenino_sombra: !!crudo && crudo !== corregirGeneroBot(crudo),
+        marcador_burbujas_sombra: /\[\[-{3}\]\]/.test(crudo),
+      });
+    } catch (e) {
+      try { await log("sombra_openai", false, { waId, modo: ctx.modo, modelo, error: String(e).slice(0, 200) }); } catch { /* nunca romper */ }
+    }
+  }
+}
+
+async function responderLLM(history: { role: string; content: string; model?: string | null; created_at?: string | null }[], forceTool: boolean, imagenes?: { b64: string; mediaType: string }[] | null, imagenFallo?: boolean, waId: string = "", atributos: Record<string, string> = {}, linksTracked: Record<string, string> = {}, modoAsistencia: boolean = false, sufijoExtra: string = "", modoCaptura: boolean = false, pdf?: { b64: string } | null, fichas?: Record<string, FichaProducto>): Promise<{ text: string | null; toolCalls: unknown[]; tokensIn: number; tokensOut: number; cacheRead: number; cacheWrite: number; agotado?: boolean }> {
   if (!anthropic) return { text: null, toolCalls: [], tokensIn: 0, tokensOut: 0, cacheRead: 0, cacheWrite: 0 };
   // La API exige que el primer mensaje sea del usuario: descarta "assistant" al inicio
   // (puede pasar si un asesor escribió primero).
@@ -2845,7 +3070,8 @@ async function responderLLM(history: { role: string; content: string; model?: st
   // final de SYSTEM_PROMPT, tools + SYSTEM_PROMPT quedan cacheados (lectura 0.1×). Resultado: ~misma
   // salida, input mucho más barato en turnos con cache-hit (verificar con usage.cache_read_input_tokens).
   // v74: en MODO CAPTURA el sufijo es CAPTURA_SUFFIX (objetivo único: datos de entrega) en vez del de asistencia.
-  const systemDinamico = ctx + ctxAhora + ctxHorario + (modoCaptura ? CAPTURA_SUFFIX : modoAsistencia ? ASSIST_SUFFIX + sufijoExtra : ctxDatos);
+  // v125: la ficha con foto solo aplica en modo bot (en asistencia/captura no hay burbujas ni fotos).
+  const systemDinamico = ctx + ctxAhora + ctxHorario + (modoCaptura ? CAPTURA_SUFFIX : modoAsistencia ? ASSIST_SUFFIX + sufijoExtra : ctxDatos + (FICHA_IMAGEN ? FICHA_SUFFIX : ""));
   const system: Anthropic.TextBlockParam[] = [
     { type: "text", text: SYSTEM_PROMPT, cache_control: { type: "ephemeral" } },
     { type: "text", text: systemDinamico },
@@ -2925,7 +3151,14 @@ async function responderLLM(history: { role: string; content: string; model?: st
   // v38 — telemetría de prompt caching: acumular tokens leídos/escritos al caché por turno (sumando
   // las iteraciones del loop de tool-use). input_tokens NO los incluye; estos dan el ahorro $ exacto.
   let cacheRead = 0, cacheWrite = 0;
-  for (let i = 0; i < 4; i++) {
+  // v125 — SOMBRA: foto del turno ANTES del loop (el loop empuja tool_use/tool_result al mismo array; la copia
+  // superficial basta porque los elementos no se mutan). Solo si está activa, hay a quién atribuirla (waId) y
+  // cae en el porcentaje muestreado.
+  const sombraCtx: SombraCtx | null = (SOMBRA_OPENAI_ACTIVA && waId && Math.random() * 100 < SOMBRA_OPENAI_PCT)
+    ? { system: SYSTEM_PROMPT + systemDinamico, messages: messages.slice(), tools: toolsActivas, forceTool, modo: modoCaptura ? "captura" : modoAsistencia ? "asistencia" : "bot" }
+    : null;
+  let final: { text: string | null; toolCalls: unknown[]; tokensIn: number; tokensOut: number; cacheRead: number; cacheWrite: number; agotado?: boolean } | null = null;
+  for (let i = 0; i < 4 && !final; i++) {
     // v21: garantía dura — la conversación SIEMPRE termina en mensaje de usuario antes de CADA
     // llamada al modelo (cierra el error 400 "does not support assistant message prefill").
     while (messages.length && messages[messages.length - 1].role === "assistant") messages.pop();
@@ -2942,34 +3175,16 @@ async function responderLLM(history: { role: string; content: string; model?: st
     cacheRead += resp.usage.cache_read_input_tokens ?? 0; cacheWrite += resp.usage.cache_creation_input_tokens ?? 0;
     if (resp.stop_reason !== "tool_use") {
       const text = resp.content.filter((b) => b.type === "text").map((b: any) => b.text).join("\n").trim();
-      return { text: text || null, toolCalls, tokensIn, tokensOut, cacheRead, cacheWrite };
+      final = { text: text || null, toolCalls, tokensIn, tokensOut, cacheRead, cacheWrite };
+      break;
     }
     messages.push({ role: "assistant", content: resp.content });
     const results: Anthropic.ToolResultBlockParam[] = [];
     for (const block of resp.content) {
       if (block.type === "tool_use") {
         toolCalls.push({ name: block.name, input: block.input });
-        const out = block.name === "buscar_producto"
-          ? await buscarProducto((block.input as any).consulta ?? "", waId, linksTracked)
-          : block.name === "info_tienda"
-          ? await infoTienda()
-          : block.name === "guardar_lead"
-          ? await guardarLead(waId, (block.input as any).email, (block.input as any).empresa, (block.input as any).nombre, (block.input as any).apellido)
-          : block.name === "guardar_datos_envio"
-          ? await guardarDatosEnvio(waId, block.input as any)
-          : block.name === "sucursales_interior"
-          ? await sucursalesInterior((block.input as any).lugar ?? "")
-          : block.name === "tarifa_entrega"
-          ? await tarifaEntrega((block.input as any).lugar ?? "")
-          : block.name === "estado_pedido"
-          ? await estadoPedido(waId)
-          : block.name === "asesorar_impresora"
-          ? await asesorarImpresora(block.input as any)
-          : block.name === "calcular_cotizacion"
-          ? calcularCotizacion((block.input as any).items)
-          : block.name === "consultar_folleto"
-          ? await consultarFolleto((block.input as any).producto_url ?? "", (block.input as any).pregunta ?? "")
-          : JSON.stringify({ error: "tool desconocida" });
+        // v125: despachador compartido con la sombra (mismas tools, mismos datos).
+        const out = await ejecutarTool(block.name, block.input, waId, linksTracked, fichas, false);
         // v59 — SHADOW: compara search_catalog vs suggest.json en BACKGROUND (no cambia la respuesta ni
         // agrega latencia al cliente). Solo buscar_producto, y solo si BUSQUEDA_SHADOW=1.
         if (BUSQUEDA_SHADOW && !BUSQUEDA_MCP && block.name === "buscar_producto") {
@@ -2993,7 +3208,15 @@ async function responderLLM(history: { role: string; content: string; model?: st
   // auto-corregible del folleto: buscar → 404 → re-buscar → folleto). `agotado:true` permite al caller
   // mandar la respuesta de respaldo en vez de dejar al cliente MUDO — sin confundirlo con el silencio
   // DELIBERADO (ack "gracias" → text null SIN agotado, que sigue callando por diseño).
-  return { text: null, toolCalls, tokensIn, tokensOut, cacheRead, cacheWrite, agotado: true };
+  if (!final) final = { text: null, toolCalls, tokensIn, tokensOut, cacheRead, cacheWrite, agotado: true };
+  // v125 — la sombra arranca DESPUÉS de tener la respuesta real (no le agrega ni un ms al cliente) y corre
+  // en segundo plano con el patrón v59/v120.
+  if (sombraCtx) {
+    const ps = sombraOpenAI(sombraCtx, final, waId);
+    // @ts-ignore EdgeRuntime es global en Supabase Edge Functions
+    if (typeof EdgeRuntime !== "undefined") EdgeRuntime.waitUntil(ps); else ps.catch(() => {});
+  }
+  return final;
 }
 
 // Limpia formato que WhatsApp NO renderiza (si no, se ve literal): links markdown [texto](url) → URL
@@ -3056,6 +3279,48 @@ function reaplicarTracking(texto: string, links: Record<string, string>): string
   if (!texto || !links || !Object.keys(links).length) return texto;
   return texto.replace(/https?:\/\/(?:www\.)?quickservicepanama\.com\/products\/([a-z0-9-]+)(?:[?#][^\s)]*)?/gi,
     (m, handle) => links[String(handle).toLowerCase()] ?? m);
+}
+
+// v125 — EL COPILOTO HABLA DE SÍ MISMO EN MASCULINO. Los asesores de QSP son hombres y el bot, aun con la
+// regla en el prompt, a veces cerraba con "encantada de ayudarle" o "quedo atenta". Última línea de defensa
+// determinista (patrón v87): corrige SOLO concordancias en primera persona que no admiten otra lectura —
+// "encantada", "yo misma" y el adjetivo que sigue a un verbo en primera persona ("quedo/estoy/estaré/sigo…
+// atenta/lista/dispuesta/pendiente"). NO toca lo que pueda referirse al cliente o a un producto ("la
+// impresora está lista", "su cotización queda lista", "gracias por estar atenta"). Pura (golden la extrae).
+function corregirGeneroBot(t: string): string {
+  if (!t) return t;
+  const cap = (orig: string, nuevo: string) => (orig[0] === orig[0].toUpperCase() ? nuevo[0].toUpperCase() + nuevo.slice(1) : nuevo);
+  return String(t)
+    .replace(/\bencantad(a|ísima)\b/gi, (m) => cap(m, m.toLowerCase() === "encantada" ? "encantado" : "encantadísimo"))
+    .replace(/\byo misma\b/gi, (m) => cap(m, "yo mismo"))
+    .replace(/\b(quedo|estoy|estar[eé]|sigo|seguir[eé]|quedar[eé]|me quedo|me mantengo|me mantendr[eé]|aqu[ií] estoy|ya estoy)(\s+(?:muy\s+|siempre\s+|aqu[ií]\s+)?)(atenta|lista|dispuesta|preparada|encantada)\b/gi,
+      (m, v, sp, adj) => v + sp + cap(adj, adj.slice(0, -1).toLowerCase() + "o"))
+    .replace(/\b(atenta|lista|dispuesta)( (?:para|a) (?:ayudarle|apoyarle|servirle|asistirle|cotizarle|atenderle|resolver))/gi,
+      (m, adj, resto) => cap(adj, adj.slice(0, -1).toLowerCase() + "o") + resto);
+}
+
+// v125 — FICHA CON FOTO: ¿de qué producto es la respuesta? Se decide en CÓDIGO, nunca por el modelo: el
+// producto cuyo título (exacto, normalizado) o cuyo handle aparece en el texto, entre las fichas que
+// buscar_producto devolvió EN ESTE TURNO. Solo si hay UNA coincidencia: con dos o más es una lista o una
+// comparación (ahí no va foto: el prompt manda links); con cero, el bot no cotizó nada concreto. Así la foto
+// queda atada al mismo resultado del que salieron el precio y el stock — no se puede mandar la foto de un
+// producto y el precio de otro. Pura (golden la extrae).
+function normTitulo(s: any): string {
+  return String(s ?? "").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[*_~"'\u201c\u201d\u2018\u2019]/g, "").replace(/\s+/g, " ").trim();
+}
+function fichaParaImagen(texto: string, fichas: Record<string, FichaProducto> | undefined): FichaProducto | null {
+  if (!texto || !fichas) return null;
+  const t = normTitulo(texto);
+  const handles = new Set();
+  for (const m of String(texto).matchAll(/quickservicepanama\.com\/products\/([a-z0-9-]+)/gi)) handles.add(m[1].toLowerCase());
+  const hits = [];
+  for (const h of Object.keys(fichas)) {
+    const f = fichas[h];
+    if (!f || !f.imagen_url || !f.titulo) continue;
+    const tit = normTitulo(f.titulo);
+    if ((tit.length >= 6 && t.includes(tit)) || handles.has(h)) hits.push(f);
+  }
+  return hits.length === 1 ? hits[0] : null;
 }
 
 // v120 — PRODUCTO INVENTADO. Caso real (conv 50760016863, 01-sep): el cliente pidió tinta para una HP
@@ -3229,6 +3494,48 @@ async function enviarWati(waId: string, texto: string): Promise<boolean> {
     // (camino normal: shadow + envio_fallido).
     const esTimeout = /TimeoutError|timed out/i.test(String((e as any)?.name ?? "") + String(e));
     await log(esTimeout ? "envio_timeout" : "envio_excepcion", false, { waId, error: String(e).slice(0, 120) });
+    return esTimeout;
+  }
+}
+
+// v125 — FOTO DEL PRODUCTO por WhatsApp (sendSessionFile de WATI: multipart con el archivo + caption). Se
+// descarga la foto oficial desde el CDN de Shopify (solo hosts nuestros/Shopify; tope 5 MB; se pide a 1024 px
+// de ancho para que pese poco y se vea bien en el teléfono) y se sube a WATI. Pasa por el MISMO freno duro
+// que el texto (WA_IGNORAR). Timeout con la petición ya emitida → entregado (misma lección de v82: reintentar
+// duplica la foto). Nunca lanza: false = no se mandó, y el caller sigue con el texto completo.
+async function enviarImagenWati(waId: string, imagenUrl: string, caption: string): Promise<boolean> {
+  if (WA_IGNORAR.size && WA_IGNORAR.has(soloDigitos(waId))) {
+    await log("envio_bloqueado", true, { waId, motivo: "wa_ignorar", tipo: "imagen" });
+    return false;
+  }
+  if (!WATI_API_TOKEN || !WATI_API_BASE) return false;
+  let u: URL;
+  try { u = new URL(imagenUrl); } catch { return false; }
+  const host = u.hostname.toLowerCase();
+  if (!(host === "cdn.shopify.com" || host.endsWith(".shopify.com") || host === "quickservicepanama.com" || host.endsWith(".quickservicepanama.com"))) {
+    await log("ficha_imagen_fallo", false, { waId, motivo: "host_rechazado", host: host.slice(0, 80) });
+    return false;
+  }
+  if (host === "cdn.shopify.com" && !u.searchParams.has("width")) u.searchParams.set("width", "1024");
+  try {
+    const rImg = await fetch(u.toString(), { signal: AbortSignal.timeout(10000) });
+    if (!rImg.ok) { await log("ficha_imagen_fallo", false, { waId, motivo: "descarga", status: rImg.status }); return false; }
+    const bytes = new Uint8Array(await rImg.arrayBuffer());
+    if (!bytes.byteLength || bytes.byteLength > 5_000_000) { await log("ficha_imagen_fallo", false, { waId, motivo: "tamano", bytes: bytes.byteLength }); return false; }
+    const mt = (rImg.headers.get("content-type") || "image/jpeg").split(";")[0].trim().toLowerCase();
+    // webp NO: WhatsApp lo trata como sticker. El CDN de Shopify entrega jpg/png si no se le pide webp.
+    if (!/^image\/(jpeg|png)$/.test(mt)) { await log("ficha_imagen_fallo", false, { waId, motivo: "formato", content_type: mt.slice(0, 40) }); return false; }
+    const fd = new FormData();
+    fd.append("file", new Blob([bytes], { type: mt }), mt === "image/png" ? "producto.png" : "producto.jpg");
+    const url = `${WATI_API_BASE}/api/v1/sendSessionFile/${encodeURIComponent(waId)}?caption=${encodeURIComponent(caption.slice(0, 1000))}`;
+    const r = await fetch(url, { method: "POST", headers: { Authorization: `Bearer ${WATI_API_TOKEN}` }, body: fd, signal: AbortSignal.timeout(20000) });
+    const cuerpo = (await r.text().catch(() => "")).slice(0, 160);
+    // Lección v86: WATI contesta 200 con {"result":false} cuando no envió. El cuerpo manda.
+    if (!r.ok || /"result"\s*:\s*false/i.test(cuerpo)) { await log("ficha_imagen_fallo", false, { waId, motivo: "wati", status: r.status, cuerpo }); return false; }
+    return true;
+  } catch (e) {
+    const esTimeout = /TimeoutError|timed out/i.test(String((e as any)?.name ?? "") + String(e));
+    await log("ficha_imagen_fallo", false, { waId, motivo: esTimeout ? "timeout" : "excepcion", error: String(e).slice(0, 120) });
     return esTimeout;
   }
 }
@@ -3569,7 +3876,7 @@ async function ejecutarAsistencia(
           // v74: origen "captura" (P3-b) → modoCaptura: tools acotadas + CAPTURA_SUFFIX en vez de ASSIST_SUFFIX.
           const r = await responderLLM(history as any, false, null, false, waId, {}, linksTracked, true,
               origen === "barrido_pidio_asesor" ? SWEEP_SUFFIX + PIDIO_ASESOR_SUFFIX : origen.startsWith("barrido") ? SWEEP_SUFFIX : origen === "asesor_pidio_envio" ? ENVIO_ASESOR_SUFFIX : "", origen === "captura");
-          let salida = r.text ? reaplicarTracking(limpiarWhatsApp(r.text), linksTracked) : null;
+          let salida = r.text ? corregirGeneroBot(reaplicarTracking(limpiarWhatsApp(r.text), linksTracked)) : null; // v125: género
           // v66 — en ASISTENCIA no hay burbujas (la regla lo prohíbe, pero si el modelo igual marcara
           // cortes, el marcador se re-une aquí: JAMÁS debe llegar [[---]] al cliente).
           if (salida) salida = partirMensaje(salida).join("\n\n");
@@ -3970,7 +4277,7 @@ Deno.serve(async (req) => {
         texto: tr?.texto ?? null, ts: new Date().toISOString(),
       });
     }
-    return Response.json({ status: "ok", function: "copilot-webhook", version: "v123.1-burbuja-4s", mode: MODE, mode_raw: MODE_RAW, model: MODEL, llm_configured: !!anthropic, wati_send_configured: !!(WATI_API_TOKEN && WATI_API_BASE), inventario_configurado: !!(SHOPIFY_ADMIN_TOKEN && SHOPIFY_ADMIN_API_BASE), resolve_configured: !!RESOLVE_SECRET, webhook_key_es_default: WEBHOOK_KEY_ES_DEFAULT, handoff_assist_min: HANDOFF_ASSIST_MIN, hist_asistencia: HIST_ASISTENCIA, handoff_cold_hours: HANDOFF_COLD_HOURS, debounce_ms: DEBOUNCE_MS, sesion_gap_dias: SESION_GAP_DIAS, burbujas: BURBUJAS, burbuja_ms: BURBUJA_MS, audio_puente: AUDIO_PUENTE, sweep: SWEEP_MODE, sweep_espera_min: SWEEP_ESPERA_MIN, stt: STT_MODE, stt_raw: STT_RAW, stt_configurado: !!OPENAI_API_KEY, stt_model: STT_MODEL, busqueda_shadow: BUSQUEDA_SHADOW, busqueda_replica: BUSQUEDA_REPLICA, busqueda_replica_raw: BUSQUEDA_REPLICA_RAW, busqueda_mcp: BUSQUEDA_MCP, busqueda_mcp_limit: BUSQUEDA_MCP_LIMIT, catalog_mcp_url: CATALOG_MCP_URL, ucp_profile_url: UCP_PROFILE_URL, live_targets: MODE === "live" ? (LIVE_ALL ? "all" : LIVE_ALLOWLIST.length) : 0, wa_ignorar: WA_IGNORAR.size, ts: new Date().toISOString() });
+    return Response.json({ status: "ok", function: "copilot-webhook", version: "v125-asesor-sombra-openai-ficha-foto", mode: MODE, mode_raw: MODE_RAW, model: MODEL, llm_configured: !!anthropic, wati_send_configured: !!(WATI_API_TOKEN && WATI_API_BASE), inventario_configurado: !!(SHOPIFY_ADMIN_TOKEN && SHOPIFY_ADMIN_API_BASE), resolve_configured: !!RESOLVE_SECRET, webhook_key_es_default: WEBHOOK_KEY_ES_DEFAULT, handoff_assist_min: HANDOFF_ASSIST_MIN, hist_asistencia: HIST_ASISTENCIA, handoff_cold_hours: HANDOFF_COLD_HOURS, debounce_ms: DEBOUNCE_MS, sesion_gap_dias: SESION_GAP_DIAS, burbujas: BURBUJAS, burbuja_ms: BURBUJA_MS, audio_puente: AUDIO_PUENTE, sweep: SWEEP_MODE, sweep_espera_min: SWEEP_ESPERA_MIN, stt: STT_MODE, stt_raw: STT_RAW, stt_configurado: !!OPENAI_API_KEY, stt_model: STT_MODEL, busqueda_shadow: BUSQUEDA_SHADOW, busqueda_replica: BUSQUEDA_REPLICA, busqueda_replica_raw: BUSQUEDA_REPLICA_RAW, busqueda_mcp: BUSQUEDA_MCP, busqueda_mcp_limit: BUSQUEDA_MCP_LIMIT, catalog_mcp_url: CATALOG_MCP_URL, ucp_profile_url: UCP_PROFILE_URL, live_targets: MODE === "live" ? (LIVE_ALL ? "all" : LIVE_ALLOWLIST.length) : 0, wa_ignorar: WA_IGNORAR.size, sombra_openai: SOMBRA_OPENAI_MODELS, sombra_openai_activa: SOMBRA_OPENAI_ACTIVA, sombra_openai_pct: SOMBRA_OPENAI_PCT, sombra_openai_esfuerzo: SOMBRA_OPENAI_ESFUERZO, ficha_imagen: FICHA_IMAGEN, ts: new Date().toISOString() });
   }
   if (req.method !== "POST") return Response.json({ error: "method_not_allowed" }, { status: 405 });
   if (url.searchParams.get("key") !== WEBHOOK_KEY) return Response.json({ error: "forbidden" }, { status: 403 });
@@ -4267,10 +4574,18 @@ Deno.serve(async (req) => {
   // v65 — un asesor que responde SOLO con media (imagen/PDF/audio, con o sin caption) TAMBIÉN es un humano
   // atendiendo: antes caía al skip de evento_sin_texto SIN marcar handoff ni registrar human-agent → el bot
   // podía pisar la venta y el reloj v31 no arrancaba (práctica común: mandar la cotización como PDF/captura;
-  // ~350 documentos/semana). El bot nunca envía media → aquí no hay riesgo de eco propio.
+  // ~350 documentos/semana). Hasta v124 "el bot nunca envía media" era la premisa; desde v125 SÍ envía la
+  // foto del producto (ficha con foto), así que su eco se reconoce ANTES de tratar el media como asesor.
   if (esDelNegocio && waId && ["image", "document", "audio", "video", "file", "sticker"].includes(tipo)) {
     const { data: convH } = await sb.from("conversations").select("id,status").eq("wa_id", waId).maybeSingle();
     if (convH?.id) {
+      // v125 — ¿eco de la FOTO que el propio copiloto acaba de mandar? (fila copilot-imagen < 5 min). Sin esto,
+      // la imagen volvería como "asesor mandó una captura" → handoff falso + reloj de asesor arrancado por el bot.
+      if (tipo === "image") {
+        const desdeImg = new Date(Date.now() - 5 * 60 * 1000).toISOString();
+        const { data: ecoImg } = await sb.from("messages").select("id").eq("conversation_id", convH.id).eq("model", "copilot-imagen").gte("created_at", desdeImg).limit(1);
+        if (ecoImg && ecoImg.length) return Response.json({ ok: true, skipped: "eco_propio_imagen" });
+      }
       const marca = texto ? `${texto.slice(0, 3900)} [${tipo}]` : `[${tipo}]`;
       const humanoM = esOperadorHumano(operador); // v123 — mismo criterio que el camino de texto
       const insH = await sb.from("messages").insert({ conversation_id: convH.id, role: "assistant", content: marca, mode: "live", model: humanoM ? "human-agent" : "sistema-wati" });
@@ -4908,8 +5223,9 @@ Deno.serve(async (req) => {
           const ult = history[history.length - 1] as any;
           if (ult?.role === "user") ult.content = String(ult.content ?? "") + " [Nota interna: el cliente adjuntó un PDF que no se pudo abrir. Dile con honestidad que no pudiste leer el archivo y pídele que te escriba los productos y cantidades, o deriva a un asesor. NO adivines el contenido.]";
         }
-        const r = await responderLLM(history as any, (imagenes.length || pdfAdjunto) ? false : NEEDS_TOOL_RE.test(texto), imagenes, urlsRafaga.length > 0 && imagenes.length === 0, waId, atributosWati, linksTracked, false, "", false, pdfAdjunto);
-        let salida = r.text ? reaplicarTracking(limpiarWhatsApp(r.text), linksTracked) : null; // v16 formato + v29 tracking
+        const fichas: Record<string, FichaProducto> = {}; // v125 — handle → {titulo, imagen_url} de lo buscado en este turno (lo llena buscar_producto)
+        const r = await responderLLM(history as any, (imagenes.length || pdfAdjunto) ? false : NEEDS_TOOL_RE.test(texto), imagenes, urlsRafaga.length > 0 && imagenes.length === 0, waId, atributosWati, linksTracked, false, "", false, pdfAdjunto, fichas);
+        let salida = r.text ? corregirGeneroBot(reaplicarTracking(limpiarWhatsApp(r.text), linksTracked)) : null; // v16 formato + v29 tracking + v125 género
         // v44 (guard anti-fuga de tool-call): si el modelo escribió la llamada como TEXTO (visto en Sonnet 5)
         // en vez de invocarla nativa, NO mandamos ese XML; va la respuesta de respaldo (consciente del
         // horario, como v23) y se loggea. Mejor una deferencia segura que basura al cliente.
@@ -4958,6 +5274,30 @@ Deno.serve(async (req) => {
         const partes = salida ? partirMensaje(salida) : [];
         if (salida) salida = partes.join("\n\n");
         const quiereEnviar = !!(salida && liveAllowed(waId));
+        // v125 — FICHA CON FOTO: si la respuesta cotiza UN producto buscado en este turno (y no fue reemplazada
+        // por una respuesta de respaldo), la FOTO oficial va primero, con la parte (1) del texto como pie —la
+        // frase de contexto + el título—, y el resto sigue su camino normal (burbujas o mensaje único). La fila
+        // se inserta ANTES de enviar con model='copilot-imagen' (invariante v21): el eco de esa imagen vuelve
+        // por WATI como media del negocio y se reconoce como propio (ver eco_propio_imagen). Si la foto falla,
+        // el texto sale COMPLETO como siempre: el cliente nunca se queda sin la cotización.
+        let imagenEnviada = false;
+        const fichaImagen = (FICHA_IMAGEN && quiereEnviar && salida && !fugaTool && !inventado.length && !r.agotado) ? fichaParaImagen(salida, fichas) : null;
+        if (fichaImagen) {
+          const pie = partes.length > 1 ? partes[0] : `*${fichaImagen.titulo}*`;
+          const filaImg = await sb.from("messages").insert({ conversation_id: conv.id, role: "assistant", content: `[foto del producto] ${pie}`, mode: "live", model: "copilot-imagen" }).select("id");
+          if (filaImg.error) {
+            await log("error", false, { waId, fase: "ficha_imagen_insert", error: String(filaImg.error.message ?? "").slice(0, 150) });
+          } else {
+            imagenEnviada = await enviarImagenWati(waId, fichaImagen.imagen_url, pie);
+            if (!imagenEnviada) await sb.from("messages").update({ mode: "shadow" }).eq("id", filaImg.data?.[0]?.id);
+            else {
+              respondido = true; // con la foto ya entregada, jamás mandar la disculpa de respaldo encima
+              if (partes.length > 1) { partes.shift(); salida = partes.join("\n\n"); } // el pie ya llevó la parte (1)
+              if (BURBUJA_MS > 0) await new Promise((res) => setTimeout(res, BURBUJA_MS));
+            }
+          }
+          await log("ficha_imagen", imagenEnviada, { waId, enviada: imagenEnviada, titulo: fichaImagen.titulo.slice(0, 120), partes: partes.length, con_link_en_texto: /quickservicepanama\.com\/products\//i.test(salida ?? "") });
+        }
         const enBurbujas = BURBUJAS && quiereEnviar && partes.length > 1;
         let modoFinal = quiereEnviar ? "live" : "shadow";
         let enviado = false;
