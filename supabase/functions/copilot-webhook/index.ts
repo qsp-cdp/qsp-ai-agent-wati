@@ -1,3 +1,20 @@
+// === copilot-webhook v126 — Copiloto AI de WATI — GUARD DE PRECIO por producto + reintento pensando ===
+// v126 (2026-09-04): el replay del 03-sep (conv 50766746530, turno del UPS) mostró a Sonnet 5 escribiendo
+//   "*APC Easy BV650* a $56.00" cuando la búsqueda del turno decía $66.00 — le puso al BV650 el precio del
+//   BV500 al redactar un párrafo con dos productos. No fue falta de datos ni de razonamiento: fue una
+//   transcripción cruzada, la misma forma del incidente de los links (v120). Y como $56.00 SÍ era un precio
+//   válido del turno (el del BV500), un guard de "¿el monto existe en los resultados?" no lo habría visto.
+//   (1) `preciosInconsistentes` EMPAREJA título con precio: ancla cada producto del turno en el texto (por
+//       título exacto, o por su código único si el modelo abrevió el título) y exige que cada monto con $
+//       o B/. que siga a esa ancla, hasta el siguiente producto o el fin del bloque, sea uno de los montos
+//       de ESE producto (precio, ITBMS, total, antes, ahorro). Los montos de las demás tools del turno
+//       (cotización de cantidades, tarifa de envío) quedan permitidos en cualquier parte: son deterministas.
+//   (2) Si falla, NO se manda la disculpa de una: se REPITE el turno UNA vez con Sonnet pensando (adaptive,
+//       esfuerzo medio) y se vuelve a pasar por todos los guards; solo si tampoco cuadra sale la deferencia.
+//       Así el razonamiento se paga únicamente en el turno donde la pasada barata demostró estar mal.
+//   COPILOT_GUARD_PRECIO: on (default) | log (solo telemetría, no cambia la respuesta) | off. Telemetría:
+//   `precio_inconsistente` (casos + muestra) y `precio_reintento` (ok, motivo, ms). En asistencia no hay
+//   reintento: un asesor tiene el caso, basta con callar (patrón v44/v120).
 // === copilot-webhook v125 — Copiloto AI de WATI — el asesor (masculino) + sombra OpenAI + ficha con foto ===
 // v125 (2026-09-03): tres pedidos de Gerencia, cada uno con su palanca:
 //   (1) EL COPILOTO ES "ÉL". Los asesores humanos de QSP son hombres; el bot a veces hablaba de sí mismo en
@@ -623,6 +640,11 @@ const SOMBRA_OPENAI_ACTIVA = SOMBRA_OPENAI_MODELS.length > 0 && !!OPENAI_API_KEY
 // (con el título de contexto como pie) y el link se reserva para cuando el cliente pregunta más. Default
 // OFF → deploy no-op; flip por secreto, rollback instantáneo (el ADN de COPILOT_MODE).
 const FICHA_IMAGEN = (Deno.env.get("COPILOT_FICHA_IMAGEN") ?? "").trim() === "1";
+
+// v126 — GUARD DE PRECIO por producto (ver cabecera v126). on = bloquea y reintenta pensando; log = solo
+// registra; off = apagado. Default ON: un precio cruzado es el error que más cuesta, y el guard no toca
+// ninguna respuesta cuyos precios cuadren con los resultados del turno.
+const GUARD_PRECIO = (() => { const e = (Deno.env.get("COPILOT_GUARD_PRECIO") ?? "on").trim().toLowerCase(); return ["on", "log", "off"].includes(e) ? e : "on"; })();
 
 // Piloto gradual: en live, SOLO se envía a estos wa_id. Vacío = no se envía a nadie (sigue
 // registrando en sombra); "all"/"*" = todos. Evita ir a live total por accidente.
@@ -2108,10 +2130,14 @@ async function buscarProducto(consulta: string, waId: string = "", linksTracked?
     if (linksTracked) top.forEach((p, i) => { const h = handleDeUrl(p.url); if (h) linksTracked[h.toLowerCase()] = urls[i]; });
     // v125: la foto NO va al modelo (no debe escribir URLs de imágenes); queda en `fichas` para que el envío la
     // mande él, atada al MISMO resultado del que salen título, precio y stock.
+    // v126: se registran TODOS los productos (la foto puede faltar) con sus montos, para el guard de precio.
     if (fichas) top.forEach((p, i) => {
       const h = handleDeUrl(p.url);
-      const img = p.imagen_url || imagenesAdmin[String(p.id ?? "").replace(/\D/g, "")];
-      if (h && img && p.titulo) fichas[h.toLowerCase()] = { titulo: String(p.titulo), imagen_url: String(img), url: urls[i] };
+      const img = p.imagen_url || imagenesAdmin[String(p.id ?? "").replace(/\D/g, "")] || "";
+      if (!h || !p.titulo) return;
+      const pr = conItbms(p.precio_usd);
+      const of = datosOferta(p.precio_usd, p.precio_lista) as any;
+      fichas[h.toLowerCase()] = { titulo: String(p.titulo), imagen_url: String(img), url: urls[i], precio_usd: pr.precio_usd, itbms_7pct: pr.itbms_7pct, total_con_itbms: pr.total_con_itbms, precio_antes_usd: of.precio_antes_usd, ahorro_usd: of.ahorro_usd };
     });
     const enriquecidos = top.map((p, i) => {
       const precio = conItbms(p.precio_usd);
@@ -2874,7 +2900,10 @@ async function asesorarImpresora(f: Record<string, unknown> = {}): Promise<strin
 }
 
 // v125 — ficha de un producto buscado en ESTE turno (la foto la manda el código, nunca el modelo).
-type FichaProducto = { titulo: string; imagen_url: string; url: string };
+// v126: la ficha ahora guarda TODOS los productos del turno (con o sin foto) y sus montos, para el guard de
+// precio. La clave reservada "__montos_turno" acumula los montos de las demás tools (cotización, tarifa…).
+type FichaProducto = { titulo: string; imagen_url: string; url: string; precio_usd?: string; itbms_7pct?: string; total_con_itbms?: string; precio_antes_usd?: string; ahorro_usd?: string; montos?: string[] };
+const MONTOS_TURNO = "__montos_turno";
 
 // v125 — DESPACHADOR DE HERRAMIENTAS, compartido por el loop real (Claude) y la sombra (OpenAI): las dos
 // corren EXACTAMENTE las mismas tools contra los mismos datos, que es lo que hace comparable la sombra.
@@ -2886,8 +2915,20 @@ async function ejecutarTool(nombre: string, input: any, waId: string, linksTrack
   if (sombra && (nombre === "guardar_lead" || nombre === "guardar_datos_envio")) {
     return JSON.stringify({ ok: true, sombra: true, nota: "Modo sombra: los datos se recibieron pero NO se guardaron. Continúa la conversación como si se hubieran guardado.", faltan: [] });
   }
+  if (nombre !== "buscar_producto") {
+    // v126: los montos que produzcan las demás tools (calcular_cotizacion, tarifa_entrega, info_tienda,
+    // estado_pedido…) son deterministas → el guard de precio los permite en cualquier parte del texto.
+    const out = await ejecutarToolInterno(nombre, inp, waId);
+    if (fichas) {
+      const acc = fichas[MONTOS_TURNO] ?? (fichas[MONTOS_TURNO] = { titulo: "", imagen_url: "", url: "", montos: [] });
+      for (const m of String(out).matchAll(/\d+\.\d{2}/g)) { const v = parseFloat(m[0]); if (isFinite(v) && (acc.montos as string[]).length < 200) (acc.montos as string[]).push(v.toFixed(2)); }
+    }
+    return out;
+  }
+  return await buscarProducto(inp.consulta ?? "", waId, linksTracked, fichas, sombra ? { sinRef: true } : undefined);
+}
+async function ejecutarToolInterno(nombre: string, inp: any, waId: string): Promise<string> {
   switch (nombre) {
-    case "buscar_producto": return await buscarProducto(inp.consulta ?? "", waId, linksTracked, fichas, sombra ? { sinRef: true } : undefined);
     case "info_tienda": return await infoTienda();
     case "guardar_lead": return await guardarLead(waId, inp.email, inp.empresa, inp.nombre, inp.apellido);
     case "guardar_datos_envio": return await guardarDatosEnvio(waId, inp);
@@ -3045,7 +3086,7 @@ async function sombraOpenAI(ctx: SombraCtx, real: { text: string | null; toolCal
   }
 }
 
-async function responderLLM(history: { role: string; content: string; model?: string | null; created_at?: string | null }[], forceTool: boolean, imagenes?: { b64: string; mediaType: string }[] | null, imagenFallo?: boolean, waId: string = "", atributos: Record<string, string> = {}, linksTracked: Record<string, string> = {}, modoAsistencia: boolean = false, sufijoExtra: string = "", modoCaptura: boolean = false, pdf?: { b64: string } | null, fichas?: Record<string, FichaProducto>, replay?: SombraReplay): Promise<{ text: string | null; toolCalls: unknown[]; tokensIn: number; tokensOut: number; cacheRead: number; cacheWrite: number; agotado?: boolean }> {
+async function responderLLM(history: { role: string; content: string; model?: string | null; created_at?: string | null }[], forceTool: boolean, imagenes?: { b64: string; mediaType: string }[] | null, imagenFallo?: boolean, waId: string = "", atributos: Record<string, string> = {}, linksTracked: Record<string, string> = {}, modoAsistencia: boolean = false, sufijoExtra: string = "", modoCaptura: boolean = false, pdf?: { b64: string } | null, fichas?: Record<string, FichaProducto>, replay?: SombraReplay, pensar: boolean = false): Promise<{ text: string | null; toolCalls: unknown[]; tokensIn: number; tokensOut: number; cacheRead: number; cacheWrite: number; agotado?: boolean }> {
   if (!anthropic) return { text: null, toolCalls: [], tokensIn: 0, tokensOut: 0, cacheRead: 0, cacheWrite: 0 };
   // La API exige que el primer mensaje sea del usuario: descarta "assistant" al inicio
   // (puede pasar si un asesor escribió primero).
@@ -3179,7 +3220,8 @@ async function responderLLM(history: { role: string; content: string; model?: st
   // v125 — SOMBRA: foto del turno ANTES del loop (el loop empuja tool_use/tool_result al mismo array; la copia
   // superficial basta porque los elementos no se mutan). Solo si está activa, hay a quién atribuirla (waId) y
   // cae en el porcentaje muestreado.
-  const sombraCtx: SombraCtx | null = (SOMBRA_OPENAI_ACTIVA && waId && Math.random() * 100 < SOMBRA_OPENAI_PCT)
+  // v126: el reintento pensando no se sombrea (la sombra ya corrió sobre la primera pasada de este turno).
+  const sombraCtx: SombraCtx | null = (SOMBRA_OPENAI_ACTIVA && waId && !pensar && Math.random() * 100 < SOMBRA_OPENAI_PCT)
     ? { system: SYSTEM_PROMPT + systemDinamico, messages: messages.slice(), tools: toolsActivas, forceTool, modo: modoCaptura ? "captura" : modoAsistencia ? "asistencia" : "bot" }
     : null;
   // v125.2 — REPLAY: no se llama a Claude (la respuesta real ya existe en `messages`); se arma el MISMO
@@ -3197,14 +3239,17 @@ async function responderLLM(history: { role: string; content: string; model?: st
     // llamada al modelo (cierra el error 400 "does not support assistant message prefill").
     while (messages.length && messages[messages.length - 1].role === "assistant") messages.pop();
     if (!messages.length) break;
-    const resp = await anthropic.messages.create({
-      // v39: thinking EXPLÍCITAMENTE apagado. En Sonnet 4.6 omitirlo ya es "sin pensar" (no-op),
-      // pero en Sonnet 5 omitirlo enciende adaptive thinking por defecto → latencia/tokens extra y
-      // riesgo de truncar la respuesta con max_tokens=1024. Dejarlo fijo hace seguro probar Sonnet 5
-      // (cambiando solo COPILOT_MODEL) sin que el bot empiece a "pensar" en cada turno.
-      model: MODEL, max_tokens: 1024, thinking: { type: "disabled" }, system, tools: toolsActivas, messages,
-      ...(i === 0 && forceTool ? { tool_choice: { type: "any" as const } } : {}),
-    });
+    // v39: thinking EXPLÍCITAMENTE apagado. En Sonnet 4.6 omitirlo ya es "sin pensar" (no-op),
+    // pero en Sonnet 5 omitirlo enciende adaptive thinking por defecto → latencia/tokens extra y
+    // riesgo de truncar la respuesta con max_tokens=1024. Dejarlo fijo hace seguro probar Sonnet 5
+    // (cambiando solo COPILOT_MODEL) sin que el bot empiece a "pensar" en cada turno.
+    // v126: `pensar` = REINTENTO tras un guard de precio: thinking adaptive con esfuerzo medio y más
+    // max_tokens (el pensamiento cuenta contra el tope). Con thinking no se puede forzar tool_choice.
+    // Se arma como `any` porque el SDK 0.39 no tipa `adaptive`/`output_config` (la API sí los acepta).
+    const params: any = pensar
+      ? { model: MODEL, max_tokens: 4096, thinking: { type: "adaptive" }, output_config: { effort: "medium" }, system, tools: toolsActivas, messages }
+      : { model: MODEL, max_tokens: 1024, thinking: { type: "disabled" }, system, tools: toolsActivas, messages, ...(i === 0 && forceTool ? { tool_choice: { type: "any" as const } } : {}) };
+    const resp = await anthropic.messages.create(params);
     tokensIn += resp.usage.input_tokens; tokensOut += resp.usage.output_tokens;
     cacheRead += resp.usage.cache_read_input_tokens ?? 0; cacheWrite += resp.usage.cache_creation_input_tokens ?? 0;
     if (resp.stop_reason !== "tool_use") {
@@ -3342,6 +3387,70 @@ function corregirGeneroBot(t: string): string {
 function normTitulo(s: any): string {
   return String(s ?? "").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[*_~"'\u201c\u201d\u2018\u2019]/g, "").replace(/\s+/g, " ").trim();
 }
+// v126 — GUARD DE PRECIO POR PRODUCTO (ver cabecera). Pura (golden la extrae y la prueba con el caso real
+// del UPS). Devuelve los montos que aparecen junto a un producto del turno y NO son de ese producto.
+//   · Ancla = título exacto normalizado; si el modelo abrevió el título, un CÓDIGO de modelo del título que
+//     no comparta con ningún otro producto del turno (BV650 sí; T544 no, si hay cuatro tintas T544).
+//   · Segmento = desde la ancla hasta la siguiente ancla, cortado en el primer párrafo en blanco que siga
+//     al primer monto (así el "envío B/.6.42" o el cierre no se cuelan en el bloque del producto).
+//   · Permitidos = precio, ITBMS, total, precio de antes y ahorro de ESE producto, más los montos de las
+//     otras tools del turno (cotización de cantidades, tarifa), que son deterministas.
+// Conservador a propósito: sin ancla no se juzga nada; un texto sin montos junto a productos pasa limpio.
+function normPrecio(s: any): string {
+  return String(s ?? "").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[*_~"'\u201c\u201d\u2018\u2019]/g, "").replace(/[ \t]+/g, " ").replace(/ *\n */g, "\n").replace(/\n{3,}/g, "\n\n");
+}
+function montosDeFicha(f: any): Set<string> {
+  const s = new Set<string>();
+  for (const k of ["precio_usd", "itbms_7pct", "total_con_itbms", "precio_antes_usd", "ahorro_usd"]) {
+    const n = parseFloat(String((f && f[k]) ?? ""));
+    if (isFinite(n) && n > 0) s.add(n.toFixed(2));
+  }
+  return s;
+}
+function preciosInconsistentes(texto: string, fichas: Record<string, FichaProducto> | undefined): { titulo: string; monto: string }[] {
+  if (!texto || !fichas) return [];
+  const t = normPrecio(texto);
+  const globales = new Set((fichas[MONTOS_TURNO] && fichas[MONTOS_TURNO].montos) || []);
+  const lista = Object.keys(fichas).filter((h) => h !== MONTOS_TURNO).map((h) => fichas[h]).filter((f) => f && f.titulo && montosDeFicha(f).size > 0);
+  if (!lista.length) return [];
+  const codigosDe = lista.map((f) => modelosEn(String(f.titulo)).map((c) => c.toLowerCase()));
+  const anclas: { pos: number; idx: number }[] = [];
+  lista.forEach((f, idx) => {
+    const tit = normTitulo(f.titulo);
+    let hallado = false;
+    if (tit.length >= 6) { let p = t.indexOf(tit); while (p >= 0) { anclas.push({ pos: p, idx }); hallado = true; p = t.indexOf(tit, p + tit.length); } }
+    if (hallado) return;
+    for (const c of codigosDe[idx]) {
+      if (c.length < 4 || codigosDe.some((cs, j) => j !== idx && cs.includes(c))) continue;
+      const re = new RegExp("(^|[^a-z0-9])" + c.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") + "(?![a-z0-9])", "g");
+      let m: RegExpExecArray | null; while ((m = re.exec(t))) anclas.push({ pos: m.index + m[1].length, idx });
+    }
+  });
+  if (!anclas.length) return [];
+  anclas.sort((a, b) => a.pos - b.pos);
+  const MONTO = /(?:\$|b\/\.|usd)\s?(\d{1,3}(?:,\d{3})+(?:\.\d{2})?|\d+(?:\.\d{2})?)/g;
+  const salida: { titulo: string; monto: string }[] = [];
+  for (let i = 0; i < anclas.length; i++) {
+    let seg = t.slice(anclas[i].pos, i + 1 < anclas.length ? anclas[i + 1].pos : t.length);
+    MONTO.lastIndex = 0;
+    const primero = MONTO.exec(seg);
+    if (!primero) continue;
+    const corte = seg.indexOf("\n\n", primero.index);
+    if (corte >= 0) seg = seg.slice(0, corte);
+    const f = lista[anclas[i].idx];
+    const permitidos = montosDeFicha(f);
+    MONTO.lastIndex = 0;
+    let m: RegExpExecArray | null;
+    while ((m = MONTO.exec(seg))) {
+      const v = parseFloat(m[1].replace(/,/g, ""));
+      if (!isFinite(v)) continue;
+      const k = v.toFixed(2);
+      if (!permitidos.has(k) && !globales.has(k)) salida.push({ titulo: String(f.titulo).slice(0, 80), monto: k });
+    }
+  }
+  return salida;
+}
+
 function fichaParaImagen(texto: string, fichas: Record<string, FichaProducto> | undefined): FichaProducto | null {
   if (!texto || !fichas) return null;
   const t = normTitulo(texto);
@@ -3907,9 +4016,10 @@ async function ejecutarAsistencia(
           // ASSIST_SUFFIX ("todo debe salir de una herramienta, nunca de memoria"). modoAsistencia=true acota
           // las tools. linksTracked + reaplicarTracking reponen el tracking de buscar_producto (v29).
           const linksTracked: Record<string, string> = {};
+          const fichasA: Record<string, FichaProducto> = {}; // v126 — para el guard de precio en asistencia
           // v74: origen "captura" (P3-b) → modoCaptura: tools acotadas + CAPTURA_SUFFIX en vez de ASSIST_SUFFIX.
           const r = await responderLLM(history as any, false, null, false, waId, {}, linksTracked, true,
-              origen === "barrido_pidio_asesor" ? SWEEP_SUFFIX + PIDIO_ASESOR_SUFFIX : origen.startsWith("barrido") ? SWEEP_SUFFIX : origen === "asesor_pidio_envio" ? ENVIO_ASESOR_SUFFIX : "", origen === "captura");
+              origen === "barrido_pidio_asesor" ? SWEEP_SUFFIX + PIDIO_ASESOR_SUFFIX : origen.startsWith("barrido") ? SWEEP_SUFFIX : origen === "asesor_pidio_envio" ? ENVIO_ASESOR_SUFFIX : "", origen === "captura", null, fichasA);
           let salida = r.text ? corregirGeneroBot(reaplicarTracking(limpiarWhatsApp(r.text), linksTracked)) : null; // v125: género
           // v66 — en ASISTENCIA no hay burbujas (la regla lo prohíbe, pero si el modelo igual marcara
           // cortes, el marcador se re-une aquí: JAMÁS debe llegar [[---]] al cliente).
@@ -3922,6 +4032,11 @@ async function ejecutarAsistencia(
           if (salida) {
             const invAsist = await linksInventados(productosNoDelTurno(salida, linksTracked));
             if (invAsist.length) { await log("producto_inventado", false, { waId, fase: "asistencia", origen, links: invAsist, muestra: (r.text ?? "").slice(0, 400) }); salida = null; }
+          }
+          // v126 — guard de precio también en asistencia. Sin reintento: un asesor ya tiene el caso → callar.
+          if (salida && GUARD_PRECIO !== "off") {
+            const malA = preciosInconsistentes(salida, fichasA);
+            if (malA.length) { await log("precio_inconsistente", false, { waId, modo: GUARD_PRECIO, fase: "asistencia", origen, casos: malA.slice(0, 6), muestra: (r.text ?? "").slice(0, 400) }); if (GUARD_PRECIO === "on") salida = null; }
           }
           // v87 — el modelo escribió su abstención en vez de callar → cuenta como respuesta vacía.
           if (salida && esMetaAbstencion(salida)) { await log("abstencion_meta", true, { waId, origen, muestra: salida.slice(0, 160) }); salida = null; }
@@ -4373,7 +4488,7 @@ Deno.serve(async (req) => {
         texto: tr?.texto ?? null, ts: new Date().toISOString(),
       });
     }
-    return Response.json({ status: "ok", function: "copilot-webhook", version: "v125.2-sombra-replay", mode: MODE, mode_raw: MODE_RAW, model: MODEL, llm_configured: !!anthropic, wati_send_configured: !!(WATI_API_TOKEN && WATI_API_BASE), inventario_configurado: !!(SHOPIFY_ADMIN_TOKEN && SHOPIFY_ADMIN_API_BASE), resolve_configured: !!RESOLVE_SECRET, webhook_key_es_default: WEBHOOK_KEY_ES_DEFAULT, handoff_assist_min: HANDOFF_ASSIST_MIN, hist_asistencia: HIST_ASISTENCIA, handoff_cold_hours: HANDOFF_COLD_HOURS, debounce_ms: DEBOUNCE_MS, sesion_gap_dias: SESION_GAP_DIAS, burbujas: BURBUJAS, burbuja_ms: BURBUJA_MS, audio_puente: AUDIO_PUENTE, sweep: SWEEP_MODE, sweep_espera_min: SWEEP_ESPERA_MIN, stt: STT_MODE, stt_raw: STT_RAW, stt_configurado: !!OPENAI_API_KEY, stt_model: STT_MODEL, busqueda_shadow: BUSQUEDA_SHADOW, busqueda_replica: BUSQUEDA_REPLICA, busqueda_replica_raw: BUSQUEDA_REPLICA_RAW, busqueda_mcp: BUSQUEDA_MCP, busqueda_mcp_limit: BUSQUEDA_MCP_LIMIT, catalog_mcp_url: CATALOG_MCP_URL, ucp_profile_url: UCP_PROFILE_URL, live_targets: MODE === "live" ? (LIVE_ALL ? "all" : LIVE_ALLOWLIST.length) : 0, wa_ignorar: WA_IGNORAR.size, sombra_openai: SOMBRA_OPENAI_MODELS, sombra_openai_activa: SOMBRA_OPENAI_ACTIVA, sombra_openai_pct: SOMBRA_OPENAI_PCT, sombra_openai_esfuerzo: SOMBRA_OPENAI_ESFUERZO, ficha_imagen: FICHA_IMAGEN, ts: new Date().toISOString() });
+    return Response.json({ status: "ok", function: "copilot-webhook", version: "v126-guard-precio", mode: MODE, mode_raw: MODE_RAW, model: MODEL, llm_configured: !!anthropic, wati_send_configured: !!(WATI_API_TOKEN && WATI_API_BASE), inventario_configurado: !!(SHOPIFY_ADMIN_TOKEN && SHOPIFY_ADMIN_API_BASE), resolve_configured: !!RESOLVE_SECRET, webhook_key_es_default: WEBHOOK_KEY_ES_DEFAULT, handoff_assist_min: HANDOFF_ASSIST_MIN, hist_asistencia: HIST_ASISTENCIA, handoff_cold_hours: HANDOFF_COLD_HOURS, debounce_ms: DEBOUNCE_MS, sesion_gap_dias: SESION_GAP_DIAS, burbujas: BURBUJAS, burbuja_ms: BURBUJA_MS, audio_puente: AUDIO_PUENTE, sweep: SWEEP_MODE, sweep_espera_min: SWEEP_ESPERA_MIN, stt: STT_MODE, stt_raw: STT_RAW, stt_configurado: !!OPENAI_API_KEY, stt_model: STT_MODEL, busqueda_shadow: BUSQUEDA_SHADOW, busqueda_replica: BUSQUEDA_REPLICA, busqueda_replica_raw: BUSQUEDA_REPLICA_RAW, busqueda_mcp: BUSQUEDA_MCP, busqueda_mcp_limit: BUSQUEDA_MCP_LIMIT, catalog_mcp_url: CATALOG_MCP_URL, ucp_profile_url: UCP_PROFILE_URL, live_targets: MODE === "live" ? (LIVE_ALL ? "all" : LIVE_ALLOWLIST.length) : 0, wa_ignorar: WA_IGNORAR.size, sombra_openai: SOMBRA_OPENAI_MODELS, sombra_openai_activa: SOMBRA_OPENAI_ACTIVA, sombra_openai_pct: SOMBRA_OPENAI_PCT, sombra_openai_esfuerzo: SOMBRA_OPENAI_ESFUERZO, ficha_imagen: FICHA_IMAGEN, guard_precio: GUARD_PRECIO, ts: new Date().toISOString() });
   }
   if (req.method !== "POST") return Response.json({ error: "method_not_allowed" }, { status: 405 });
   if (url.searchParams.get("key") !== WEBHOOK_KEY) return Response.json({ error: "forbidden" }, { status: 403 });
@@ -5320,7 +5435,7 @@ Deno.serve(async (req) => {
           if (ult?.role === "user") ult.content = String(ult.content ?? "") + " [Nota interna: el cliente adjuntó un PDF que no se pudo abrir. Dile con honestidad que no pudiste leer el archivo y pídele que te escriba los productos y cantidades, o deriva a un asesor. NO adivines el contenido.]";
         }
         const fichas: Record<string, FichaProducto> = {}; // v125 — handle → {titulo, imagen_url} de lo buscado en este turno (lo llena buscar_producto)
-        const r = await responderLLM(history as any, (imagenes.length || pdfAdjunto) ? false : NEEDS_TOOL_RE.test(texto), imagenes, urlsRafaga.length > 0 && imagenes.length === 0, waId, atributosWati, linksTracked, false, "", false, pdfAdjunto, fichas);
+        let r = await responderLLM(history as any, (imagenes.length || pdfAdjunto) ? false : NEEDS_TOOL_RE.test(texto), imagenes, urlsRafaga.length > 0 && imagenes.length === 0, waId, atributosWati, linksTracked, false, "", false, pdfAdjunto, fichas); // v126: let (el reintento lo reemplaza)
         let salida = r.text ? corregirGeneroBot(reaplicarTracking(limpiarWhatsApp(r.text), linksTracked)) : null; // v16 formato + v29 tracking + v125 género
         // v44 (guard anti-fuga de tool-call): si el modelo escribió la llamada como TEXTO (visto en Sonnet 5)
         // en vez de invocarla nativa, NO mandamos ese XML; va la respuesta de respaldo (consciente del
@@ -5343,6 +5458,52 @@ Deno.serve(async (req) => {
             salida = horarioPanama().dentro
               ? "Disculpe, déjeme verificar bien esa información antes de confirmarle 🙏. Un asesor le responde en breve."
               : "Disculpe, déjeme verificar bien esa información antes de confirmarle 🙏. Un asesor le responde apenas estemos en horario (Lun-Vie 9:00am–5:00pm).";
+          }
+        }
+        // v126 — GUARD DE PRECIO POR PRODUCTO (ver cabecera). Si un monto junto a un producto no es de ese
+        // producto, el turno se REPITE una vez con el modelo pensando y se vuelve a pasar por TODOS los guards
+        // (fuga de tool, producto inventado, precio). Solo si tampoco cuadra sale la deferencia: mejor un
+        // "déjeme verificar" que un precio cruzado, que fue lo que pasó con el BV650 el 03-sep.
+        let precioMal: { titulo: string; monto: string }[] = [];
+        if (salida && !fugaTool && !inventado.length && GUARD_PRECIO !== "off") {
+          precioMal = preciosInconsistentes(salida, fichas);
+          if (precioMal.length) {
+            await log("precio_inconsistente", false, { waId, modo: GUARD_PRECIO, fase: "primera", casos: precioMal.slice(0, 6), consultas: r.toolCalls.map((t: any) => t?.input?.consulta).filter(Boolean), muestra: (r.text ?? "").slice(0, 400) });
+            if (GUARD_PRECIO === "on") {
+              const t1 = Date.now();
+              const fichas2: Record<string, FichaProducto> = {};
+              const links2: Record<string, string> = {};
+              let salida2: string | null = null;
+              let motivo = "";
+              try {
+                const r2 = await responderLLM(history as any, false, imagenes, urlsRafaga.length > 0 && imagenes.length === 0, waId, atributosWati, links2, false, "", false, pdfAdjunto, fichas2, undefined, true);
+                salida2 = r2.text ? corregirGeneroBot(reaplicarTracking(limpiarWhatsApp(r2.text), links2)) : null;
+                if (!salida2) motivo = r2.agotado ? "agotado" : "vacio";
+                else if (pareceFuncionEnTexto(salida2)) { motivo = "fuga_tool"; salida2 = null; }
+                else if ((await linksInventados(productosNoDelTurno(salida2, links2))).length) { motivo = "producto_inventado"; salida2 = null; }
+                else {
+                  const mal2 = preciosInconsistentes(salida2, fichas2);
+                  if (mal2.length) { motivo = "precio_inconsistente"; precioMal = mal2; salida2 = null; }
+                }
+                if (salida2) {
+                  // El reintento reemplaza a la primera pasada: sus links y fichas son los del texto que se envía;
+                  // tokens y tool_calls se SUMAN (el turno costó las dos llamadas).
+                  r = { ...r2, toolCalls: [...r.toolCalls, ...r2.toolCalls], tokensIn: r.tokensIn + r2.tokensIn, tokensOut: r.tokensOut + r2.tokensOut, cacheRead: r.cacheRead + r2.cacheRead, cacheWrite: r.cacheWrite + r2.cacheWrite };
+                  for (const k of Object.keys(linksTracked)) delete linksTracked[k];
+                  Object.assign(linksTracked, links2);
+                  for (const k of Object.keys(fichas)) delete fichas[k];
+                  Object.assign(fichas, fichas2);
+                }
+              } catch (e) { motivo = "excepcion:" + String(e).slice(0, 120); }
+              await log("precio_reintento", !!salida2, { waId, ok: !!salida2, motivo: motivo || null, ms: Date.now() - t1, casos: salida2 ? [] : precioMal.slice(0, 6), muestra: (salida2 ?? "").slice(0, 300) });
+              if (!salida2) {
+                salida = horarioPanama().dentro
+                  ? "Disculpe, déjeme verificar bien el precio antes de confirmarle 🙏. Un asesor le responde en breve."
+                  : "Disculpe, déjeme verificar bien el precio antes de confirmarle 🙏. Un asesor le responde apenas estemos en horario (Lun-Vie 9:00am–5:00pm).";
+              } else {
+                salida = salida2;
+              }
+            }
           }
         }
         // v65 — loop de tools AGOTADO sin texto: antes se insertaba una fila con content NULL y el cliente
