@@ -3,9 +3,11 @@
 # Existe porque copilot-webhook (~305 KB) no cabe en el canal MCP de despliegue, y el entorno de
 # desarrollo remoto no tiene CLI ni salida a la Management API de Supabase. La CI de GitHub sí.
 #
-# QUÉ DESPLIEGA: las funciones cuyo directorio cambió en el push. Si cambia supabase/functions/_shared/**,
-# despliega TODAS las funciones del repo (cada una empaqueta su propia copia de _shared, así que un
-# cambio compartido no llega a producción hasta que se redespliega cada consumidora).
+# QUÉ DESPLIEGA: las funciones cuyo directorio cambió DESDE EL ÚLTIMO DESPLIEGUE EN VERDE — no desde el
+# push anterior, para que un push que se quedó sin publicar (candado en rojo) lo recoja el siguiente.
+# Si cambia supabase/functions/_shared/**, despliega TODAS las funciones del repo (cada una empaqueta su
+# propia copia de _shared, así que un cambio compartido no llega a producción hasta que se redespliega
+# cada consumidora).
 #
 # CÓMO USARLO (todo en el navegador, sin instalar nada):
 #   1. Crear un Access Token en https://supabase.com/dashboard/account/tokens
@@ -25,6 +27,11 @@ on:
     branches: [claude/supabase-agent-review-tvvg61]
     paths:
       - supabase/functions/**
+      # `tests/**` está aquí porque el candado se puede caer por la PRUEBA y no por la función: el
+      # 04-sep la v127 quedó en rojo por el lock de versión, el deploy se saltó, y el commit que lo
+      # puso verde tocaba solo `tests/`. Sin esta ruta ese arreglo no dispara NADA y producción se
+      # queda en la versión anterior sin que ninguna corrida salga en rojo para avisarlo.
+      - tests/**
       - .github/workflows/deploy-copilot.yml
   # En un PR se corren las PRUEBAS pero NO se despliega (ver el `if` del job deploy). Sin esto, el
   # candado llegaba tarde: las pruebas solo corrían al hacer push a la rama de despliegue, o sea
@@ -65,9 +72,14 @@ jobs:
     # Un PR no despliega: solo prueba. La publicación ocurre al hacer push a la rama de despliegue.
     if: github.event_name != 'pull_request'
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      # Para preguntar por la última corrida que SÍ desplegó (ver "Decidir qué funciones desplegar").
+      actions: read
     env:
       SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
       PROJECT_REF: jbigmlcalcwiphqeudxd
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -97,14 +109,33 @@ jobs:
           if [ -n "$MANUAL" ] && [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
             LISTA="$MANUAL"
           else
-            # Se diffea el RANGO COMPLETO del push (before..sha), no solo el último commit. `before`
-            # viene vacío o en ceros cuando la rama es nueva o el push es forzado: ahí se cae a
-            # HEAD^..HEAD, que es lo mejor disponible.
+            # DESDE DÓNDE SE DIFFEA. `github.event.before` (el push anterior) parece la base obvia y
+            # no lo es: si aquel push se quedó SIN desplegar —candado en rojo, o el arreglo no tocó
+            # ninguna ruta vigilada— su cambio de función queda del lado de acá de la base y no se
+            # publica nunca. Pasó el 04-sep con la v127: el commit rojo se saltó el deploy y el que
+            # lo puso verde ya no traía la función en su rango, así que producción se quedó en v126
+            # con la rama en verde. Un drift que no sale en rojo en ningún lado.
+            #
+            # La base correcta es el último commit que SÍ se desplegó, o sea el de la última corrida
+            # de push que terminó en verde. Se toma el MÁS ANTIGUO de los candidatos que además sea
+            # antepasado de HEAD (un force-push deja shas que ya no están en la rama), y así el rango
+            # se ensancha solo hasta cubrir todo lo que quedó sin publicar. Si no hay ninguno válido
+            # —rama nueva, primera corrida— se cae a HEAD^..HEAD, que es lo mejor disponible.
+            VERDE=$(gh api \
+              "repos/${GITHUB_REPOSITORY}/actions/workflows/deploy-copilot.yml/runs?branch=${GITHUB_REF_NAME}&event=push&status=success&per_page=1" \
+              --jq '.workflow_runs[0].head_sha' 2>/dev/null || true)
             ANTES="${{ github.event.before }}"
-            if [ -z "$ANTES" ] || [ "$ANTES" = "0000000000000000000000000000000000000000" ] || ! git cat-file -e "$ANTES^{commit}" 2>/dev/null; then
-              ANTES="HEAD^"
-            fi
-            CAMBIOS=$(git diff --name-only "$ANTES" HEAD -- supabase/functions/ || true)
+            BASE=""
+            for C in "$VERDE" "$ANTES"; do
+              [ -n "$C" ] && [ "$C" != "null" ] || continue
+              [ "$C" != "0000000000000000000000000000000000000000" ] || continue
+              git cat-file -e "$C^{commit}" 2>/dev/null || continue
+              git merge-base --is-ancestor "$C" HEAD || continue
+              if [ -z "$BASE" ] || git merge-base --is-ancestor "$C" "$BASE"; then BASE="$C"; fi
+            done
+            [ -n "$BASE" ] || BASE="HEAD^"
+            echo "Base del diff: $BASE (último verde: ${VERDE:-ninguno} · push anterior: ${ANTES:-ninguno})"
+            CAMBIOS=$(git diff --name-only "$BASE" HEAD -- supabase/functions/ || true)
             if echo "$CAMBIOS" | grep -q 'supabase/functions/_shared/'; then
               # Un cambio en _shared afecta a todas: cada función empaqueta su propia copia.
               LISTA=$(ls -d supabase/functions/*/ | xargs -n1 basename | grep -v '^_shared$' | tr '\n' ' ')
