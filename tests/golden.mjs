@@ -1665,7 +1665,12 @@ caso("v123: 'sistema-wati' NO se rotula como asesor del equipo", (() => {
   const bloque = src.slice(i, i + 600);
   return i > -1 && /\[Asesor del equipo\]/.test(bloque) && !/sistema-wati" \? "\[Asesor/.test(bloque);
 })());
-caso("v123: el healthcheck delata la versión (v125.1)", /version: "v125\.1-sombra-esfuerzo-none"/.test(src));
+caso("v123: el healthcheck delata la versión (v125.2)", /version: "v125\.2-sombra-replay"/.test(src));
+// v125.2 — replay de sombra: re-corre una conversación ya ocurrida solo contra OpenAI (Claude no se llama).
+caso("v125.2: el replay está gateado por la key y por la sombra activa", /url\.searchParams\.get\("sombra_replay"\)/.test(src) && /error: "sombra_apagada"/.test(src));
+caso("v125.2: en replay no se llama a Claude y se devuelve la respuesta real", /if \(replay\) \{[\s\S]{0,600}return \{ \.\.\.replay\.real, cacheRead: 0, cacheWrite: 0 \};/.test(src));
+caso("v125.2: el replay solo cuenta turnos del bot (no asesor ni automatismos)", /const NO_BOT = new Set\(\["human-agent", "sistema-wati", "plantilla-saliente", "audio-puente", "fallback", "handoff-fijo", "copilot-imagen"\]\)/.test(src));
+caso("v125.2: el replay se encadena solo por lotes", /sombra_replay_encadenar/.test(src) && /sombra_replay_fin/.test(src));
 // v125.1 — gpt-5.6 en chat/completions rechaza tools con reasoning_effort ≠ 'none' (14 de 14 turnos fallidos el 03-sep).
 caso("v125.1: 'none' es un esfuerzo válido", /\["none", "minimal", "low", "medium", "high"\]\.includes\(e\)/.test(src));
 caso("v125.1: ante el 400 de reasoning_effort se reintenta UNA vez con 'none'", /r\.status === 400 && esRazonador && esfuerzo !== "none" && \/reasoning_effort\/i\.test\(cuerpo\)/.test(src) && /esfuerzo = "none";\s*\n\s*r = await pedir\(\);/.test(src));
