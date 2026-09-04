@@ -1665,7 +1665,7 @@ caso("v123: 'sistema-wati' NO se rotula como asesor del equipo", (() => {
   const bloque = src.slice(i, i + 600);
   return i > -1 && /\[Asesor del equipo\]/.test(bloque) && !/sistema-wati" \? "\[Asesor/.test(bloque);
 })());
-caso("v123: el healthcheck delata la versión (v127.1)", /version: "v127\.1-guard-precio-parrafo"/.test(src));
+caso("v123: el healthcheck delata la versión (v128)", /version: "v128-replica-codigos"/.test(src));
 
 
 // --- v126: guard de precio por producto ------------------------------------------------------------
@@ -1852,6 +1852,19 @@ caso("v127.1: un producto nombrado SIN precio en su párrafo no absorbe los mont
 })());
 caso("v127.1: el corte es por párrafo (no tras el primer monto)", /const corte = seg\.indexOf\("\\n\\n"\);\s*\n\s*if \(corte >= 0\) seg = seg\.slice\(0, corte\);\s*\n\s*MONTO\.lastIndex = 0;\s*\n\s*if \(!MONTO\.exec\(seg\)\) continue;/.test(src));
 caso("v127.1: el reintento recibe el contexto de por qué se repite (precio + compatibilidad solo por título)", /const ctxReintento = pensar \? "\\n\\nCONTEXTO INTERNO: Este turno se REPITE/.test(src) && /afirma compatibilidad con el equipo del cliente SOLO si el título del resultado nombra ese modelo/.test(src) && /\+ ctxReintento;/.test(src));
+
+// --- v128: la réplica responde primero cuando hay código ("codigos") --------------------------------
+console.log("v128 réplica modo codigos");
+caso("v128: el modo codigos existe y solo entra con código de modelo en la consulta", /if \(BUSQUEDA_REPLICA === "codigos" && codigos\.length\) \{/.test(src));
+caso("v128: la rama corre ANTES del MCP (la réplica decide primero)", (() => { const a = src.indexOf('if (BUSQUEDA_REPLICA === "codigos" && codigos.length) {'); const b = src.indexOf("let mcpAprox: any[] | null = null;"); return a > -1 && b > -1 && a < b; })());
+caso("v128: solo productos active (ni borradores ni archivados al cliente)", /\(await buscarEnReplica\(consulta\)\)\.filter\(\(r: any\) => r\._status === "active"\)/.test(src));
+caso("v128: el tipo que nombró el cliente filtra (v61.2), sin dejar vacío", /const repTipo = tipo \? rep\.filter\(\(p: any\) => tituloDeTipo\(p\.titulo, tipo\)\) : rep;\s*\n\s*const lista = repTipo\.length \? repTipo : rep;/.test(src));
+caso("v128: precio y stock salen EN VIVO de Admin (precios + inventario en un viaje)", /const inv = await inventarioShopify\(lista\.map\(\(p: any\) => p\.id\)\.filter\(Boolean\), imgs, precios\);/.test(src) && /priceRangeV2 \{ minVariantPrice \{ amount \} maxVariantPrice \{ amount \} \} compareAtPriceRange/.test(src));
+caso("v128: agotado = cantidad 0 → sin stock; sin dato de Admin → verifica (nunca 'sin stock' por un hipo)", /disponible: typeof inv\[k\] === "number" \? inv\[k\] > 0 : true,/.test(src));
+caso("v128: el combo de la familia se promueve igual que en el MCP (rerankearCombos)", /const top = rerankearCombos\(conVivo, codigos, 6\);\s*\n\s*await log\("busqueda_replica_primaria"/.test(src));
+caso("v128: enriquecer reusa el inventario ya consultado (pre) y no vuelve a Admin", /return await enriquecer\(top, true, \{ inv, imagenes: imgs \}\);/.test(src) && /const inv = pre \? pre\.inv : await inventarioShopify\(/.test(src));
+caso("v128: vacío o fallo → sigue el camino de siempre (MCP → suggest), con telemetría", /"busqueda_replica_vacia"/.test(src) && /"busqueda_replica_fallo"/.test(src) && (() => { const i = src.indexOf('await log("busqueda_replica_fallo"'); const j = src.indexOf("let mcpAprox: any[] | null = null;"); return i > -1 && i < j; })());
+caso("v128: el texto libre nunca toca la réplica (la sombra sigue midiéndolo)", /if \(BUSQUEDA_REPLICA === "shadow" && block\.name === "buscar_producto"\)/.test(src));
 
 // --- resumen --------------------------------------------------------------------------------------
 console.log(`\n${ok} OK, ${mal} FALLA${mal === 1 ? "" : "S"}`);
