@@ -1665,7 +1665,8 @@ caso("v123: 'sistema-wati' NO se rotula como asesor del equipo", (() => {
   const bloque = src.slice(i, i + 600);
   return i > -1 && /\[Asesor del equipo\]/.test(bloque) && !/sistema-wati" \? "\[Asesor/.test(bloque);
 })());
-caso("v123: el healthcheck delata la versión (v127)", /version: "v127-ningun-mensaje-vacio"/.test(src));
+caso("v123: el healthcheck delata la versión (v127.1)", /version: "v127\.1-guard-precio-parrafo"/.test(src));
+
 
 // --- v126: guard de precio por producto ------------------------------------------------------------
 console.log("v126 guard de precio");
@@ -1841,6 +1842,16 @@ caso("v127: sin tool_results se CORTA el bucle en vez de mandar un mensaje vací
   /if \(!results\.length\) \{[\s\S]{0,220}break;/.test(src));
 caso("v127: queda traza de lo que se saneó (taparlo callado sería el mismo defecto)",
   /"historial_vacio"/.test(src) && /vacios: saneados\.vacios/.test(src));
+
+console.log("v127.1 guard por párrafo");
+// v127.1 — el bloque de un producto es SU párrafo. Caso real 04-sep 09:04: la impresora L5590 (ficha del turno,
+// sin precio citado) anclaba hasta el párrafo de las tintas y el guard marcó $36.00 como precio cruzado.
+caso("v127.1: un producto nombrado SIN precio en su párrafo no absorbe los montos del párrafo siguiente", (() => {
+  const f = { l5590: { titulo: "Impresora Epson EcoTank L5590 Multifuncional 4 en 1", imagen_url: "", url: "", precio_usd: "349.00", itbms_7pct: "24.43", total_con_itbms: "373.43" } };
+  return preciosInconsistentes("No encontré una caja de mantenimiento específica para la L5590 exacta en esos resultados.\n\nLo que sí le puedo confirmar son las tintas Epson 544 (negro, cian, magenta, amarillo): $36.00 + ITBMS (7%) = $38.52 el juego.", f).length === 0;
+})());
+caso("v127.1: el corte es por párrafo (no tras el primer monto)", /const corte = seg\.indexOf\("\\n\\n"\);\s*\n\s*if \(corte >= 0\) seg = seg\.slice\(0, corte\);\s*\n\s*MONTO\.lastIndex = 0;\s*\n\s*if \(!MONTO\.exec\(seg\)\) continue;/.test(src));
+caso("v127.1: el reintento recibe el contexto de por qué se repite (precio + compatibilidad solo por título)", /const ctxReintento = pensar \? "\\n\\nCONTEXTO INTERNO: Este turno se REPITE/.test(src) && /afirma compatibilidad con el equipo del cliente SOLO si el título del resultado nombra ese modelo/.test(src) && /\+ ctxReintento;/.test(src));
 
 // --- resumen --------------------------------------------------------------------------------------
 console.log(`\n${ok} OK, ${mal} FALLA${mal === 1 ? "" : "S"}`);
