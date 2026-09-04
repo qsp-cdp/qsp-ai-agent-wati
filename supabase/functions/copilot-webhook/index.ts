@@ -611,7 +611,12 @@ const STT_ACTIVO = STT_MODE !== "off" && !!OPENAI_API_KEY;
 // "low" de default — un asesor de WhatsApp responde en segundos, no pensando un minuto.
 const SOMBRA_OPENAI_MODELS = (Deno.env.get("COPILOT_SOMBRA_OPENAI") ?? "").split(/[,;\s]+/).map((s) => s.trim()).filter(Boolean).slice(0, 4);
 const SOMBRA_OPENAI_PCT = (() => { const n = parseInt((Deno.env.get("COPILOT_SOMBRA_OPENAI_PCT") ?? "").trim(), 10); return Number.isFinite(n) ? Math.max(0, Math.min(n, 100)) : 100; })();
-const SOMBRA_OPENAI_ESFUERZO = (() => { const e = (Deno.env.get("COPILOT_SOMBRA_OPENAI_ESFUERZO") ?? "low").trim().toLowerCase(); return ["minimal", "low", "medium", "high"].includes(e) ? e : "low"; })();
+// v125.1 — "none" también vale: la familia gpt-5.6 en /v1/chat/completions RECHAZA function tools con
+// cualquier reasoning_effort distinto de 'none' (400 "Function tools with reasoning_effort are not
+// supported… set reasoning_effort to 'none'"; medido el 03-sep en los 14 primeros turnos sombreados, todos
+// fallidos). Además, correrOpenAI se auto-corrige: ante ese 400 reintenta el mismo turno con 'none' y deja
+// `esfuerzo_usado` en el log, para que un modelo nuevo no deje la sombra ciega hasta que alguien mire.
+const SOMBRA_OPENAI_ESFUERZO = (() => { const e = (Deno.env.get("COPILOT_SOMBRA_OPENAI_ESFUERZO") ?? "low").trim().toLowerCase(); return ["none", "minimal", "low", "medium", "high"].includes(e) ? e : "low"; })();
 const SOMBRA_OPENAI_ACTIVA = SOMBRA_OPENAI_MODELS.length > 0 && !!OPENAI_API_KEY;
 
 // v125 — FICHA CON FOTO: al cotizar UN producto, la foto oficial del producto viaja como primera burbuja
@@ -2900,7 +2905,7 @@ async function ejecutarTool(nombre: string, input: any, waId: string, linksTrack
 // armado (estático + dinámico), los mensajes tal como fueron a Claude (con imágenes/PDF en base64) y las
 // tools activas del modo. Nada de esto se envía al cliente: termina en job_log `sombra_openai`.
 type SombraCtx = { system: string; messages: Anthropic.MessageParam[]; tools: Anthropic.Tool[]; forceTool: boolean; modo: string };
-type SombraResultado = { modelo: string; text: string | null; toolCalls: unknown[]; tokensIn: number; tokensOut: number; ms: number; links: Record<string, string>; error?: string; agotado?: boolean; finish?: string };
+type SombraResultado = { modelo: string; text: string | null; toolCalls: unknown[]; tokensIn: number; tokensOut: number; ms: number; links: Record<string, string>; error?: string; agotado?: boolean; finish?: string; esfuerzo?: string };
 
 // Traduce los tools de Anthropic al formato function-calling de OpenAI. OpenAI limita la `description` a 1024
 // caracteres y las nuestras son más largas (buscar_producto ~1.500): se recorta ahí y la versión COMPLETA
@@ -2942,26 +2947,40 @@ async function correrOpenAI(modelo: string, ctx: SombraCtx, waId: string): Promi
   const tools = toolsParaOpenAI(ctx.tools);
   const toolCalls: unknown[] = [];
   let tokensIn = 0, tokensOut = 0;
-  const base = { modelo, toolCalls, links };
   // reasoning_effort solo lo aceptan los razonadores (gpt-5*, o*); a un gpt-4.1 le daría 400.
   const esRazonador = /^(gpt-5|o\d)/i.test(modelo);
+  // v125.1 — el esfuerzo puede bajar a 'none' a mitad de turno (ver abajo); se reporta el que terminó usándose.
+  let esfuerzo = SOMBRA_OPENAI_ESFUERZO;
+  const base = { modelo, toolCalls, links, get esfuerzo() { return esRazonador ? esfuerzo : undefined; } };
   try {
     for (let i = 0; i < 4; i++) {
-      const body: Record<string, unknown> = {
-        model: modelo, messages: msgs, tools, max_completion_tokens: 1024,
-        ...(i === 0 && ctx.forceTool ? { tool_choice: "required" } : {}),
-        ...(esRazonador ? { reasoning_effort: SOMBRA_OPENAI_ESFUERZO } : {}),
+      const pedir = async () => {
+        const body: Record<string, unknown> = {
+          model: modelo, messages: msgs, tools, max_completion_tokens: 1024,
+          ...(i === 0 && ctx.forceTool ? { tool_choice: "required" } : {}),
+          ...(esRazonador ? { reasoning_effort: esfuerzo } : {}),
+        };
+        return await fetch("https://api.openai.com/v1/chat/completions", {
+          method: "POST",
+          headers: { "Content-Type": "application/json", Authorization: `Bearer ${OPENAI_API_KEY}` },
+          body: JSON.stringify(body),
+          signal: AbortSignal.timeout(60000),
+        });
       };
-      const r = await fetch("https://api.openai.com/v1/chat/completions", {
-        method: "POST",
-        headers: { "Content-Type": "application/json", Authorization: `Bearer ${OPENAI_API_KEY}` },
-        body: JSON.stringify(body),
-        signal: AbortSignal.timeout(60000),
-      });
+      let r = await pedir();
+      // Misma lección de v68: el cuerpo de error de OpenAI puede ECHOAR la key → se enmascara antes de loguear.
+      const limpiar = (t: string) => t.replaceAll(OPENAI_API_KEY, "***").replace(/sk-[A-Za-z0-9_\-]{6,}/g, "sk-***").slice(0, 300);
       if (!r.ok) {
-        // Misma lección de v68: el cuerpo de error de OpenAI puede ECHOAR la key → se enmascara antes de loguear.
-        const cuerpo = (await r.text().catch(() => "")).replaceAll(OPENAI_API_KEY, "***").replace(/sk-[A-Za-z0-9_\-]{6,}/g, "sk-***").slice(0, 300);
-        return { ...base, text: null, tokensIn, tokensOut, ms: Date.now() - t0, error: `http_${r.status}: ${cuerpo}` };
+        const cuerpo = limpiar(await r.text().catch(() => ""));
+        // v125.1 — AUTO-CORRECCIÓN: gpt-5.6 (chat/completions) no acepta tools con reasoning_effort ≠ 'none'.
+        // Se reintenta UNA vez con 'none' en vez de dejar la sombra muda; el log dice qué esfuerzo se usó.
+        if (r.status === 400 && esRazonador && esfuerzo !== "none" && /reasoning_effort/i.test(cuerpo)) {
+          esfuerzo = "none";
+          r = await pedir();
+          if (!r.ok) return { ...base, text: null, tokensIn, tokensOut, ms: Date.now() - t0, error: `http_${r.status}: ${limpiar(await r.text().catch(() => ""))}` };
+        } else {
+          return { ...base, text: null, tokensIn, tokensOut, ms: Date.now() - t0, error: `http_${r.status}: ${cuerpo}` };
+        }
       }
       const j = await r.json();
       tokensIn += Number(j?.usage?.prompt_tokens ?? 0); tokensOut += Number(j?.usage?.completion_tokens ?? 0);
@@ -3003,6 +3022,7 @@ async function sombraOpenAI(ctx: SombraCtx, real: { text: string | null; toolCal
       const textoS = crudo ? corregirGeneroBot(limpiarWhatsApp(crudo)) : null;
       await log("sombra_openai", !s.error, {
         waId, modo: ctx.modo, modelo, modelo_real: MODEL, ms: s.ms, error: s.error ?? null, agotado: s.agotado ?? false, finish: s.finish ?? null,
+        esfuerzo_usado: s.esfuerzo ?? null, // v125.1: 'none' cuando OpenAI obligó a bajar (gpt-5.6 + tools)
         texto_sombra: textoS ? textoS.slice(0, 1500) : null,
         texto_real: real.text ? real.text.slice(0, 1500) : null,
         tools_sombra: s.toolCalls.map(resumirTool), tools_real: real.toolCalls.map(resumirTool),
@@ -4277,7 +4297,7 @@ Deno.serve(async (req) => {
         texto: tr?.texto ?? null, ts: new Date().toISOString(),
       });
     }
-    return Response.json({ status: "ok", function: "copilot-webhook", version: "v125-asesor-sombra-openai-ficha-foto", mode: MODE, mode_raw: MODE_RAW, model: MODEL, llm_configured: !!anthropic, wati_send_configured: !!(WATI_API_TOKEN && WATI_API_BASE), inventario_configurado: !!(SHOPIFY_ADMIN_TOKEN && SHOPIFY_ADMIN_API_BASE), resolve_configured: !!RESOLVE_SECRET, webhook_key_es_default: WEBHOOK_KEY_ES_DEFAULT, handoff_assist_min: HANDOFF_ASSIST_MIN, hist_asistencia: HIST_ASISTENCIA, handoff_cold_hours: HANDOFF_COLD_HOURS, debounce_ms: DEBOUNCE_MS, sesion_gap_dias: SESION_GAP_DIAS, burbujas: BURBUJAS, burbuja_ms: BURBUJA_MS, audio_puente: AUDIO_PUENTE, sweep: SWEEP_MODE, sweep_espera_min: SWEEP_ESPERA_MIN, stt: STT_MODE, stt_raw: STT_RAW, stt_configurado: !!OPENAI_API_KEY, stt_model: STT_MODEL, busqueda_shadow: BUSQUEDA_SHADOW, busqueda_replica: BUSQUEDA_REPLICA, busqueda_replica_raw: BUSQUEDA_REPLICA_RAW, busqueda_mcp: BUSQUEDA_MCP, busqueda_mcp_limit: BUSQUEDA_MCP_LIMIT, catalog_mcp_url: CATALOG_MCP_URL, ucp_profile_url: UCP_PROFILE_URL, live_targets: MODE === "live" ? (LIVE_ALL ? "all" : LIVE_ALLOWLIST.length) : 0, wa_ignorar: WA_IGNORAR.size, sombra_openai: SOMBRA_OPENAI_MODELS, sombra_openai_activa: SOMBRA_OPENAI_ACTIVA, sombra_openai_pct: SOMBRA_OPENAI_PCT, sombra_openai_esfuerzo: SOMBRA_OPENAI_ESFUERZO, ficha_imagen: FICHA_IMAGEN, ts: new Date().toISOString() });
+    return Response.json({ status: "ok", function: "copilot-webhook", version: "v125.1-sombra-esfuerzo-none", mode: MODE, mode_raw: MODE_RAW, model: MODEL, llm_configured: !!anthropic, wati_send_configured: !!(WATI_API_TOKEN && WATI_API_BASE), inventario_configurado: !!(SHOPIFY_ADMIN_TOKEN && SHOPIFY_ADMIN_API_BASE), resolve_configured: !!RESOLVE_SECRET, webhook_key_es_default: WEBHOOK_KEY_ES_DEFAULT, handoff_assist_min: HANDOFF_ASSIST_MIN, hist_asistencia: HIST_ASISTENCIA, handoff_cold_hours: HANDOFF_COLD_HOURS, debounce_ms: DEBOUNCE_MS, sesion_gap_dias: SESION_GAP_DIAS, burbujas: BURBUJAS, burbuja_ms: BURBUJA_MS, audio_puente: AUDIO_PUENTE, sweep: SWEEP_MODE, sweep_espera_min: SWEEP_ESPERA_MIN, stt: STT_MODE, stt_raw: STT_RAW, stt_configurado: !!OPENAI_API_KEY, stt_model: STT_MODEL, busqueda_shadow: BUSQUEDA_SHADOW, busqueda_replica: BUSQUEDA_REPLICA, busqueda_replica_raw: BUSQUEDA_REPLICA_RAW, busqueda_mcp: BUSQUEDA_MCP, busqueda_mcp_limit: BUSQUEDA_MCP_LIMIT, catalog_mcp_url: CATALOG_MCP_URL, ucp_profile_url: UCP_PROFILE_URL, live_targets: MODE === "live" ? (LIVE_ALL ? "all" : LIVE_ALLOWLIST.length) : 0, wa_ignorar: WA_IGNORAR.size, sombra_openai: SOMBRA_OPENAI_MODELS, sombra_openai_activa: SOMBRA_OPENAI_ACTIVA, sombra_openai_pct: SOMBRA_OPENAI_PCT, sombra_openai_esfuerzo: SOMBRA_OPENAI_ESFUERZO, ficha_imagen: FICHA_IMAGEN, ts: new Date().toISOString() });
   }
   if (req.method !== "POST") return Response.json({ error: "method_not_allowed" }, { status: 405 });
   if (url.searchParams.get("key") !== WEBHOOK_KEY) return Response.json({ error: "forbidden" }, { status: 403 });
