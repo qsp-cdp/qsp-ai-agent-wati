@@ -1787,6 +1787,61 @@ caso("v125: la foto viene atada al resultado de buscar_producto (fichas se llena
 caso("v125: inventarioShopify trae featuredImage en el mismo viaje", /totalInventory featuredImage \{ url \}/.test(src));
 caso("v125: healthcheck expone ficha_imagen", /ficha_imagen: FICHA_IMAGEN/.test(src));
 
+// --- v127: un mensaje vacío tumba la llamada entera --------------------------------------------
+// La API rechaza con 400 ("user messages must have non-empty content") y se cae TODA la asistencia:
+// el cliente no recibe nada. Pasó el 02-sep (messages.14, un mensaje del MEDIO). El vacío no venía
+// del historial —esa conversación tenía texto en las 18 filas— sino del bucle de herramientas.
+console.log("v127 mensajes vacíos");
+const saneaResultadosDeHerramientas = extraerFuncion("saneaResultadosDeHerramientas");
+const contenidoNoVacio = extraerFuncion("contenidoNoVacio");
+
+caso("v127: un tool_result vacío se sustituye, no se manda vacío", (() => {
+  const r = saneaResultadosDeHerramientas([{ type: "tool_result", tool_use_id: "a", content: "" }]);
+  return r.vacios === 1 && r.results[0].content.trim().length > 0;
+})());
+caso("v127: SOLO ESPACIOS también cuenta como vacío", (() => {
+  const r = saneaResultadosDeHerramientas([{ type: "tool_result", tool_use_id: "a", content: "   \n  " }]);
+  return r.vacios === 1 && r.results[0].content.trim().length > 0;
+})());
+caso("v127: el sustituto es JSON (el modelo ya lee los resultados así)", (() => {
+  const r = saneaResultadosDeHerramientas([{ type: "tool_result", tool_use_id: "a", content: "" }]);
+  return JSON.parse(r.results[0].content).ok === false;
+})());
+caso("v127: un resultado con datos NO se toca", (() => {
+  const orig = { type: "tool_result", tool_use_id: "a", content: '{"precio":70}' };
+  const r = saneaResultadosDeHerramientas([orig]);
+  return r.vacios === 0 && r.results[0].content === '{"precio":70}';
+})());
+caso("v127: sanea solo el vacío y respeta el resto (mezcla)", (() => {
+  const r = saneaResultadosDeHerramientas([
+    { type: "tool_result", tool_use_id: "a", content: "" },
+    { type: "tool_result", tool_use_id: "b", content: "hay stock" },
+  ]);
+  return r.vacios === 1 && r.results[1].content === "hay stock" && r.results.length === 2;
+})());
+caso("v127: no pierde el tool_use_id al sustituir (la API lo exige)", (() => {
+  const r = saneaResultadosDeHerramientas([{ type: "tool_result", tool_use_id: "toolu_9", content: "" }]);
+  return r.results[0].tool_use_id === "toolu_9" && r.results[0].type === "tool_result";
+})());
+caso("v127: lista vacía no revienta y reporta 0", (() => {
+  const r = saneaResultadosDeHerramientas([]);
+  return r.results.length === 0 && r.vacios === 0;
+})());
+
+caso("v127: contenidoNoVacio deja pasar el texto normal", contenidoNoVacio("Buenas") === "Buenas");
+caso("v127: cadena vacía → (vacío)", contenidoNoVacio("") === "(vacío)");
+caso("v127: SOLO ESPACIOS → (vacío)  [el `||` viejo lo dejaba pasar]", contenidoNoVacio("   ") === "(vacío)");
+caso("v127: null/undefined → (vacío)", contenidoNoVacio(null) === "(vacío)" && contenidoNoVacio(undefined) === "(vacío)");
+caso("v127: no recorta el texto bueno (los espacios internos se conservan)", contenidoNoVacio(" hola  mundo ") === " hola  mundo ");
+
+// Cableado: que el saneo esté REALMENTE en el camino, no solo definido.
+caso("v127: el bucle empuja los resultados YA saneados", /messages\.push\(\{ role: "user", content: saneados\.results \}\)/.test(src));
+caso("v127: el historial usa contenidoNoVacio, no el `||` viejo", /content: t \+ a \+ contenidoNoVacio\(m\.content\)/.test(src));
+caso("v127: sin tool_results se CORTA el bucle en vez de mandar un mensaje vacío",
+  /if \(!results\.length\) \{[\s\S]{0,220}break;/.test(src));
+caso("v127: queda traza de lo que se saneó (taparlo callado sería el mismo defecto)",
+  /"historial_vacio"/.test(src) && /vacios: saneados\.vacios/.test(src));
+
 // --- resumen --------------------------------------------------------------------------------------
 console.log(`\n${ok} OK, ${mal} FALLA${mal === 1 ? "" : "S"}`);
 if (mal > 0) process.exit(1);

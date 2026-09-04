@@ -2910,6 +2910,43 @@ const MONTOS_TURNO = "__montos_turno";
 // Con `sombra=true` las tools con EFECTO (guardar_lead, guardar_datos_envio) se stubean —la sombra no
 // puede escribirle la ficha de WATI ni la libreta de despacho a un cliente que no ve su respuesta— y la
 // búsqueda no emite ref_codes. Las de solo lectura corren igual.
+// v127 — UN MENSAJE VACÍO TUMBA LA LLAMADA ENTERA. La API rechaza con 400 ("user messages must have
+// non-empty content") y se cae TODA la asistencia: el cliente no recibe nada y solo queda la fila de
+// error en job_log. Caso real del 02-sep 15:43 (waId 5076444…): `messages.14`, o sea un mensaje del
+// MEDIO, no el último.
+//
+// De dónde sale ese vacío: NO del historial. Se revisó la conversación entera de ese momento y las 18
+// filas tenían texto — el respaldo `(vacío)` del armado ya cubría ese caso. Sale del bucle de
+// herramientas: el resultado se empuja tal cual como bloque `tool_result`, y si una tool devuelve
+// cadena vacía, ese bloque queda vacío.
+//
+// Por eso el saneo va aquí, en el cuello de botella por donde pasan TODOS los resultados, y no
+// tool por tool: hay once y mañana habrá doce. Es el mismo criterio que el freno de `enviarWati` —
+// blindar la única puerta por la que se sale, para que ninguna ruta futura se lo salte por descuido.
+//
+// Pura y sin I/O a propósito: así la red de pruebas puede extraerla del fuente y fijar su conducta.
+// El conteo lo devuelve para que quien llama lo registre; registrar aquí adentro la haría inextraíble.
+function saneaResultadosDeHerramientas(results: Anthropic.ToolResultBlockParam[]): { results: Anthropic.ToolResultBlockParam[]; vacios: number } {
+  let vacios = 0;
+  const limpios = results.map((r) => {
+    const c = typeof r.content === "string" ? r.content : "";
+    if (c.trim()) return r;
+    vacios++;
+    // Se sustituye por un JSON explícito en vez de un texto suelto: el modelo ya lee los resultados de
+    // herramienta como JSON, y un "sin datos" en su mismo formato lo interpreta sin inventar.
+    return { ...r, content: JSON.stringify({ ok: false, nota: "La herramienta no devolvió datos." }) };
+  });
+  return { results: limpios, vacios };
+}
+
+// v127 — el respaldo `|| "(vacío)"` del historial se le escapaba un caso: una cadena de SOLO ESPACIOS
+// es "truthy", así que pasaba entera y llegaba vacía a la API igual. Ahora se mira el contenido ya
+// recortado. No fue la causa del 02-sep, pero es el mismo agujero por otra puerta.
+function contenidoNoVacio(s: unknown): string {
+  const t = String(s ?? "");
+  return t.trim() ? t : "(vacío)";
+}
+
 async function ejecutarTool(nombre: string, input: any, waId: string, linksTracked: Record<string, string>, fichas: Record<string, FichaProducto> | undefined, sombra: boolean): Promise<string> {
   const inp = (input ?? {}) as any;
   if (sombra && (nombre === "guardar_lead" || nombre === "guardar_datos_envio")) {
@@ -3175,7 +3212,7 @@ async function responderLLM(history: { role: string; content: string; model?: st
     const a = m.model === "human-agent"
       ? (esMediaAsesor ? "[Asesor del equipo — envió un archivo cuyo contenido NO puedes ver; no supongas qué dice]: " : "[Asesor del equipo]: ")
       : m.model === "sistema-wati" ? "[Mensaje automático del sistema — no lo escribió una persona ni tú; no lo repitas]: " : "";
-    return { role: m.role === "assistant" ? "assistant" as const : "user" as const, content: t + a + (m.content || "(vacío)") };
+    return { role: m.role === "assistant" ? "assistant" as const : "user" as const, content: t + a + contenidoNoVacio(m.content) };
   });
   // v20: la API exige que el ÚLTIMO mensaje sea de usuario; varios modelos no aceptan "prefill"
   // (terminar en assistant). Si el historial termina en assistant (p.ej. un mensaje de asesor que
@@ -3281,7 +3318,23 @@ async function responderLLM(history: { role: string; content: string; model?: st
         results.push({ type: "tool_result", tool_use_id: block.id, content: out });
       }
     }
-    messages.push({ role: "user", content: results });
+    // v127 — el turno dijo "tool_use" pero no vino ni un bloque de herramienta. No debería pasar, pero si
+    // pasa, empujar `content: []` es un mensaje de usuario VACÍO y la llamada entera muere con 400. Se
+    // corta el bucle: lo que ya haya respondido el modelo vale más que una excepción.
+    if (!results.length) {
+      await log("historial_vacio", false, { waId, donde: "sin_tool_results", iteracion: i });
+      break;
+    }
+    const saneados = saneaResultadosDeHerramientas(results);
+    // Sin esta traza no habría forma de saber QUÉ tool devolvió vacío ni si el saneo actúa de más:
+    // taparlo en silencio sería repetir el defecto que se está arreglando.
+    if (saneados.vacios) {
+      await log("historial_vacio", false, {
+        waId, donde: "tool_result", vacios: saneados.vacios,
+        tools: resp.content.filter((b: any) => b.type === "tool_use").map((b: any) => b.name),
+      });
+    }
+    messages.push({ role: "user", content: saneados.results });
   }
   // v65 — se agotaron las 4 iteraciones con el modelo aún pidiendo tools (alcanzable p.ej. con el flujo
   // auto-corregible del folleto: buscar → 404 → re-buscar → folleto). `agotado:true` permite al caller
@@ -4488,7 +4541,7 @@ Deno.serve(async (req) => {
         texto: tr?.texto ?? null, ts: new Date().toISOString(),
       });
     }
-    return Response.json({ status: "ok", function: "copilot-webhook", version: "v126-guard-precio", mode: MODE, mode_raw: MODE_RAW, model: MODEL, llm_configured: !!anthropic, wati_send_configured: !!(WATI_API_TOKEN && WATI_API_BASE), inventario_configurado: !!(SHOPIFY_ADMIN_TOKEN && SHOPIFY_ADMIN_API_BASE), resolve_configured: !!RESOLVE_SECRET, webhook_key_es_default: WEBHOOK_KEY_ES_DEFAULT, handoff_assist_min: HANDOFF_ASSIST_MIN, hist_asistencia: HIST_ASISTENCIA, handoff_cold_hours: HANDOFF_COLD_HOURS, debounce_ms: DEBOUNCE_MS, sesion_gap_dias: SESION_GAP_DIAS, burbujas: BURBUJAS, burbuja_ms: BURBUJA_MS, audio_puente: AUDIO_PUENTE, sweep: SWEEP_MODE, sweep_espera_min: SWEEP_ESPERA_MIN, stt: STT_MODE, stt_raw: STT_RAW, stt_configurado: !!OPENAI_API_KEY, stt_model: STT_MODEL, busqueda_shadow: BUSQUEDA_SHADOW, busqueda_replica: BUSQUEDA_REPLICA, busqueda_replica_raw: BUSQUEDA_REPLICA_RAW, busqueda_mcp: BUSQUEDA_MCP, busqueda_mcp_limit: BUSQUEDA_MCP_LIMIT, catalog_mcp_url: CATALOG_MCP_URL, ucp_profile_url: UCP_PROFILE_URL, live_targets: MODE === "live" ? (LIVE_ALL ? "all" : LIVE_ALLOWLIST.length) : 0, wa_ignorar: WA_IGNORAR.size, sombra_openai: SOMBRA_OPENAI_MODELS, sombra_openai_activa: SOMBRA_OPENAI_ACTIVA, sombra_openai_pct: SOMBRA_OPENAI_PCT, sombra_openai_esfuerzo: SOMBRA_OPENAI_ESFUERZO, ficha_imagen: FICHA_IMAGEN, guard_precio: GUARD_PRECIO, ts: new Date().toISOString() });
+    return Response.json({ status: "ok", function: "copilot-webhook", version: "v127-ningun-mensaje-vacio", mode: MODE, mode_raw: MODE_RAW, model: MODEL, llm_configured: !!anthropic, wati_send_configured: !!(WATI_API_TOKEN && WATI_API_BASE), inventario_configurado: !!(SHOPIFY_ADMIN_TOKEN && SHOPIFY_ADMIN_API_BASE), resolve_configured: !!RESOLVE_SECRET, webhook_key_es_default: WEBHOOK_KEY_ES_DEFAULT, handoff_assist_min: HANDOFF_ASSIST_MIN, hist_asistencia: HIST_ASISTENCIA, handoff_cold_hours: HANDOFF_COLD_HOURS, debounce_ms: DEBOUNCE_MS, sesion_gap_dias: SESION_GAP_DIAS, burbujas: BURBUJAS, burbuja_ms: BURBUJA_MS, audio_puente: AUDIO_PUENTE, sweep: SWEEP_MODE, sweep_espera_min: SWEEP_ESPERA_MIN, stt: STT_MODE, stt_raw: STT_RAW, stt_configurado: !!OPENAI_API_KEY, stt_model: STT_MODEL, busqueda_shadow: BUSQUEDA_SHADOW, busqueda_replica: BUSQUEDA_REPLICA, busqueda_replica_raw: BUSQUEDA_REPLICA_RAW, busqueda_mcp: BUSQUEDA_MCP, busqueda_mcp_limit: BUSQUEDA_MCP_LIMIT, catalog_mcp_url: CATALOG_MCP_URL, ucp_profile_url: UCP_PROFILE_URL, live_targets: MODE === "live" ? (LIVE_ALL ? "all" : LIVE_ALLOWLIST.length) : 0, wa_ignorar: WA_IGNORAR.size, sombra_openai: SOMBRA_OPENAI_MODELS, sombra_openai_activa: SOMBRA_OPENAI_ACTIVA, sombra_openai_pct: SOMBRA_OPENAI_PCT, sombra_openai_esfuerzo: SOMBRA_OPENAI_ESFUERZO, ficha_imagen: FICHA_IMAGEN, guard_precio: GUARD_PRECIO, ts: new Date().toISOString() });
   }
   if (req.method !== "POST") return Response.json({ error: "method_not_allowed" }, { status: 405 });
   if (url.searchParams.get("key") !== WEBHOOK_KEY) return Response.json({ error: "forbidden" }, { status: 403 });
