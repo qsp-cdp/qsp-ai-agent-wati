@@ -2905,6 +2905,10 @@ async function ejecutarTool(nombre: string, input: any, waId: string, linksTrack
 // armado (estático + dinámico), los mensajes tal como fueron a Claude (con imágenes/PDF en base64) y las
 // tools activas del modo. Nada de esto se envía al cliente: termina en job_log `sombra_openai`.
 type SombraCtx = { system: string; messages: Anthropic.MessageParam[]; tools: Anthropic.Tool[]; forceTool: boolean; modo: string };
+// v125.2 — REPLAY de una conversación ya ocurrida contra la sombra: la respuesta real viene de `messages`
+// y solo se corre OpenAI. Sirve para evaluar un modelo nuevo sobre una conversación concreta (la de
+// Gerencia del 03-sep, p. ej.) sin esperar tráfico nuevo. Ver el endpoint GET ?sombra_replay=.
+type SombraReplay = { real: { text: string | null; toolCalls: unknown[]; tokensIn: number; tokensOut: number }; etiqueta: Record<string, unknown> };
 type SombraResultado = { modelo: string; text: string | null; toolCalls: unknown[]; tokensIn: number; tokensOut: number; ms: number; links: Record<string, string>; error?: string; agotado?: boolean; finish?: string; esfuerzo?: string };
 
 // Traduce los tools de Anthropic al formato function-calling de OpenAI. OpenAI limita la `description` a 1024
@@ -3014,13 +3018,14 @@ const resumirTool = (t: any) => ({ name: t?.name, ...(t?.input?.consulta ? { con
 //          sum((detail->>'callo_sombra')::bool::int) callos, sum((detail->>'fuga_tool_sombra')::bool::int) fugas,
 //          sum((detail->>'links_fuera_del_turno_sombra')::int) links_inventados
 //   from job_log where action='sombra_openai' and created_at > now() - interval '7 days' group by 1;
-async function sombraOpenAI(ctx: SombraCtx, real: { text: string | null; toolCalls: unknown[]; tokensIn: number; tokensOut: number }, waId: string): Promise<void> {
+async function sombraOpenAI(ctx: SombraCtx, real: { text: string | null; toolCalls: unknown[]; tokensIn: number; tokensOut: number }, waId: string, extra: Record<string, unknown> = {}): Promise<void> {
   for (const modelo of SOMBRA_OPENAI_MODELS) {
     try {
       const s = await correrOpenAI(modelo, ctx, waId);
       const crudo = s.text ?? "";
       const textoS = crudo ? corregirGeneroBot(limpiarWhatsApp(crudo)) : null;
       await log("sombra_openai", !s.error, {
+        ...extra, // v125.2: etiquetas del replay (replay_id, turno, fecha original)
         waId, modo: ctx.modo, modelo, modelo_real: MODEL, ms: s.ms, error: s.error ?? null, agotado: s.agotado ?? false, finish: s.finish ?? null,
         esfuerzo_usado: s.esfuerzo ?? null, // v125.1: 'none' cuando OpenAI obligó a bajar (gpt-5.6 + tools)
         texto_sombra: textoS ? textoS.slice(0, 1500) : null,
@@ -3040,7 +3045,7 @@ async function sombraOpenAI(ctx: SombraCtx, real: { text: string | null; toolCal
   }
 }
 
-async function responderLLM(history: { role: string; content: string; model?: string | null; created_at?: string | null }[], forceTool: boolean, imagenes?: { b64: string; mediaType: string }[] | null, imagenFallo?: boolean, waId: string = "", atributos: Record<string, string> = {}, linksTracked: Record<string, string> = {}, modoAsistencia: boolean = false, sufijoExtra: string = "", modoCaptura: boolean = false, pdf?: { b64: string } | null, fichas?: Record<string, FichaProducto>): Promise<{ text: string | null; toolCalls: unknown[]; tokensIn: number; tokensOut: number; cacheRead: number; cacheWrite: number; agotado?: boolean }> {
+async function responderLLM(history: { role: string; content: string; model?: string | null; created_at?: string | null }[], forceTool: boolean, imagenes?: { b64: string; mediaType: string }[] | null, imagenFallo?: boolean, waId: string = "", atributos: Record<string, string> = {}, linksTracked: Record<string, string> = {}, modoAsistencia: boolean = false, sufijoExtra: string = "", modoCaptura: boolean = false, pdf?: { b64: string } | null, fichas?: Record<string, FichaProducto>, replay?: SombraReplay): Promise<{ text: string | null; toolCalls: unknown[]; tokensIn: number; tokensOut: number; cacheRead: number; cacheWrite: number; agotado?: boolean }> {
   if (!anthropic) return { text: null, toolCalls: [], tokensIn: 0, tokensOut: 0, cacheRead: 0, cacheWrite: 0 };
   // La API exige que el primer mensaje sea del usuario: descarta "assistant" al inicio
   // (puede pasar si un asesor escribió primero).
@@ -3177,6 +3182,15 @@ async function responderLLM(history: { role: string; content: string; model?: st
   const sombraCtx: SombraCtx | null = (SOMBRA_OPENAI_ACTIVA && waId && Math.random() * 100 < SOMBRA_OPENAI_PCT)
     ? { system: SYSTEM_PROMPT + systemDinamico, messages: messages.slice(), tools: toolsActivas, forceTool, modo: modoCaptura ? "captura" : modoAsistencia ? "asistencia" : "bot" }
     : null;
+  // v125.2 — REPLAY: no se llama a Claude (la respuesta real ya existe en `messages`); se arma el MISMO
+  // contexto de un turno y se corre solo la sombra, EN LÍNEA (el caller controla el lote). Sin muestreo.
+  if (replay) {
+    if (SOMBRA_OPENAI_ACTIVA && waId) {
+      const ctxR: SombraCtx = { system: SYSTEM_PROMPT + systemDinamico, messages: messages.slice(), tools: toolsActivas, forceTool, modo: "replay" };
+      await sombraOpenAI(ctxR, replay.real, waId, replay.etiqueta);
+    }
+    return { ...replay.real, cacheRead: 0, cacheWrite: 0 };
+  }
   let final: { text: string | null; toolCalls: unknown[]; tokensIn: number; tokensOut: number; cacheRead: number; cacheWrite: number; agotado?: boolean } | null = null;
   for (let i = 0; i < 4 && !final; i++) {
     // v21: garantía dura — la conversación SIEMPRE termina en mensaje de usuario antes de CADA
@@ -4255,6 +4269,68 @@ Deno.serve(async (req) => {
         headers: { "Content-Type": "application/json", "Cache-Control": "public, max-age=3600" },
       });
     }
+    // v125.2 — REPLAY DE SOMBRA. Re-corre contra los modelos de la sombra una conversación que ya ocurrió:
+    //   GET ?key=<WEBHOOK_KEY|DIAG_KEY>&sombra_replay=<waId>[&horas=24][&max=3]
+    // Cada turno del bot (mensaje del cliente → respuesta del bot) se reconstruye con el MISMO contexto que
+    // tuvo (historial hasta ese punto, tools del modo bot; sin imágenes) y se manda solo a la sombra. La
+    // respuesta real sale de `messages`. Resultado: filas job_log `sombra_openai` con modo='replay',
+    // replay_id, replay_turno y replay_de (fecha de la respuesta original). Se procesa en LOTES de `max`
+    // turnos por invocación (cada uno ≈ 2 modelos × varios segundos) y la función se ENCADENA sola
+    // llamándose con el siguiente `desde` hasta terminar — una sola llamada basta. Diferencias frente al
+    // turno original: la hora/fecha del contexto es la de ahora, y no viajan fotos ni PDF del cliente.
+    if (url.searchParams.get("sombra_replay")) {
+      const k = url.searchParams.get("key") ?? "";
+      if (k !== WEBHOOK_KEY && !(DIAG_KEY && k === DIAG_KEY)) return Response.json({ error: "forbidden" }, { status: 403 });
+      if (!SOMBRA_OPENAI_ACTIVA) return Response.json({ error: "sombra_apagada", nota: "COPILOT_SOMBRA_OPENAI vacío u OPENAI_API_KEY ausente" });
+      const waR = String(url.searchParams.get("sombra_replay") ?? "").replace(/\D/g, "");
+      const horas = Math.min(Math.max(parseInt(url.searchParams.get("horas") ?? "24", 10) || 24, 1), 24 * 14);
+      const maxT = Math.min(Math.max(parseInt(url.searchParams.get("max") ?? "3", 10) || 3, 1), 10);
+      const desdeT = Math.max(parseInt(url.searchParams.get("desde") ?? "0", 10) || 0, 0);
+      const replayId = (url.searchParams.get("replay_id") ?? "").replace(/[^a-z0-9]/gi, "").slice(0, 24) || `r${Date.now().toString(36)}`;
+      const { data: convR } = await sb.from("conversations").select("id").eq("wa_id", waR).maybeSingle();
+      if (!convR?.id) return Response.json({ error: "conversacion_no_encontrada", waId: waR }, { status: 404 });
+      const desdeIso = new Date(Date.now() - horas * 3600 * 1000).toISOString();
+      const { data: filas } = await sb.from("messages").select("role,content,model,created_at,tool_calls,tokens_in,tokens_out")
+        .eq("conversation_id", convR.id).in("role", ["user", "assistant"]).gte("created_at", desdeIso).order("created_at", { ascending: true }).limit(300);
+      const msgsR = (filas ?? []) as any[];
+      // Un turno del BOT: un mensaje del cliente seguido de una respuesta del copiloto (no de un asesor ni
+      // de un automatismo). Las burbujas (v66) son varias filas seguidas del bot: se re-unen como una.
+      const NO_BOT = new Set(["human-agent", "sistema-wati", "plantilla-saliente", "audio-puente", "fallback", "handoff-fijo", "copilot-imagen"]);
+      const esBot = (m: any) => m.role === "assistant" && !NO_BOT.has(String(m.model ?? ""));
+      const turnos: { i: number; real: { text: string; toolCalls: unknown[]; tokensIn: number; tokensOut: number }; de: string }[] = [];
+      for (let i = 0; i < msgsR.length - 1; i++) {
+        if (msgsR[i].role !== "user" || !esBot(msgsR[i + 1])) continue;
+        const partes = []; let j = i + 1;
+        while (j < msgsR.length && esBot(msgsR[j])) { partes.push(msgsR[j]); j++; }
+        turnos.push({ i, de: String(msgsR[i + 1].created_at), real: {
+          text: partes.map((m) => String(m.content ?? "")).join("\n\n"),
+          toolCalls: Array.isArray(partes[0].tool_calls) ? partes[0].tool_calls : [],
+          tokensIn: Number(partes[0].tokens_in ?? 0), tokensOut: Number(partes[0].tokens_out ?? 0),
+        } });
+      }
+      const lote = turnos.slice(desdeT, desdeT + maxT);
+      const correr = (async () => {
+        for (let n = 0; n < lote.length; n++) {
+          const t = lote[n];
+          const hist = msgsR.slice(0, t.i + 1).map((m) => ({ role: m.role, content: String(m.content ?? ""), model: m.model ?? null, created_at: m.created_at ?? null }));
+          try {
+            await responderLLM(hist, NEEDS_TOOL_RE.test(String(msgsR[t.i].content ?? "")), null, false, waR, {}, {}, false, "", false, null, undefined,
+              { real: t.real, etiqueta: { replay_id: replayId, replay_turno: desdeT + n + 1, replay_total: turnos.length, replay_de: t.de, replay_pregunta: String(msgsR[t.i].content ?? "").slice(0, 200) } });
+          } catch (e) {
+            await log("sombra_openai", false, { replay_id: replayId, replay_turno: desdeT + n + 1, waId: waR, modo: "replay", error: String(e).slice(0, 200) });
+          }
+        }
+        // Encadenar el siguiente lote (la función se llama a sí misma con la misma key).
+        if (desdeT + maxT < turnos.length) {
+          const sig = `${SB_URL}/functions/v1/copilot-webhook?key=${encodeURIComponent(k)}&sombra_replay=${waR}&horas=${horas}&max=${maxT}&desde=${desdeT + maxT}&replay_id=${replayId}`;
+          try { await fetch(sig, { signal: AbortSignal.timeout(8000) }); } catch (e) { await log("sombra_replay_encadenar", false, { replay_id: replayId, desde: desdeT + maxT, error: String(e).slice(0, 120) }); }
+        } else {
+          await log("sombra_replay_fin", true, { replay_id: replayId, waId: waR, turnos: turnos.length });
+        }
+      })();
+      correrEnSegundoPlano(correr);
+      return Response.json({ ok: true, replay_id: replayId, waId: waR, turnos: turnos.length, lote: { desde: desdeT + 1, hasta: Math.min(desdeT + maxT, turnos.length) }, modelos: SOMBRA_OPENAI_MODELS, nota: "Se encadena solo hasta terminar. Resultados: job_log action='sombra_openai' con replay_id." });
+    }
     // v44 — autotest de inventario (diagnóstico), gated por ?key= (NO expone el token). Uso:
     //   GET ?key=<WEBHOOK_KEY>&selftest=inventario[&pid=<product_id>]
     // Corre la consulta Admin totalInventory desde ADENTRO y reporta status/errores/nodos, para ver por qué
@@ -4297,7 +4373,7 @@ Deno.serve(async (req) => {
         texto: tr?.texto ?? null, ts: new Date().toISOString(),
       });
     }
-    return Response.json({ status: "ok", function: "copilot-webhook", version: "v125.1-sombra-esfuerzo-none", mode: MODE, mode_raw: MODE_RAW, model: MODEL, llm_configured: !!anthropic, wati_send_configured: !!(WATI_API_TOKEN && WATI_API_BASE), inventario_configurado: !!(SHOPIFY_ADMIN_TOKEN && SHOPIFY_ADMIN_API_BASE), resolve_configured: !!RESOLVE_SECRET, webhook_key_es_default: WEBHOOK_KEY_ES_DEFAULT, handoff_assist_min: HANDOFF_ASSIST_MIN, hist_asistencia: HIST_ASISTENCIA, handoff_cold_hours: HANDOFF_COLD_HOURS, debounce_ms: DEBOUNCE_MS, sesion_gap_dias: SESION_GAP_DIAS, burbujas: BURBUJAS, burbuja_ms: BURBUJA_MS, audio_puente: AUDIO_PUENTE, sweep: SWEEP_MODE, sweep_espera_min: SWEEP_ESPERA_MIN, stt: STT_MODE, stt_raw: STT_RAW, stt_configurado: !!OPENAI_API_KEY, stt_model: STT_MODEL, busqueda_shadow: BUSQUEDA_SHADOW, busqueda_replica: BUSQUEDA_REPLICA, busqueda_replica_raw: BUSQUEDA_REPLICA_RAW, busqueda_mcp: BUSQUEDA_MCP, busqueda_mcp_limit: BUSQUEDA_MCP_LIMIT, catalog_mcp_url: CATALOG_MCP_URL, ucp_profile_url: UCP_PROFILE_URL, live_targets: MODE === "live" ? (LIVE_ALL ? "all" : LIVE_ALLOWLIST.length) : 0, wa_ignorar: WA_IGNORAR.size, sombra_openai: SOMBRA_OPENAI_MODELS, sombra_openai_activa: SOMBRA_OPENAI_ACTIVA, sombra_openai_pct: SOMBRA_OPENAI_PCT, sombra_openai_esfuerzo: SOMBRA_OPENAI_ESFUERZO, ficha_imagen: FICHA_IMAGEN, ts: new Date().toISOString() });
+    return Response.json({ status: "ok", function: "copilot-webhook", version: "v125.2-sombra-replay", mode: MODE, mode_raw: MODE_RAW, model: MODEL, llm_configured: !!anthropic, wati_send_configured: !!(WATI_API_TOKEN && WATI_API_BASE), inventario_configurado: !!(SHOPIFY_ADMIN_TOKEN && SHOPIFY_ADMIN_API_BASE), resolve_configured: !!RESOLVE_SECRET, webhook_key_es_default: WEBHOOK_KEY_ES_DEFAULT, handoff_assist_min: HANDOFF_ASSIST_MIN, hist_asistencia: HIST_ASISTENCIA, handoff_cold_hours: HANDOFF_COLD_HOURS, debounce_ms: DEBOUNCE_MS, sesion_gap_dias: SESION_GAP_DIAS, burbujas: BURBUJAS, burbuja_ms: BURBUJA_MS, audio_puente: AUDIO_PUENTE, sweep: SWEEP_MODE, sweep_espera_min: SWEEP_ESPERA_MIN, stt: STT_MODE, stt_raw: STT_RAW, stt_configurado: !!OPENAI_API_KEY, stt_model: STT_MODEL, busqueda_shadow: BUSQUEDA_SHADOW, busqueda_replica: BUSQUEDA_REPLICA, busqueda_replica_raw: BUSQUEDA_REPLICA_RAW, busqueda_mcp: BUSQUEDA_MCP, busqueda_mcp_limit: BUSQUEDA_MCP_LIMIT, catalog_mcp_url: CATALOG_MCP_URL, ucp_profile_url: UCP_PROFILE_URL, live_targets: MODE === "live" ? (LIVE_ALL ? "all" : LIVE_ALLOWLIST.length) : 0, wa_ignorar: WA_IGNORAR.size, sombra_openai: SOMBRA_OPENAI_MODELS, sombra_openai_activa: SOMBRA_OPENAI_ACTIVA, sombra_openai_pct: SOMBRA_OPENAI_PCT, sombra_openai_esfuerzo: SOMBRA_OPENAI_ESFUERZO, ficha_imagen: FICHA_IMAGEN, ts: new Date().toISOString() });
   }
   if (req.method !== "POST") return Response.json({ error: "method_not_allowed" }, { status: 405 });
   if (url.searchParams.get("key") !== WEBHOOK_KEY) return Response.json({ error: "forbidden" }, { status: 403 });
