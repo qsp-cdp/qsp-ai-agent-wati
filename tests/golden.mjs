@@ -1665,7 +1665,7 @@ caso("v123: 'sistema-wati' NO se rotula como asesor del equipo", (() => {
   const bloque = src.slice(i, i + 600);
   return i > -1 && /\[Asesor del equipo\]/.test(bloque) && !/sistema-wati" \? "\[Asesor/.test(bloque);
 })());
-caso("v123: el healthcheck delata la versión (v126)", /version: "v126-guard-precio"/.test(src));
+caso("v123: el healthcheck delata la versión (v127)", /version: "v127-ningun-mensaje-vacio"/.test(src));
 
 // --- v126: guard de precio por producto ------------------------------------------------------------
 console.log("v126 guard de precio");
