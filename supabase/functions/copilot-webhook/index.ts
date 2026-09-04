@@ -1,3 +1,14 @@
+// === copilot-webhook v128 — Copiloto AI de WATI — la RÉPLICA responde primero cuando hay código (modo "codigos") ===
+// v128 (2026-09-04): fase 3 del mapa del catálogo. Hasta hoy `BUSQUEDA_REPLICA` aceptaba "codigos" y "primaria"
+//   pero solo "shadow" estaba cableado: cambiar el secreto no cambiaba nada. La sombra de 7 días (235
+//   comparaciones) dio el argumento: en 58 consultas con código la réplica devolvió productos AGOTADOS que el
+//   buscador de Shopify no muestra — y el 04-sep a las 09:04 eso fue exactamente el incidente de la L5590 (el
+//   motor en vivo devolvió la T04D1, que no le sirve; la réplica, en sombra, la C9344 correcta y agotada).
+//   Con "codigos": si la consulta trae un código de modelo, la réplica (RPC buscar_catalogo v3: título, SKU,
+//   handle, tags con prefijo, descripción) responde PRIMERO; solo productos `active`; el precio y el stock
+//   salen EN VIVO de Shopify Admin en el mismo viaje que la foto (la réplica decide QUÉ, Admin cuánto y
+//   cuántos). Si la réplica devuelve vacío o falla, se sigue por el camino de siempre (MCP → suggest.json):
+//   el texto libre nunca toca la réplica. Telemetría: busqueda_replica_primaria / _vacia / _fallo.
 // === copilot-webhook v126 — Copiloto AI de WATI — GUARD DE PRECIO por producto + reintento pensando ===
 // v126 (2026-09-04): el replay del 03-sep (conv 50766746530, turno del UPS) mostró a Sonnet 5 escribiendo
 //   "*APC Easy BV650* a $56.00" cuando la búsqueda del turno decía $66.00 — le puso al BV650 el precio del
@@ -1529,12 +1540,17 @@ function calcularCotizacion(items: any): string {
 //   select * from job_log where action='inventario_fallo' order by created_at desc;
 // v125 — `imagenes` (opcional, de salida): id → URL de la foto principal (featuredImage). Viaja en la MISMA
 // consulta que el stock, así la ficha con foto no cuesta un viaje extra a Shopify.
-async function inventarioShopify(ids: (string | number)[], imagenes?: Record<string, string>): Promise<Record<string, number>> {
+// v128 — `precios` (opcional, de salida): id → precio mínimo/máximo y "precio de antes" EN VIVO, para que el
+// modo "codigos" de la réplica cotice con el precio de Shopify de hoy y no con el de la última sincronía.
+type PrecioVivo = { precio: string; max?: string; lista?: string };
+async function inventarioShopify(ids: (string | number)[], imagenes?: Record<string, string>, precios?: Record<string, PrecioVivo>): Promise<Record<string, number>> {
   if (!SHOPIFY_ADMIN_TOKEN || !SHOPIFY_ADMIN_API_BASE || !ids.length) return {};
   try {
     const gids = ids.map((id) => `gid://shopify/Product/${String(id).replace(/\D/g, "")}`).filter((g) => /\d/.test(g));
     if (!gids.length) return {};
-    const query = "query($ids:[ID!]!){ nodes(ids:$ids){ ... on Product { id totalInventory featuredImage { url } } } }";
+    const query = precios
+      ? "query($ids:[ID!]!){ nodes(ids:$ids){ ... on Product { id totalInventory featuredImage { url } priceRangeV2 { minVariantPrice { amount } maxVariantPrice { amount } } compareAtPriceRange { minVariantCompareAtPrice { amount } } } } }"
+      : "query($ids:[ID!]!){ nodes(ids:$ids){ ... on Product { id totalInventory featuredImage { url } } } }";
     const r = await fetch(`${SHOPIFY_ADMIN_API_BASE}/graphql.json`, {
       method: "POST",
       headers: { "Content-Type": "application/json", "X-Shopify-Access-Token": SHOPIFY_ADMIN_TOKEN },
@@ -1554,6 +1570,10 @@ async function inventarioShopify(ids: (string | number)[], imagenes?: Record<str
     for (const n of (j?.data?.nodes ?? [])) {
       if (n?.id && typeof n.totalInventory === "number") out[String(n.id).replace(/\D/g, "")] = n.totalInventory;
       if (imagenes && n?.id && n?.featuredImage?.url) imagenes[String(n.id).replace(/\D/g, "")] = String(n.featuredImage.url);
+      if (precios && n?.id && n?.priceRangeV2?.minVariantPrice?.amount != null) {
+        const lista = n?.compareAtPriceRange?.minVariantCompareAtPrice?.amount;
+        precios[String(n.id).replace(/\D/g, "")] = { precio: String(n.priceRangeV2.minVariantPrice.amount), max: n.priceRangeV2?.maxVariantPrice?.amount != null ? String(n.priceRangeV2.maxVariantPrice.amount) : undefined, lista: (lista != null && Number(lista) > 0) ? String(lista) : undefined };
+      }
     }
     return out;
   } catch (e) {
@@ -1978,6 +1998,45 @@ async function buscarProducto(consulta: string, waId: string = "", linksTracked?
   // el modelo no está → coincidencia "aproximada" (el bot lo ofrece como alternativa/pedido especial, nunca
   // como el modelo pedido). suggest.json queda de FALLBACK de confiabilidad: si el MCP falla/timeout, la
   // búsqueda no se rompe (cae a la escalera de abajo).
+  // === v128 — RÉPLICA modo "codigos": con código de modelo en la consulta, la réplica responde PRIMERO. ===
+  // Su terreno es determinista (título/SKU/handle/tags/descripción del catálogo COMPLETO, agotados incluidos);
+  // el texto libre no entra aquí. Solo productos `active` (un borrador no se le ofrece a un cliente). Precio,
+  // "precio de antes" y stock salen EN VIVO de Admin en el mismo viaje que la foto. Vacío o fallo → sigue el
+  // camino de siempre (MCP → suggest.json), que nunca se rompe.
+  if (BUSQUEDA_REPLICA === "codigos" && codigos.length) {
+    const t0r = Date.now();
+    try {
+      const rep = (await buscarEnReplica(consulta)).filter((r: any) => r._status === "active");
+      const repTipo = tipo ? rep.filter((p: any) => tituloDeTipo(p.titulo, tipo)) : rep;
+      const lista = repTipo.length ? repTipo : rep;
+      if (lista.length) {
+        const imgs: Record<string, string> = {};
+        const precios: Record<string, PrecioVivo> = {};
+        const inv = await inventarioShopify(lista.map((p: any) => p.id).filter(Boolean), imgs, precios);
+        const conVivo = lista.map((p: any) => {
+          const k = String(p.id ?? "").replace(/\D/g, "");
+          const pv = precios[k];
+          return {
+            ...p,
+            precio_usd: pv ? pv.precio : p.precio_usd,
+            precio_lista: pv ? pv.lista : undefined,
+            precio_desde: !!(pv && pv.max && pv.max !== pv.precio) || undefined,
+            // Stock real: cantidad 0 → "❌ sin stock" (lo tenemos, está agotado: la razón de ser de la réplica);
+            // sin dato de Admin → "🔎 un asesor verifica" (nunca "sin stock" por un hipo de Admin).
+            disponible: typeof inv[k] === "number" ? inv[k] > 0 : true,
+          };
+        });
+        const top = rerankearCombos(conVivo, codigos, 6);
+        await log("busqueda_replica_primaria", true, { consulta: String(consulta).slice(0, 120), n: lista.length, via: [...new Set(lista.map((r: any) => r._via).filter(Boolean))], agotados: top.filter((p: any) => p.disponible === false).length, top3: top.slice(0, 3).map((p: any) => String(p.titulo).slice(0, 80)), ms: Date.now() - t0r });
+        return await enriquecer(top, true, { inv, imagenes: imgs });
+      }
+      await log("busqueda_replica_vacia", true, { consulta: String(consulta).slice(0, 120), ms: Date.now() - t0r });
+    } catch (e) {
+      lastErr = String(e).slice(0, 120);
+      await log("busqueda_replica_fallo", false, { consulta: String(consulta).slice(0, 120), error: lastErr, ms: Date.now() - t0r });
+    }
+  }
+
   let mcpAprox: any[] | null = null; // vecinos semánticos del MCP SIN el código pedido → candidatos a "aproximada"
   if (BUSQUEDA_MCP) {
     try {
@@ -2119,10 +2178,11 @@ async function buscarProducto(consulta: string, waId: string = "", linksTracked?
 
   // Enriquecimiento (v21 ITBMS + stock real; v28/v29 tracking; v52 especificaciones) — compartido por el
   // hit directo y el fallback v55.
-  async function enriquecer(top: any[], exacto: boolean = true): Promise<string> {
+  // v128 — `pre`: inventario y fotos ya consultados por el modo "codigos" de la réplica (un solo viaje a Admin).
+  async function enriquecer(top: any[], exacto: boolean = true, pre?: { inv: Record<string, number>; imagenes: Record<string, string> }): Promise<string> {
     // v21: enriquece con ITBMS (cálculo en código) y stock real (Shopify Admin, best-effort).
-    const imagenesAdmin: Record<string, string> = {};   // v125 — foto principal desde Admin, mismo viaje que el stock
-    const inv = await inventarioShopify(top.map((p) => p.id).filter(Boolean), imagenesAdmin);
+    const imagenesAdmin: Record<string, string> = pre ? pre.imagenes : {};   // v125 — foto principal desde Admin, mismo viaje que el stock
+    const inv = pre ? pre.inv : await inventarioShopify(top.map((p) => p.id).filter(Boolean), imagenesAdmin);
     // v28: tracking — URL apex + UTMs + ref_code (guarda el mapeo para el stitch WhatsApp→web).
     // v125: la sombra no emite ref_codes (sinRef) — usa la URL pelada.
     const urls = opciones?.sinRef ? top.map((p) => String(p.url ?? "")) : await urlsConRef(top.map((p) => p.url), waId);
@@ -4550,7 +4610,7 @@ Deno.serve(async (req) => {
         texto: tr?.texto ?? null, ts: new Date().toISOString(),
       });
     }
-    return Response.json({ status: "ok", function: "copilot-webhook", version: "v127.1-guard-precio-parrafo", mode: MODE, mode_raw: MODE_RAW, model: MODEL, llm_configured: !!anthropic, wati_send_configured: !!(WATI_API_TOKEN && WATI_API_BASE), inventario_configurado: !!(SHOPIFY_ADMIN_TOKEN && SHOPIFY_ADMIN_API_BASE), resolve_configured: !!RESOLVE_SECRET, webhook_key_es_default: WEBHOOK_KEY_ES_DEFAULT, handoff_assist_min: HANDOFF_ASSIST_MIN, hist_asistencia: HIST_ASISTENCIA, handoff_cold_hours: HANDOFF_COLD_HOURS, debounce_ms: DEBOUNCE_MS, sesion_gap_dias: SESION_GAP_DIAS, burbujas: BURBUJAS, burbuja_ms: BURBUJA_MS, audio_puente: AUDIO_PUENTE, sweep: SWEEP_MODE, sweep_espera_min: SWEEP_ESPERA_MIN, stt: STT_MODE, stt_raw: STT_RAW, stt_configurado: !!OPENAI_API_KEY, stt_model: STT_MODEL, busqueda_shadow: BUSQUEDA_SHADOW, busqueda_replica: BUSQUEDA_REPLICA, busqueda_replica_raw: BUSQUEDA_REPLICA_RAW, busqueda_mcp: BUSQUEDA_MCP, busqueda_mcp_limit: BUSQUEDA_MCP_LIMIT, catalog_mcp_url: CATALOG_MCP_URL, ucp_profile_url: UCP_PROFILE_URL, live_targets: MODE === "live" ? (LIVE_ALL ? "all" : LIVE_ALLOWLIST.length) : 0, wa_ignorar: WA_IGNORAR.size, sombra_openai: SOMBRA_OPENAI_MODELS, sombra_openai_activa: SOMBRA_OPENAI_ACTIVA, sombra_openai_pct: SOMBRA_OPENAI_PCT, sombra_openai_esfuerzo: SOMBRA_OPENAI_ESFUERZO, ficha_imagen: FICHA_IMAGEN, guard_precio: GUARD_PRECIO, ts: new Date().toISOString() });
+    return Response.json({ status: "ok", function: "copilot-webhook", version: "v128-replica-codigos", mode: MODE, mode_raw: MODE_RAW, model: MODEL, llm_configured: !!anthropic, wati_send_configured: !!(WATI_API_TOKEN && WATI_API_BASE), inventario_configurado: !!(SHOPIFY_ADMIN_TOKEN && SHOPIFY_ADMIN_API_BASE), resolve_configured: !!RESOLVE_SECRET, webhook_key_es_default: WEBHOOK_KEY_ES_DEFAULT, handoff_assist_min: HANDOFF_ASSIST_MIN, hist_asistencia: HIST_ASISTENCIA, handoff_cold_hours: HANDOFF_COLD_HOURS, debounce_ms: DEBOUNCE_MS, sesion_gap_dias: SESION_GAP_DIAS, burbujas: BURBUJAS, burbuja_ms: BURBUJA_MS, audio_puente: AUDIO_PUENTE, sweep: SWEEP_MODE, sweep_espera_min: SWEEP_ESPERA_MIN, stt: STT_MODE, stt_raw: STT_RAW, stt_configurado: !!OPENAI_API_KEY, stt_model: STT_MODEL, busqueda_shadow: BUSQUEDA_SHADOW, busqueda_replica: BUSQUEDA_REPLICA, busqueda_replica_raw: BUSQUEDA_REPLICA_RAW, busqueda_mcp: BUSQUEDA_MCP, busqueda_mcp_limit: BUSQUEDA_MCP_LIMIT, catalog_mcp_url: CATALOG_MCP_URL, ucp_profile_url: UCP_PROFILE_URL, live_targets: MODE === "live" ? (LIVE_ALL ? "all" : LIVE_ALLOWLIST.length) : 0, wa_ignorar: WA_IGNORAR.size, sombra_openai: SOMBRA_OPENAI_MODELS, sombra_openai_activa: SOMBRA_OPENAI_ACTIVA, sombra_openai_pct: SOMBRA_OPENAI_PCT, sombra_openai_esfuerzo: SOMBRA_OPENAI_ESFUERZO, ficha_imagen: FICHA_IMAGEN, guard_precio: GUARD_PRECIO, ts: new Date().toISOString() });
   }
   if (req.method !== "POST") return Response.json({ error: "method_not_allowed" }, { status: 405 });
   if (url.searchParams.get("key") !== WEBHOOK_KEY) return Response.json({ error: "forbidden" }, { status: 403 });
