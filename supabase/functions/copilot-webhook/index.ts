@@ -3174,7 +3174,11 @@ async function responderLLM(history: { role: string; content: string; model?: st
   // salida, input mucho más barato en turnos con cache-hit (verificar con usage.cache_read_input_tokens).
   // v74: en MODO CAPTURA el sufijo es CAPTURA_SUFFIX (objetivo único: datos de entrega) en vez del de asistencia.
   // v125: la ficha con foto solo aplica en modo bot (en asistencia/captura no hay burbujas ni fotos).
-  const systemDinamico = ctx + ctxAhora + ctxHorario + (modoCaptura ? CAPTURA_SUFFIX : modoAsistencia ? ASSIST_SUFFIX + sufijoExtra : ctxDatos + (FICHA_IMAGEN ? FICHA_SUFFIX : ""));
+  // v127.1 — en el REINTENTO (pensar) el modelo sabe por qué se repite: su respuesta anterior tuvo un precio
+  // que no cuadraba. Se le pide verificar cada precio contra los resultados y NO estirar la compatibilidad
+  // (el reintento del 04-sep ofreció una caja T04D1 "para la L5590" cuando el título no la nombra).
+  const ctxReintento = pensar ? "\n\nCONTEXTO INTERNO: Este turno se REPITE porque tu respuesta anterior citó un precio que NO coincidía con el producto al que lo asociaste. Vuelve a llamar buscar_producto (y calcular_cotizacion si hay cantidades), y en la respuesta nueva: cada precio va pegado al título EXACTO del resultado del que salió; NUNCA hagas sumas ni multiplicaciones de memoria; y afirma compatibilidad con el equipo del cliente SOLO si el título del resultado nombra ese modelo — si no lo nombra, dilo con honestidad y deja que un asesor confirme." : "";
+  const systemDinamico = ctx + ctxAhora + ctxHorario + (modoCaptura ? CAPTURA_SUFFIX : modoAsistencia ? ASSIST_SUFFIX + sufijoExtra : ctxDatos + (FICHA_IMAGEN ? FICHA_SUFFIX : "")) + ctxReintento;
   const system: Anthropic.TextBlockParam[] = [
     { type: "text", text: SYSTEM_PROMPT, cache_control: { type: "ephemeral" } },
     { type: "text", text: systemDinamico },
@@ -3485,11 +3489,16 @@ function preciosInconsistentes(texto: string, fichas: Record<string, FichaProduc
   const salida: { titulo: string; monto: string }[] = [];
   for (let i = 0; i < anclas.length; i++) {
     let seg = t.slice(anclas[i].pos, i + 1 < anclas.length ? anclas[i + 1].pos : t.length);
-    MONTO.lastIndex = 0;
-    const primero = MONTO.exec(seg);
-    if (!primero) continue;
-    const corte = seg.indexOf("\n\n", primero.index);
+    // v127.1 — el bloque de un producto es SU PÁRRAFO: se corta en el primer salto doble después de la
+    // ancla, haya o no monto antes. Caso real (04-sep 09:04): "No encontré caja para la L5590 … \n\n Lo que sí
+    // tengo son las tintas 544 … $36.00" → la impresora L5590 (ficha del turno) anclaba un segmento que se
+    // extendía hasta las tintas, y el guard marcó $36.00 como precio cruzado de la impresora. El reintento
+    // pensando respondió PEOR (ofreció una caja T04D1 que no es para la L5590 y un asesor tuvo que corregir).
+    // El UPS del 03-sep sigue cayendo: el BV650 y su precio cruzado estaban en el mismo párrafo.
+    const corte = seg.indexOf("\n\n");
     if (corte >= 0) seg = seg.slice(0, corte);
+    MONTO.lastIndex = 0;
+    if (!MONTO.exec(seg)) continue;
     const f = lista[anclas[i].idx];
     const permitidos = montosDeFicha(f);
     MONTO.lastIndex = 0;
@@ -4541,7 +4550,7 @@ Deno.serve(async (req) => {
         texto: tr?.texto ?? null, ts: new Date().toISOString(),
       });
     }
-    return Response.json({ status: "ok", function: "copilot-webhook", version: "v127-ningun-mensaje-vacio", mode: MODE, mode_raw: MODE_RAW, model: MODEL, llm_configured: !!anthropic, wati_send_configured: !!(WATI_API_TOKEN && WATI_API_BASE), inventario_configurado: !!(SHOPIFY_ADMIN_TOKEN && SHOPIFY_ADMIN_API_BASE), resolve_configured: !!RESOLVE_SECRET, webhook_key_es_default: WEBHOOK_KEY_ES_DEFAULT, handoff_assist_min: HANDOFF_ASSIST_MIN, hist_asistencia: HIST_ASISTENCIA, handoff_cold_hours: HANDOFF_COLD_HOURS, debounce_ms: DEBOUNCE_MS, sesion_gap_dias: SESION_GAP_DIAS, burbujas: BURBUJAS, burbuja_ms: BURBUJA_MS, audio_puente: AUDIO_PUENTE, sweep: SWEEP_MODE, sweep_espera_min: SWEEP_ESPERA_MIN, stt: STT_MODE, stt_raw: STT_RAW, stt_configurado: !!OPENAI_API_KEY, stt_model: STT_MODEL, busqueda_shadow: BUSQUEDA_SHADOW, busqueda_replica: BUSQUEDA_REPLICA, busqueda_replica_raw: BUSQUEDA_REPLICA_RAW, busqueda_mcp: BUSQUEDA_MCP, busqueda_mcp_limit: BUSQUEDA_MCP_LIMIT, catalog_mcp_url: CATALOG_MCP_URL, ucp_profile_url: UCP_PROFILE_URL, live_targets: MODE === "live" ? (LIVE_ALL ? "all" : LIVE_ALLOWLIST.length) : 0, wa_ignorar: WA_IGNORAR.size, sombra_openai: SOMBRA_OPENAI_MODELS, sombra_openai_activa: SOMBRA_OPENAI_ACTIVA, sombra_openai_pct: SOMBRA_OPENAI_PCT, sombra_openai_esfuerzo: SOMBRA_OPENAI_ESFUERZO, ficha_imagen: FICHA_IMAGEN, guard_precio: GUARD_PRECIO, ts: new Date().toISOString() });
+    return Response.json({ status: "ok", function: "copilot-webhook", version: "v127.1-guard-precio-parrafo", mode: MODE, mode_raw: MODE_RAW, model: MODEL, llm_configured: !!anthropic, wati_send_configured: !!(WATI_API_TOKEN && WATI_API_BASE), inventario_configurado: !!(SHOPIFY_ADMIN_TOKEN && SHOPIFY_ADMIN_API_BASE), resolve_configured: !!RESOLVE_SECRET, webhook_key_es_default: WEBHOOK_KEY_ES_DEFAULT, handoff_assist_min: HANDOFF_ASSIST_MIN, hist_asistencia: HIST_ASISTENCIA, handoff_cold_hours: HANDOFF_COLD_HOURS, debounce_ms: DEBOUNCE_MS, sesion_gap_dias: SESION_GAP_DIAS, burbujas: BURBUJAS, burbuja_ms: BURBUJA_MS, audio_puente: AUDIO_PUENTE, sweep: SWEEP_MODE, sweep_espera_min: SWEEP_ESPERA_MIN, stt: STT_MODE, stt_raw: STT_RAW, stt_configurado: !!OPENAI_API_KEY, stt_model: STT_MODEL, busqueda_shadow: BUSQUEDA_SHADOW, busqueda_replica: BUSQUEDA_REPLICA, busqueda_replica_raw: BUSQUEDA_REPLICA_RAW, busqueda_mcp: BUSQUEDA_MCP, busqueda_mcp_limit: BUSQUEDA_MCP_LIMIT, catalog_mcp_url: CATALOG_MCP_URL, ucp_profile_url: UCP_PROFILE_URL, live_targets: MODE === "live" ? (LIVE_ALL ? "all" : LIVE_ALLOWLIST.length) : 0, wa_ignorar: WA_IGNORAR.size, sombra_openai: SOMBRA_OPENAI_MODELS, sombra_openai_activa: SOMBRA_OPENAI_ACTIVA, sombra_openai_pct: SOMBRA_OPENAI_PCT, sombra_openai_esfuerzo: SOMBRA_OPENAI_ESFUERZO, ficha_imagen: FICHA_IMAGEN, guard_precio: GUARD_PRECIO, ts: new Date().toISOString() });
   }
   if (req.method !== "POST") return Response.json({ error: "method_not_allowed" }, { status: 405 });
   if (url.searchParams.get("key") !== WEBHOOK_KEY) return Response.json({ error: "forbidden" }, { status: 403 });
