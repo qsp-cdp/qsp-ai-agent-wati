@@ -56,6 +56,26 @@ BUSQUEDA_REPLICA=codigos
 
 Sin redeploy. Rollback: volver a `shadow`.
 
+
+## Primer día en vivo (04-sep 16:39 → 05-sep 10:30)
+
+| Filas | n |
+|---|---|
+| `busqueda_replica_primaria` (la réplica respondió) | 83 |
+| …de las cuales mostraron al menos un agotado | 50 |
+| `busqueda_replica_vacia` (cayó al MCP) | 16 |
+| `busqueda_replica_fallo` | 0 |
+| Latencia promedio / máxima (incluye precio y stock de Admin) | 712 ms / 1.05 s |
+
+Las 16 vacías, una por una: Forza FVR-3001 (×6, no existe en catálogo: bien callado), "APC BVX700L-LM" (el
+cliente omitió la U; Sonnet volvió a buscar y lo halló), HP 139A y HP 216A ×3 (no existen: bien callado).
+
+**El defecto que sí apareció** (05-sep 09:59, RFQ de 11 líneas): "219A" devolvió el tambor CF219A y "106A" la
+tinta CZ106AL, porque el match de código era substring puro. Lo corrige la RPC **v4**
+(`20260905160000_buscar_catalogo_v4.sql`): un código con letra debe empezar en frontera de token; uno de solo
+dígitos sigue siendo substring. Verificado en producción contra 22 consultas antes de aplicar; de paso
+"toner 26a" dejó de arrastrar los 126A y "55x" el 05X. Sin cambios en el resto del banco.
+
 ## Lo que sigue
 
 - **`primaria`** (réplica también para texto libre) NO se recomienda con estos datos: "grapas" cayó
