@@ -3544,10 +3544,27 @@ function preciosInconsistentes(texto: string, fichas: Record<string, FichaProduc
     }
   });
   if (!anclas.length) return [];
-  anclas.sort((a, b) => a.pos - b.pos);
+  // v128.1 — UN CÓDIGO INTRODUCIDO COMO COMPATIBILIDAD NO ANCLA. Caso real (05-sep 09:59, RFQ de 11 líneas):
+  // "*Toner HP W1105A (105A)* — compatible con HP Laser MFP 137fnw\n$59.00 + ITBMS…". La impresora 137fnw
+  // también era ficha del turno (salió como compatible en la misma búsqueda), su código anclaba DENTRO del
+  // párrafo del tóner y el guard le cargó a la impresora los $59.00 del tóner: falso positivo, reintento
+  // de 42 s que tampoco cuadró, y el cliente recibió la deferencia en vez de la lista de precios. Regla:
+  // si en la misma línea, justo antes del código, viene "para / compatible con / sirve para / funciona con /
+  // ideal para…" (con hasta cinco palabras sin dígitos en medio: "compatible con hp laser mfp 137fnw"), ese
+  // código es una MENCIÓN del equipo del cliente, no el producto cotizado, y no abre bloque. El BV650 del
+  // 03-sep ("también tenemos el *APC Easy BV650*") no lleva esa antesala y sigue anclando.
+  const MENCION = /(?:\bpara|\bcompatibles?\s+con|\bsirven?\s+para|\bfuncionan?\s+con|\bapt[oa]s?\s+para|\bdise[ñn]ad[oa]s?\s+para|\bideal(?:es)?\s+para|\buso\s+en|\busar\s+en|\bse\s+usan?\s+en)\s+(?:[a-z]+\s+){0,5}$/;
+  const esMencion = (pos: number) => {
+    const ini = Math.max(0, t.lastIndexOf("\n", pos - 1) + 1);
+    return MENCION.test(t.slice(ini, pos));
+  };
+  const anclasReales = anclas.filter((a) => !esMencion(a.pos));
+  if (!anclasReales.length) return [];
+  anclasReales.sort((a, b) => a.pos - b.pos);
   const MONTO = /(?:\$|b\/\.|usd)\s?(\d{1,3}(?:,\d{3})+(?:\.\d{2})?|\d+(?:\.\d{2})?)/g;
   const salida: { titulo: string; monto: string }[] = [];
-  for (let i = 0; i < anclas.length; i++) {
+  for (let i = 0; i < anclasReales.length; i++) {
+    const anclas = anclasReales;
     let seg = t.slice(anclas[i].pos, i + 1 < anclas.length ? anclas[i + 1].pos : t.length);
     // v127.1 — el bloque de un producto es SU PÁRRAFO: se corta en el primer salto doble después de la
     // ancla, haya o no monto antes. Caso real (04-sep 09:04): "No encontré caja para la L5590 … \n\n Lo que sí
@@ -4610,7 +4627,7 @@ Deno.serve(async (req) => {
         texto: tr?.texto ?? null, ts: new Date().toISOString(),
       });
     }
-    return Response.json({ status: "ok", function: "copilot-webhook", version: "v128-replica-codigos", mode: MODE, mode_raw: MODE_RAW, model: MODEL, llm_configured: !!anthropic, wati_send_configured: !!(WATI_API_TOKEN && WATI_API_BASE), inventario_configurado: !!(SHOPIFY_ADMIN_TOKEN && SHOPIFY_ADMIN_API_BASE), resolve_configured: !!RESOLVE_SECRET, webhook_key_es_default: WEBHOOK_KEY_ES_DEFAULT, handoff_assist_min: HANDOFF_ASSIST_MIN, hist_asistencia: HIST_ASISTENCIA, handoff_cold_hours: HANDOFF_COLD_HOURS, debounce_ms: DEBOUNCE_MS, sesion_gap_dias: SESION_GAP_DIAS, burbujas: BURBUJAS, burbuja_ms: BURBUJA_MS, audio_puente: AUDIO_PUENTE, sweep: SWEEP_MODE, sweep_espera_min: SWEEP_ESPERA_MIN, stt: STT_MODE, stt_raw: STT_RAW, stt_configurado: !!OPENAI_API_KEY, stt_model: STT_MODEL, busqueda_shadow: BUSQUEDA_SHADOW, busqueda_replica: BUSQUEDA_REPLICA, busqueda_replica_raw: BUSQUEDA_REPLICA_RAW, busqueda_mcp: BUSQUEDA_MCP, busqueda_mcp_limit: BUSQUEDA_MCP_LIMIT, catalog_mcp_url: CATALOG_MCP_URL, ucp_profile_url: UCP_PROFILE_URL, live_targets: MODE === "live" ? (LIVE_ALL ? "all" : LIVE_ALLOWLIST.length) : 0, wa_ignorar: WA_IGNORAR.size, sombra_openai: SOMBRA_OPENAI_MODELS, sombra_openai_activa: SOMBRA_OPENAI_ACTIVA, sombra_openai_pct: SOMBRA_OPENAI_PCT, sombra_openai_esfuerzo: SOMBRA_OPENAI_ESFUERZO, ficha_imagen: FICHA_IMAGEN, guard_precio: GUARD_PRECIO, ts: new Date().toISOString() });
+    return Response.json({ status: "ok", function: "copilot-webhook", version: "v128.1-guard-mencion", mode: MODE, mode_raw: MODE_RAW, model: MODEL, llm_configured: !!anthropic, wati_send_configured: !!(WATI_API_TOKEN && WATI_API_BASE), inventario_configurado: !!(SHOPIFY_ADMIN_TOKEN && SHOPIFY_ADMIN_API_BASE), resolve_configured: !!RESOLVE_SECRET, webhook_key_es_default: WEBHOOK_KEY_ES_DEFAULT, handoff_assist_min: HANDOFF_ASSIST_MIN, hist_asistencia: HIST_ASISTENCIA, handoff_cold_hours: HANDOFF_COLD_HOURS, debounce_ms: DEBOUNCE_MS, sesion_gap_dias: SESION_GAP_DIAS, burbujas: BURBUJAS, burbuja_ms: BURBUJA_MS, audio_puente: AUDIO_PUENTE, sweep: SWEEP_MODE, sweep_espera_min: SWEEP_ESPERA_MIN, stt: STT_MODE, stt_raw: STT_RAW, stt_configurado: !!OPENAI_API_KEY, stt_model: STT_MODEL, busqueda_shadow: BUSQUEDA_SHADOW, busqueda_replica: BUSQUEDA_REPLICA, busqueda_replica_raw: BUSQUEDA_REPLICA_RAW, busqueda_mcp: BUSQUEDA_MCP, busqueda_mcp_limit: BUSQUEDA_MCP_LIMIT, catalog_mcp_url: CATALOG_MCP_URL, ucp_profile_url: UCP_PROFILE_URL, live_targets: MODE === "live" ? (LIVE_ALL ? "all" : LIVE_ALLOWLIST.length) : 0, wa_ignorar: WA_IGNORAR.size, sombra_openai: SOMBRA_OPENAI_MODELS, sombra_openai_activa: SOMBRA_OPENAI_ACTIVA, sombra_openai_pct: SOMBRA_OPENAI_PCT, sombra_openai_esfuerzo: SOMBRA_OPENAI_ESFUERZO, ficha_imagen: FICHA_IMAGEN, guard_precio: GUARD_PRECIO, ts: new Date().toISOString() });
   }
   if (req.method !== "POST") return Response.json({ error: "method_not_allowed" }, { status: 405 });
   if (url.searchParams.get("key") !== WEBHOOK_KEY) return Response.json({ error: "forbidden" }, { status: 403 });

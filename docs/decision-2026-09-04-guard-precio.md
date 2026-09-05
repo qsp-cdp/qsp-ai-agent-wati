@@ -66,3 +66,20 @@ group by 1,2,3 order by 1,2,3;
 ## Rollback
 
 `COPILOT_GUARD_PRECIO=off` (sin redeploy). Para volver al código anterior: `git checkout 1ee909b -- supabase/functions/copilot-webhook/index.ts` y desplegar.
+
+## v128.1 (05-sep) — un código introducido como compatibilidad no ancla
+
+Primer falso positivo del candado en producción (05-sep 09:59, sábado, RFQ de 11 líneas): el bot escribió
+"*Toner HP W1105A (105A)* — compatible con HP Laser MFP 137fnw / $59.00 + ITBMS = $63.13". La impresora
+137fnw también era ficha del turno (salió como compatible en la misma búsqueda), su código ancló DENTRO del
+párrafo del tóner y el candado le cargó a la impresora los $59.00 del tóner. El reintento pensando tardó 42 s
+y tampoco cuadró, así que el cliente recibió la deferencia en vez de su lista de precios.
+
+Regla nueva en `preciosInconsistentes`: si en la misma línea, justo antes del código, viene "para /
+compatible con / sirve para / funciona con / ideal para / uso en…" (con hasta cinco palabras sin dígitos en
+medio), ese código es una **mención del equipo del cliente**, no el producto cotizado, y no abre bloque. El
+BV650 del 03-sep ("también tenemos el *APC Easy BV650*") no lleva esa antesala y sigue cayendo. Cinco casos
+nuevos en golden, incluido "Para su impresora L5590 le recomiendo la *Caja C9344*: $28.00", que con la regla
+de párrafo sola también habría disparado.
+
+Balance a las 48 h: 1 disparo, 1 falso positivo, 0 cruces reales detectados. Se mantiene en `on`.

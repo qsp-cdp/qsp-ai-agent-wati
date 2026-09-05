@@ -1665,7 +1665,7 @@ caso("v123: 'sistema-wati' NO se rotula como asesor del equipo", (() => {
   const bloque = src.slice(i, i + 600);
   return i > -1 && /\[Asesor del equipo\]/.test(bloque) && !/sistema-wati" \? "\[Asesor/.test(bloque);
 })());
-caso("v123: el healthcheck delata la versión (v128)", /version: "v128-replica-codigos"/.test(src));
+caso("v123: el healthcheck delata la versión (v128.1)", /version: "v128\.1-guard-mencion"/.test(src));
 
 
 // --- v126: guard de precio por producto ------------------------------------------------------------
@@ -1865,6 +1865,22 @@ caso("v128: el combo de la familia se promueve igual que en el MCP (rerankearCom
 caso("v128: enriquecer reusa el inventario ya consultado (pre) y no vuelve a Admin", /return await enriquecer\(top, true, \{ inv, imagenes: imgs \}\);/.test(src) && /const inv = pre \? pre\.inv : await inventarioShopify\(/.test(src));
 caso("v128: vacío o fallo → sigue el camino de siempre (MCP → suggest), con telemetría", /"busqueda_replica_vacia"/.test(src) && /"busqueda_replica_fallo"/.test(src) && (() => { const i = src.indexOf('await log("busqueda_replica_fallo"'); const j = src.indexOf("let mcpAprox: any[] | null = null;"); return i > -1 && i < j; })());
 caso("v128: el texto libre nunca toca la réplica (la sombra sigue midiéndolo)", /if \(BUSQUEDA_REPLICA === "shadow" && block\.name === "buscar_producto"\)/.test(src));
+
+// v128.1 — un código introducido como compatibilidad ("compatible con HP Laser MFP 137fnw") no ancla. Caso
+// real 05-sep 09:59: la impresora 137fnw era ficha del turno y el guard le cargó los $59.00 del tóner.
+{
+  const f = {
+    w1105a: { titulo: "Toner Hp W1105A 105A", imagen_url: "", url: "", precio_usd: "59.00", itbms_7pct: "4.13", total_con_itbms: "63.13" },
+    p137: { titulo: "Impresora Multifuncional HP Laser 137fnw con Wi\u2011Fi, Fax y ADF | 20 ppm", imagen_url: "", url: "", precio_usd: "329.00", itbms_7pct: "23.03", total_con_itbms: "352.03" },
+  };
+  const txt = "Le comparto lo que encontr\u00e9:\n\n*Toner HP W1105A (105A)* \u2014 compatible con HP Laser MFP 137fnw\n$59.00 + ITBMS (7%) = $63.13\n\u2705 11 unidades disponibles";
+  caso("v128.1: el código del equipo compatible dentro del párrafo del tóner no dispara el guard", preciosInconsistentes(txt, f).length === 0);
+  caso("v128.1: si el tóner trae un precio ajeno, sigue disparando", preciosInconsistentes(txt.replace("$59.00", "$69.00"), f).length === 1);
+  caso("v128.1: la impresora cotizada en su propio bloque con precio ajeno sigue disparando", preciosInconsistentes(txt + "\n\n*Impresora Multifuncional HP Laser 137fnw con Wi\u2011Fi, Fax y ADF | 20 ppm*\n$59.00 + ITBMS", f).length === 1);
+  const f2 = { l5590: { titulo: "Impresora Epson EcoTank L5590 Multifuncional 4 en 1", imagen_url: "", url: "", precio_usd: "349.00", itbms_7pct: "24.43", total_con_itbms: "373.43" }, c9344: { titulo: "Caja de Mantenimiento Epson C9344 para L3560 y L5590", imagen_url: "", url: "", precio_usd: "28.00", itbms_7pct: "1.96", total_con_itbms: "29.96" } };
+  caso("v128.1: 'para su impresora L5590 le recomiendo la *Caja C9344* $28.00' pasa limpio", preciosInconsistentes("Para su impresora L5590 le recomiendo la *Caja de Mantenimiento Epson C9344 para L3560 y L5590*: $28.00 + ITBMS (7%) = $29.96", f2).length === 0);
+  caso("v128.1: el UPS del 03-sep (BV650 presentado con 'también tenemos el') sigue cayendo", preciosInconsistentes(TEXTO_UPS, FICHAS_UPS).length === 2);
+}
 
 // --- resumen --------------------------------------------------------------------------------------
 console.log(`\n${ok} OK, ${mal} FALLA${mal === 1 ? "" : "S"}`);
